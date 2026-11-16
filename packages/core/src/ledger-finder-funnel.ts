@@ -117,8 +117,10 @@ export function queueFunnelSince(db: Database, sinceIso: string): QueueFunnelRow
 }
 
 /**
- * Rows a human approved (still approved, or sent since) per local day of the
- * decision, whatever day they were found. This is what a daily goal counts.
+ * Rows a human approved per local day of the decision, whatever day they
+ * were found. This is what a daily goal counts. A row still approved, sent
+ * since, or expired after the approval (a reply that came first) keeps its
+ * day; one reopened to pending does not count until it is approved again.
  */
 export function approvedByDecisionDaySince(
   db: Database,
@@ -129,7 +131,8 @@ export function approvedByDecisionDaySince(
       `SELECT date(decided_at, 'localtime') AS day, COUNT(*) AS approved
          FROM target_queue
         WHERE decided_at IS NOT NULL AND julianday(decided_at) >= julianday(?)
-          AND status IN ('approved', 'sent') AND ${HUMAN}
+          AND (status IN ('approved', 'sent') OR (status = 'expired' AND decision = 'approve'))
+          AND ${HUMAN}
         GROUP BY day
         ORDER BY day ASC`,
     )

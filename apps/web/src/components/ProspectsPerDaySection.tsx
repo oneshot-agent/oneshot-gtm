@@ -47,6 +47,13 @@ export function ProspectsPerDaySection() {
       </div>
       {q.isLoading ? (
         Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+      ) : q.isError && !q.data ? (
+        <div className="px-6 pb-6 text-[13px] text-[color:var(--ink-blocked-2)]" role="alert">
+          Could not load prospects per day.{" "}
+          <button className="underline" onClick={() => void q.refetch()}>
+            Retry
+          </button>
+        </div>
       ) : empty ? (
         <div className="px-6 pb-6">
           <EmptyNote

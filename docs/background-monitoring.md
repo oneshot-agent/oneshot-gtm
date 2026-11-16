@@ -147,6 +147,6 @@ Every finished finder run is recorded. **Measure** shows the last seven days: fo
 - `queued`, `autoRejected`, `approved`, `rejected`, `sent` and `pending` count the queue rows the finder found that day, whatever list, repo or mode its rows name in their source (`find:list-page:runs-backstage` counts under `find:list-page`). `queued` leaves out rows a gate rejected on sight. `approved` means a person approved it, and it may have been sent since.
 - `costPerQueued` and `costPerApproved` are null when nothing was queued or approved.
 - A source with queue rows and no runs, such as an import, is listed under its source.
-- `approvedOnDay` counts what was approved that day, whenever it was found.
+- `approvedOnDay` counts what was approved that day, whenever it was found, including approvals that expired since because a reply came first. A row reopened to pending is left out.
 
 To track a daily goal, set `volumeGoalPerDay` in `config.json` to the number of prospects you want approved a day. Measure then shows today's approvals against it, and the route returns it as `goalPerDay`. Unset means no goal. Days are local and start at midnight, as the spend ceiling's do.

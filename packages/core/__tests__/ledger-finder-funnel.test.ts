@@ -65,11 +65,12 @@ function queueRow(
     status: string;
     decidedBy?: string | null;
     decidedAt?: Date | null;
+    decision?: string | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, found_at, decided_by, decided_at)
-     VALUES('p', '{}', ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, found_at, decided_by, decided_at, decision)
+     VALUES('p', '{}', ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     `k${++seq}`,
     row.source,
@@ -77,6 +78,7 @@ function queueRow(
     sqliteUtc(row.foundAt),
     row.decidedBy ?? null,
     row.decidedAt ? row.decidedAt.toISOString() : null,
+    row.decision ?? null,
   );
 }
 
@@ -209,6 +211,23 @@ describe("queue funnel", () => {
     expect(ledger.approvedByDecisionDaySince(localNoon(2).toISOString())).toEqual([
       { day: dayOf(localNoon(1)), approved: 1 },
       { day: dayOf(today), approved: 2 },
+    ]);
+  });
+
+  it("keeps an approval that later expired on its day, and leaves out one reopened to pending", () => {
+    const yesterday = localNoon(1);
+    withRaw((db) => {
+      const base = { source: "s", foundAt: localNoon(3), decidedBy: "human", decidedAt: yesterday };
+      queueRow(db, { ...base, status: "approved", decision: "approve" });
+      // A reply arrived first and expired the approved row; the decision stays.
+      queueRow(db, { ...base, status: "expired", decision: "approve" });
+      // Reopened: back to pending, the old decision columns left in place.
+      queueRow(db, { ...base, status: "pending", decision: "approve" });
+      // Expired without ever being approved.
+      queueRow(db, { ...base, status: "expired", decidedBy: null, decidedAt: null });
+    });
+    expect(ledger.approvedByDecisionDaySince(localNoon(2).toISOString())).toEqual([
+      { day: dayOf(yesterday), approved: 2 },
     ]);
   });
 });
