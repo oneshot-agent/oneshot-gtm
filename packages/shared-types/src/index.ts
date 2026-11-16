@@ -420,6 +420,47 @@ export interface SpendSeries {
   series: SpendSeriesPlay[];
 }
 
+/**
+ * One finder's day in the funnel. `runs`, `candidates`, `enqueued` and
+ * `costUsd` come from the runs that finished that day; the queue counts are
+ * the rows found that day from this `source`. `costPer*` is null when its
+ * divisor is 0.
+ */
+export interface FunnelFinderDay {
+  /** The trigger name; the source itself when no run recorded it (an import). */
+  name: string;
+  source: string;
+  runs: number;
+  candidates: number;
+  enqueued: number;
+  /** Rows found that a gate did not reject on sight. */
+  queued: number;
+  autoRejected: number;
+  /** Approved or sent, on a human decision. */
+  approved: number;
+  rejected: number;
+  sent: number;
+  pending: number;
+  costUsd: number;
+  costPerQueued: number | null;
+  costPerApproved: number | null;
+}
+
+export interface FunnelDay {
+  /** Local day, YYYY-MM-DD. */
+  day: string;
+  /** Rows a human approved that day, whenever they were found. What a daily goal counts. */
+  approvedOnDay: number;
+  finders: FunnelFinderDay[];
+}
+
+/** `GET /api/measure/funnel`: one entry per local day, newest first. */
+export interface FunnelView {
+  days: FunnelDay[];
+  /** `volumeGoalPerDay` from the workspace config; null when unset. */
+  goalPerDay: number | null;
+}
+
 export interface RocsGoalView {
   goalId: string;
   playName: string | null;

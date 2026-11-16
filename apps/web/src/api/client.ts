@@ -87,6 +87,7 @@ import type {
   SmartleadAccountView,
   SpendByPlay,
   SpendSeries,
+  FunnelView,
   TriggerView,
   IcpProposalDecisionResult,
   IcpProposalsResult,
@@ -368,6 +369,7 @@ export const api = {
     getJson<SpendSeries>(
       `/measure/spend-series${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
     ),
+  measureFunnel: (days: number) => getJson<FunnelView>(`/measure/funnel?days=${days}`),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
   // Same checks, but the wallet balance is re-read instead of served from

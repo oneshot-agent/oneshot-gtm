@@ -18,6 +18,7 @@ import {
   oneshotEnvReady,
   priorityPriorsOf,
   SECRET_KEYS,
+  volumeGoalPerDayOf,
   withCurrentDefaultModel,
 } from "../src/config.ts";
 import type { OneShotConfig } from "../src/types.ts";
@@ -332,5 +333,13 @@ describe("learningExpireAfterDaysOf", () => {
       expect(learningExpireAfterDaysOf({ learning })).toBe(7);
     expect(learningExpireAfterDaysOf({ learning: { expireAfterDays: 2.5 } })).toBe(7);
     expect(learningExpireAfterDaysOf({ learning: { expireAfterDays: "3" } })).toBe(7);
+  });
+});
+
+describe("volumeGoalPerDayOf", () => {
+  it("reads a positive number, and no goal otherwise", () => {
+    expect(volumeGoalPerDayOf({ volumeGoalPerDay: 40 })).toBe(40);
+    for (const volumeGoalPerDay of [undefined, null, 0, -5, Number.NaN, Infinity, "40"])
+      expect(volumeGoalPerDayOf({ volumeGoalPerDay })).toBeNull();
   });
 });

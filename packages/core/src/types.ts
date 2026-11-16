@@ -683,6 +683,12 @@ export interface OneShotConfig {
    */
   dailySpendCeilingUsd: number | null;
   /**
+   * Prospects a human should approve per local day, the goal the daily funnel
+   * (`GET /api/measure/funnel`, Measure) counts against. Positive number;
+   * null or unset means no goal, and Measure shows the numbers alone.
+   */
+  volumeGoalPerDay?: number | null;
+  /**
    * The Gmail identity (pool `id`, e.g. `gmail:you@yourcompany.com`) whose
    * calendar the scheduler polls for past meetings needing an outcome
    * (issue #577). Null = feature off, entirely inert: no poll, no logging,

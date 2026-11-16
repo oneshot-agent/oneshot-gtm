@@ -1751,18 +1751,7 @@ export async function runTriggerNow(
       runFinderWithProductResearch(spec, runConfig),
     );
     const nextDueInMs = recordTriggerRun(name, result, scope, intervalMs);
-    logEvent("trigger.run.done", {
-      name,
-      duration_ms: Date.now() - startedAt,
-      candidates: result.candidates,
-      enqueued: result.enqueued,
-      dropped_icp: result.droppedIcp,
-      dropped_role: result.droppedRole ?? 0,
-      dropped_dup: result.droppedDuplicate,
-      dropped_enrich: result.droppedEnrichment,
-      cost_usd: result.costUsd,
-      halted: result.halted ?? null,
-    });
+    recordRunDone(name, result, startedAt, Date.now() - startedAt);
     return { name, fired: true, result, nextDueInMs };
   } catch (err) {
     const message = (err as Error).message ?? "unknown error";
@@ -1933,18 +1922,7 @@ export async function runDueTriggers(
       );
       const durationMs = Date.now() - startedAt;
       const nextDueInMs = recordTriggerRun(spec.name, result, scope, intervalMs);
-      logEvent("trigger.run.done", {
-        name: spec.name,
-        duration_ms: durationMs,
-        candidates: result.candidates,
-        enqueued: result.enqueued,
-        dropped_icp: result.droppedIcp,
-        dropped_role: result.droppedRole ?? 0,
-        dropped_dup: result.droppedDuplicate,
-        dropped_enrich: result.droppedEnrichment,
-        cost_usd: result.costUsd,
-        halted: result.halted ?? null,
-      });
+      recordRunDone(spec.name, result, startedAt, durationMs);
       outcomes.push({
         name: spec.name,
         fired: true,
@@ -1987,6 +1965,53 @@ export async function runDueTriggers(
 
 /** Waits before the early retries of a run a OneShot outage hit; then the normal interval. */
 export const OUTAGE_RETRY_WAITS_MS = [30 * 60_000, 60 * 60_000, 120 * 60_000];
+
+/**
+ * A finished run, for both the ad-hoc and the scheduled path: the
+ * `trigger.run.done` event, and its `finder_runs` row for the daily funnel
+ * (`GET /api/measure/funnel`). A failed write is logged and never fails the run.
+ */
+function recordRunDone(
+  name: string,
+  result: FinderResult,
+  startedAt: number,
+  durationMs: number,
+): void {
+  logEvent("trigger.run.done", {
+    name,
+    duration_ms: durationMs,
+    candidates: result.candidates,
+    enqueued: result.enqueued,
+    dropped_icp: result.droppedIcp,
+    dropped_role: result.droppedRole ?? 0,
+    dropped_dup: result.droppedDuplicate,
+    dropped_enrich: result.droppedEnrichment,
+    cost_usd: result.costUsd,
+    halted: result.halted ?? null,
+  });
+  try {
+    getLedger().insertFinderRun({
+      name,
+      source: result.source,
+      startedAt: new Date(startedAt).toISOString(),
+      finishedAt: new Date(startedAt + durationMs).toISOString(),
+      candidates: result.candidates,
+      enqueued: result.enqueued,
+      droppedDuplicate: result.droppedDuplicate,
+      droppedEnrichment: result.droppedEnrichment,
+      droppedRole: result.droppedRole ?? 0,
+      droppedIcp: result.droppedIcp,
+      costUsd: result.costUsd,
+      halted: result.halted ?? null,
+    });
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      { kind: "finder_runs.insert", message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+}
 
 /**
  * Record a finished run. A run a OneShot outage hit (platform-health.ts) says

@@ -87,6 +87,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_finder_runs_finished",
+      "sql": "CREATE INDEX idx_finder_runs_finished ON finder_runs(finished_at)",
+      "tbl_name": "finder_runs",
+      "type": "index",
+    },
+    {
       "name": "idx_icp_proposals_status",
       "sql": "CREATE INDEX idx_icp_proposals_status ON icp_proposals(status, created_at DESC)",
       "tbl_name": "icp_proposals",
@@ -581,6 +587,26 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         fetched_at TEXT NOT NULL
       , status TEXT)",
       "tbl_name": "enrichment_cache",
+      "type": "table",
+    },
+    {
+      "name": "finder_runs",
+      "sql": "CREATE TABLE finder_runs (
+          id             INTEGER PRIMARY KEY AUTOINCREMENT,
+          name           TEXT NOT NULL,
+          source         TEXT NOT NULL,
+          started_at     TEXT NOT NULL,
+          finished_at    TEXT NOT NULL,
+          candidates     INTEGER NOT NULL DEFAULT 0,
+          enqueued       INTEGER NOT NULL DEFAULT 0,
+          dropped_dup    INTEGER NOT NULL DEFAULT 0,
+          dropped_enrich INTEGER NOT NULL DEFAULT 0,
+          dropped_role   INTEGER NOT NULL DEFAULT 0,
+          dropped_icp    INTEGER NOT NULL DEFAULT 0,
+          cost_usd       REAL NOT NULL DEFAULT 0,
+          halted         TEXT
+        )",
+      "tbl_name": "finder_runs",
       "type": "table",
     },
     {

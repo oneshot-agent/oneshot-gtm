@@ -243,6 +243,36 @@ describe("runLedgerMigrations", () => {
     });
   });
 
+  it("v24 adds finder_runs and its finished_at index to a v23 ledger", () => {
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      db.exec("DROP TABLE finder_runs");
+      db.exec("PRAGMA user_version = 23");
+    });
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      expect(userVersion(db)).toBe(LEDGER_SCHEMA_VERSION);
+      expect(columns(db, "finder_runs")).toEqual([
+        "id",
+        "name",
+        "source",
+        "started_at",
+        "finished_at",
+        "candidates",
+        "enqueued",
+        "dropped_dup",
+        "dropped_enrich",
+        "dropped_role",
+        "dropped_icp",
+        "cost_usd",
+        "halted",
+      ]);
+      expect(
+        db.query("SELECT name FROM sqlite_master WHERE name='idx_finder_runs_finished'").get(),
+      ).toBeTruthy();
+    });
+  });
+
   describe("v16 gives every cadence its offer and its queue row", () => {
     const PLAY = "seq-play";
     const full = {

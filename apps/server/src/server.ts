@@ -60,6 +60,7 @@ import {
   measureRocsByGoal,
   measureLinkedIn,
   measureSpendSeries,
+  measureFunnel,
   recordOutcome,
 } from "./api/measure.ts";
 import {
@@ -236,6 +237,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/measure/rocs-by-goal", measureRocsByGoal),
   route("GET", "/api/measure/linkedin", measureLinkedIn),
   route("GET", "/api/measure/spend-series", measureSpendSeries),
+  route("GET", "/api/measure/funnel", measureFunnel),
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/onboarding", getOnboarding),
   route("POST", "/api/onboarding/defer", deferOnboarding),
