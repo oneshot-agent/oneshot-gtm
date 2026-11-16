@@ -83,6 +83,8 @@ vi.mock("../src/_qualify.ts", () => ({
 }));
 
 let peopleSearchCalls: Array<Record<string, unknown>> = [];
+/** The searches after the one-row check that a company is in the database at all. */
+const fullSearches = () => peopleSearchCalls.filter((c) => c["limit"] !== 1);
 let peopleSearchResult: { status?: string; results: Array<Record<string, unknown>> } = {
   results: [],
 };
@@ -652,7 +654,8 @@ describe("jobTitles targeting", () => {
     const out = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
     expect(contactCalls).toHaveLength(0);
     expect(out.droppedRole).toBe(1);
-    expect(out.costUsd).toBeCloseTo(0.01, 5);
+    // The one-row check and the search.
+    expect(out.costUsd).toBeCloseTo(0.02, 5);
   });
 
   it("searches the domain for the titles and hands the best match to the contact spine", async () => {
@@ -663,7 +666,7 @@ describe("jobTitles targeting", () => {
       ],
     };
     await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
-    expect(peopleSearchCalls[0]).toMatchObject({
+    expect(fullSearches()[0]).toMatchObject({
       companyDomains: ["acme.example"],
       jobTitles: titles,
     });
@@ -766,18 +769,55 @@ describe("jobTitles targeting", () => {
   });
 
   it("asks the search for 10 rows unless the config sets another count", async () => {
+    peopleSearchResult = { results: [person("Pat PR", "Head of Communications")] };
     await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
-    expect(peopleSearchCalls[0]?.["limit"]).toBe(10);
+    expect(fullSearches()[0]?.["limit"]).toBe(10);
 
     peopleSearchCalls = [];
     cache.clear();
     await runListPageFinder({ ...base, jobTitles: titles, limit: 1, peopleSearchLimit: 5 });
-    expect(peopleSearchCalls[0]?.["limit"]).toBe(5);
+    expect(fullSearches()[0]?.["limit"]).toBe(5);
 
     peopleSearchCalls = [];
     cache.clear();
     await runListPageFinder({ ...base, jobTitles: titles, limit: 1, peopleSearchLimit: 40 });
-    expect(peopleSearchCalls[0]?.["limit"]).toBe(10);
+    expect(fullSearches()[0]?.["limit"]).toBe(10);
+  });
+
+  it("checks a company with one row first and pays for no more when no one is there", async () => {
+    const out = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(peopleSearchCalls).toEqual([
+      { companyDomains: ["acme.example"], jobTitles: titles, limit: 1 },
+    ]);
+    expect(out.costUsd).toBeCloseTo(0.01, 5);
+    expect(out.droppedRole).toBe(1);
+
+    // Remembered like any company with no match: the next run skips it free.
+    peopleSearchCalls = [];
+    const next = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(next.droppedDuplicate).toBe(1);
+    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
+  });
+
+  it("goes on to the full search when the one-row check finds someone", async () => {
+    peopleSearchResult = { results: [person("Ada AI", "Head of AI Platform", "ada@acme.example")] };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(peopleSearchCalls.map((c) => c["limit"])).toEqual([1, 10]);
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("a failed one-row check remembers nothing, so the company is checked again", async () => {
+    peopleSearchResult = { status: "error", results: [] };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
+    expect(fullSearches()).toHaveLength(0);
+    expect([...cache.keys()].filter((k) => k.startsWith("list-page-miss:"))).toEqual([]);
+  });
+
+  it("searches once when the config asks for one row", async () => {
+    peopleSearchResult = { results: [person("Ada AI", "Head of AI Platform", "ada@acme.example")] };
+    await runListPageFinder({ ...base, jobTitles: titles, limit: 1, peopleSearchLimit: 1 });
+    expect(peopleSearchCalls.map((c) => c["limit"])).toEqual([1]);
+    expect(enqueued).toHaveLength(1);
   });
 
   it("leaves a company alone when its match has no email, without rejecting it", async () => {
@@ -791,7 +831,7 @@ describe("jobTitles targeting", () => {
     peopleSearchCalls = [];
     const next = await runListPageFinder({ ...base, jobTitles: titles, limit: 1 });
     expect(next.droppedDuplicate).toBe(1);
-    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
+    expect(fullSearches().map((c) => c["companyDomains"])).toEqual([["beta.example"]]);
   });
 
   it("searches a company again after a platform error in the contact step", async () => {
@@ -920,11 +960,11 @@ describe("inline companies: a list written in the config", () => {
       results: [person("Ada AI", "Head of AI Platform", "ada@alpha.example")],
     };
     await runListPageFinder({ ...inlineBase, jobTitles: titles });
-    expect(peopleSearchCalls.map((c) => c["companyDomains"])).toEqual([
+    expect(fullSearches().map((c) => c["companyDomains"])).toEqual([
       ["alpha.example"],
       ["beta.example"],
     ]);
-    expect(peopleSearchCalls[0]).toMatchObject({ jobTitles: titles });
+    expect(fullSearches()[0]).toMatchObject({ jobTitles: titles });
     expect(contactCalls[0]).toMatchObject({ fullName: "Ada AI", companyDomain: "alpha.example" });
   });
 
