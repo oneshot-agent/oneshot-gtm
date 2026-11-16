@@ -774,11 +774,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       // Resumed past its last person: nothing was read, as for a search
       // already marked finished.
       if (offset === startOffset) finishedQueries++;
-    } else if (capped) {
-      // Everyone before `offset` has been looked at: the next run starts
-      // there instead of re-reading the same pages and never getting past
-      // them. Someone a passing failure left undecided holds the mark at
-      // their page, so the next run meets them again.
+    } else if (capped || stop) {
+      // Everyone before `offset` has been looked at: it only moves past a
+      // page once every person on it was worked. So whether the page cap,
+      // the run's search budget, the limit or the cost cap stopped it, the
+      // next run starts there instead of re-reading the same pages and never
+      // getting past them. Someone a passing failure left undecided holds the
+      // mark at their page, so the next run meets them again.
       const resumeAt = Math.min(offset, retryOffset ?? offset);
       if (resumeAt > 0) {
         ledger.setProductResearchCache(

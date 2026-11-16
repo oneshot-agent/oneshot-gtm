@@ -1092,11 +1092,25 @@ describe("runLocalBusinessFinder — many searches", () => {
     expect(out.enqueued).toBe(2);
     expect(out.halted).toBeUndefined();
     expect(out.peopleSearches).toEqual({ queries: 3, read: 2, failed: 1 });
-    // Nothing remembered for the failed search: it is not done and has no offset.
-    const failedKey = [...researchCache.keys()].filter((k) =>
-      k.startsWith("people-search-progress:"),
-    );
-    expect(failedKey.every((k) => !researchCache.get(k)?.includes('"offset"'))).toBe(true);
+    // Nothing remembered for the failed search: neither done nor a place.
+    expect(
+      researchCache.has(progressKeyOf({ jobTitles: ["CTO"], industry: ["A", "B", "C"] })),
+    ).toBe(false);
+
+    // Next run the platform is back, and the failed search is read.
+    peopleSearchFails = null;
+    peopleSearchCalls.length = 0;
+    nextPeopleSearchResults = people(10, 2);
+    const again = await runAgain({
+      dryRun: false,
+      jobTitles: ["CTO"],
+      industries,
+      limit: 10,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls.map((c) => (c["industry"] as string[])[0])).toContain("A");
+    expect(again.peopleSearches?.failed).toBe(0);
+    expect(again.enqueued).toBe(2);
   });
 
   it("ends the run after three failed searches in a row, as an outage", async () => {
@@ -1133,6 +1147,16 @@ describe("runLocalBusinessFinder — many searches", () => {
     });
     // The probe, then three full pages.
     expect(peopleSearchCalls.map((c) => c["limit"])).toEqual([10, 40, 40, 40]);
+    // Stopped by its search budget, the search carries on from there next run.
+    peopleSearchCalls.length = 0;
+    await runLocalBusinessFinder({
+      dryRun: false,
+      jobTitles: ["CTO"],
+      limit: 1000,
+      maxSearchesPerRun: 3,
+      yourEdge: "x",
+    });
+    expect(peopleSearchCalls[0]?.["offset"]).toBe(130);
 
     peopleSearchCalls.length = 0;
     researchCache.clear();
