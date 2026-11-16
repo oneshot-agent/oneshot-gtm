@@ -518,8 +518,10 @@ export function rankByTitles(people: PersonResult[], jobTitles: string[]): Perso
 
 /**
  * The company's decision owner. With `jobTitles`, one title-scoped people
- * search (priced per row asked, `peopleSearchLimit` rows) and up to three candidates through the contact spine until
- * one passes the person gate; without, the spine's own domain-only pick.
+ * search (priced per row asked, `peopleSearchLimit` rows, after a one-row
+ * search that skips a company with no one in the database) and up to three
+ * candidates through the contact spine until one passes the person gate;
+ * without, the spine's own domain-only pick.
  *
  * Only people whose title matches a wanted one are tried. The search's own
  * title filter is loose (measured 2026-10-11: five AI titles at a bank's
@@ -553,11 +555,25 @@ async function findOwner(args: {
     });
     return { contact, costUsd: contact.costUsd, noMatch: false };
   }
+  const rows = peopleSearchLimit(opts.peopleSearchLimit);
+  let costUsd = 0;
+  if (rows > 1) {
+    // Most companies on a list are not in the people database at all (59% of
+    // 824 company searches on 2026-11-16 came back empty), and an empty search
+    // costs every row asked. One row answers whether there is anyone first.
+    const probe = await safePeopleSearch(
+      { companyDomains: [domain], jobTitles, limit: 1 },
+      { playName: PLAY_NAME },
+    );
+    costUsd += probe.result.cost ?? 0;
+    if (probe.result.status === "error") return { contact: null, costUsd, noMatch: false };
+    if ((probe.result.results ?? []).length === 0) return { contact: null, costUsd, noMatch: true };
+  }
   const search = await safePeopleSearch(
-    { companyDomains: [domain], jobTitles, limit: peopleSearchLimit(opts.peopleSearchLimit) },
+    { companyDomains: [domain], jobTitles, limit: rows },
     { playName: PLAY_NAME },
   );
-  let costUsd = search.result.cost ?? 0;
+  costUsd += search.result.cost ?? 0;
   if (search.result.status === "error") return { contact: null, costUsd, noMatch: false };
   const titled = rankByTitles((search.result.results ?? []) as PersonResult[], jobTitles).filter(
     (p) => jobTitles.some((wanted) => titleMatches(p.title, wanted)),
