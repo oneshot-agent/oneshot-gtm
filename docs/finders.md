@@ -32,7 +32,9 @@ Lists that depend on who you sell to ship empty: `podcasts` on `podcast-guest`, 
 
 `x-reposters` sorts reposters into a founder lane (a real site in the bio) and an amplifier lane (1,000+ followers). `founderKeywords` and `amplifierKeywords` add a bio-word gate to each lane, and `requiresDevSignal: true` lets a GitHub link count as proof. All three are off by default: the person gate judges founders, and your choice of seeds decides who amplifies.
 
-`local-business` searches each title on its own when `jobTitles` lists more than two, and splits a run's 12 full-page people searches across them, at least 2 pages each. Each search carries on from where it stopped, and the next run starts with the titles this one didn't reach.
+`local-business` searches each title on its own when `jobTitles` lists more than two. A long `industries` list is searched in groups of `industriesPerSearch` (default 3), one search per title and group, because a long list comes back empty for some titles: 49 names found no CTO or CIO, while 1 to 3 names always worked. A run's full-page searches are split across them, at least 2 pages each. Each search carries on from where it stopped, and the next run starts with the searches this one didn't reach.
+
+A run reads at most `maxSearchesPerRun` full pages (default 12) and `maxProbesPerRun` 10-row pages (default 12). Raise both, and shorten `intervalMs`, to work through many titles and industries in a day. A search that fails is skipped and read again next run; three failures in a row end the run as an outage. The run summary shows `peopleSearches`: how many searches there are, how many it read, and how many failed.
 
 People search is paid per row asked, found or not. Each search a run reads starts with a 10-row page, and buys 40-row pages only when that page finds someone.
 

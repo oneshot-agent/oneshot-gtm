@@ -38,10 +38,31 @@ const PEOPLE_SEARCH_LIMIT = 40;
 const PROBE_LIMIT = 10;
 /** Full pages of one search read in one run, after its probe; a later run carries on from there. */
 const MAX_PAGES_PER_QUERY = 6;
-/** Full-page people searches one run may make, across every query; probes are not counted. */
+/**
+ * Full-page people searches one run may make, across every query; probes are
+ * not counted. `maxSearchesPerRun` in the config replaces it.
+ */
 const MAX_SEARCHES_PER_RUN = 12;
-/** Probes one run may make: a list of empty searches costs at most this many small pages. */
+/**
+ * Probes one run may make: a list of empty searches costs at most this many
+ * small pages. `maxProbesPerRun` in the config replaces it.
+ */
 const MAX_PROBES_PER_RUN = 12;
+/** Upper bound on either per-run count a config may set. */
+const MAX_PER_RUN_SETTING = 1_000;
+/**
+ * Industries one people search may carry. A long list comes back empty for
+ * some titles: 49 names found no CTO or CIO, while 1 to 3 names always worked
+ * (measured 2026-11-15), and about 54 names fails outright. A longer list is
+ * searched in groups of this many. `industriesPerSearch` replaces it.
+ */
+const INDUSTRIES_PER_SEARCH = 3;
+/**
+ * Failed searches in a row that end the run. One failure is skipped and the
+ * next search is tried; this many in a row is an outage, which later
+ * searches would hit too.
+ */
+const MAX_FAILURES_IN_A_ROW = 3;
 /**
  * Titles one people search may carry. Three or more failed upstream with
  * "Upstream service temporarily unavailable" in every industry tried
@@ -92,6 +113,22 @@ export interface LocalBusinessFinderOpts extends RunOpts {
   play?: string;
   /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
   buyerType?: string;
+  /** Full pages of people search one run may read (default 12). */
+  maxSearchesPerRun?: number;
+  /** 10-row probe pages one run may read (default 12). */
+  maxProbesPerRun?: number;
+  /** Industries per people search; a longer list is searched in groups (default 3). */
+  industriesPerSearch?: number;
+}
+
+/** A per-run count from the config, or the default when missing or out of range. */
+export function perRunSetting(value: unknown, fallback: number): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_PER_RUN_SETTING
+    ? value
+    : fallback;
 }
 
 function nonEmptyStrings(vals: string[] | undefined): string[] {
@@ -159,22 +196,30 @@ export function peopleQueries(args: {
   jobTitles: string[];
   industries: string[];
   shared: Pick<PeopleSearchInput, "location" | "keywords" | "companySize">;
+  /** Industries per search (default 3): a longer list is searched in groups. */
+  industriesPerSearch?: number;
 }): PeopleSearchInput[] {
   if (args.businessShaped) return [{ companyDomains: args.companyDomains, ...args.shared }];
-  const base: PeopleSearchInput = {
-    ...(args.industries.length > 0 ? { industry: args.industries } : {}),
-    ...args.shared,
-  };
-  const combined: PeopleSearchInput = {
-    ...(args.jobTitles.length > 0 ? { jobTitles: args.jobTitles } : {}),
-    ...base,
-  };
-  if (args.jobTitles.length < 2) return [combined];
-  const perTitle = args.jobTitles.map((title) => ({ jobTitles: [title], ...base }));
-  // The platform fails a search that carries more titles than this, and the
-  // run stops on a failed search, so a longer list searches each title alone.
+  const groupSize = perRunSetting(args.industriesPerSearch, INDUSTRIES_PER_SEARCH);
+  const groups: string[][] = [];
+  for (let i = 0; i < args.industries.length; i += groupSize) {
+    groups.push(args.industries.slice(i, i + groupSize));
+  }
+  // Each title set is searched in every industry group, title by title, so
+  // the most wanted title is worked across every industry first.
+  const across = (titles: string[]): PeopleSearchInput[] =>
+    (groups.length > 0 ? groups : [null]).map((group) => {
+      const query: PeopleSearchInput = {};
+      if (titles.length > 0) query.jobTitles = titles;
+      if (group) query.industry = group;
+      return Object.assign(query, args.shared);
+    });
+  if (args.jobTitles.length < 2) return across(args.jobTitles);
+  const perTitle = args.jobTitles.flatMap((title) => across([title]));
+  // The platform fails a search that carries more titles than this, so a
+  // longer list searches each title alone.
   if (args.jobTitles.length > MAX_TITLES_PER_SEARCH) return perTitle;
-  return [combined, ...perTitle];
+  return [...across(args.jobTitles), ...perTitle];
 }
 
 /**
@@ -184,9 +229,12 @@ export function peopleQueries(args: {
  * (the same page twice). Each keeps its place for the next run, and the next
  * run starts at the first query this one did not get to.
  */
-export function pagesPerQuery(queryCount: number): number {
+export function pagesPerQuery(
+  queryCount: number,
+  maxSearches: number = MAX_SEARCHES_PER_RUN,
+): number {
   if (queryCount <= 1) return MAX_PAGES_PER_QUERY;
-  return Math.min(MAX_PAGES_PER_QUERY, Math.max(2, Math.floor(MAX_SEARCHES_PER_RUN / queryCount)));
+  return Math.min(MAX_PAGES_PER_QUERY, Math.max(2, Math.floor(maxSearches / queryCount)));
 }
 
 /** Where the next run starts in a list of searches, so each gets its turn. */
@@ -561,8 +609,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       ...(keywords.length > 0 ? { keywords } : {}),
       ...(employeeRange ? { companySize: employeeRange } : {}),
     },
+    ...(opts.industriesPerSearch !== undefined
+      ? { industriesPerSearch: opts.industriesPerSearch }
+      : {}),
   });
-  const pageCap = pagesPerQuery(queries.length);
+  const maxSearches = perRunSetting(opts.maxSearchesPerRun, MAX_SEARCHES_PER_RUN);
+  const maxProbes = perRunSetting(opts.maxProbesPerRun, MAX_PROBES_PER_RUN);
+  const pageCap = pagesPerQuery(queries.length, maxSearches);
   const turnKey = searchTurnKey(queries);
   const turn = parseSearchTurn(
     ledger.getProductResearchCache(turnKey, SEARCH_PROGRESS_TTL_MS),
@@ -575,6 +628,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   let probes = 0;
   let unusable = 0;
   let finishedQueries = 0;
+  let failedSearches = 0;
+  let failuresInARow = 0;
+  /** Searches that returned at least one page this run. */
+  let readQueries = 0;
   let stop = false;
   /** Position in `ordered` of the search the run stopped in, if it stopped early. */
   let stoppedAt: number | null = null;
@@ -598,6 +655,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     /** Offset of the first page holding someone left undecided by a passing failure. */
     let retryOffset: number | null = null;
     let previousFirstKey: string | null = null;
+    let failed = false;
     for (let page = 0; !stop && !ended; page++) {
       // Page 0 is the probe; `pageCap` full pages follow it.
       const probe = page === 0;
@@ -606,11 +664,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
         capped = true;
         break;
       }
-      if (
-        worked >= limit ||
-        searches >= MAX_SEARCHES_PER_RUN ||
-        (probe && probes >= MAX_PROBES_PER_RUN)
-      ) {
+      if (worked >= limit || searches >= maxSearches || (probe && probes >= maxProbes)) {
         stop = true;
         break;
       }
@@ -629,13 +683,22 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       if (peopleRes.result.status === "error") {
         // Same distinction as companySearch above: an empty `results` from a
         // caught throw is a platform failure, not "no matches" (finding
-        // PRRT_kwDOSKzrBs6fCBdS). Later searches would fail the same way.
-        if (result.candidates === 0) {
-          result.halted = "peopleSearch failed (platform error) — see logs";
+        // PRRT_kwDOSKzrBs6fCBdS). One failure skips this search, keeping its
+        // place for the next run; several in a row is an outage that the
+        // later searches would hit too.
+        failedSearches++;
+        failuresInARow++;
+        if (failuresInARow >= MAX_FAILURES_IN_A_ROW) {
+          if (result.candidates === 0) {
+            result.halted = "peopleSearch failed (platform error) — see logs";
+          }
+          stop = true;
         }
-        stop = true;
+        failed = true;
         break;
       }
+      failuresInARow = 0;
+      if (page === 0) readQueries++;
       const rows = peopleRes.result.results as PersonResult[];
       result.candidates += rows.length;
       const firstKey = rows[0] ? candidateDedupeKey(rows[0]) : null;
@@ -699,7 +762,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       offset += rows.length;
     }
     if (stop) stoppedAt ??= position;
-    if (opts.dryRun) continue;
+    // A failed search is not marked either way: the next run reads it again.
+    if (opts.dryRun || failed) continue;
     if (ended && fresh === 0 && (known > 0 || startOffset > 0)) {
       // Read to its end and everyone on it is already in the queue: leave it
       // alone for a while instead of paying to re-read the same people every
@@ -710,11 +774,13 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       // Resumed past its last person: nothing was read, as for a search
       // already marked finished.
       if (offset === startOffset) finishedQueries++;
-    } else if (capped) {
-      // Everyone before `offset` has been looked at: the next run starts
-      // there instead of re-reading the same pages and never getting past
-      // them. Someone a passing failure left undecided holds the mark at
-      // their page, so the next run meets them again.
+    } else if (capped || stop) {
+      // Everyone before `offset` has been looked at: it only moves past a
+      // page once every person on it was worked. So whether the page cap,
+      // the run's search budget, the limit or the cost cap stopped it, the
+      // next run starts there instead of re-reading the same pages and never
+      // getting past them. Someone a passing failure left undecided holds the
+      // mark at their page, so the next run meets them again.
       const resumeAt = Math.min(offset, retryOffset ?? offset);
       if (resumeAt > 0) {
         ledger.setProductResearchCache(
@@ -731,7 +797,10 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     if (next !== turn) ledger.setProductResearchCache(turnKey, JSON.stringify({ start: next }));
   }
 
-  if (!result.halted && result.candidates === 0) {
+  result.peopleSearches = { queries: queries.length, read: readQueries, failed: failedSearches };
+  if (!result.halted && failedSearches > 0 && readQueries === 0) {
+    result.halted = "peopleSearch failed (platform error) — see logs";
+  } else if (!result.halted && result.candidates === 0) {
     result.halted =
       finishedQueries === queries.length
         ? "every search was walked to its end in the last 7 days: no one new to look at"
@@ -753,6 +822,9 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     dropped_enrich: result.droppedEnrichment,
     dropped_role: result.droppedRole,
     cost_usd: result.costUsd,
+    queries: queries.length,
+    queries_read: readQueries,
+    searches_failed: failedSearches,
     halted: result.halted ?? null,
   });
   return result;
