@@ -16,6 +16,8 @@ export function ProspectsPerDaySection() {
     queryKey: ["measure", "funnel", DAYS],
     queryFn: () => api.measureFunnel(DAYS),
     staleTime: 60_000,
+    // Polled, so a page left open past midnight moves "today" with the clock.
+    refetchInterval: 60_000,
   });
   const rows = (q.data?.days ?? []).map((d) => {
     const sum = (pick: (f: (typeof d.finders)[number]) => number) =>
