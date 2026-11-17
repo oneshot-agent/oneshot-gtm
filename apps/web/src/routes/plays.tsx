@@ -22,6 +22,7 @@ const CHANNEL_ICON = {
   direct_mail: Mail,
   sms: MessageSquare,
   voice: Phone,
+  call: Phone,
   linkedin: MessageSquare,
   x: AtSign,
   reddit: MessageSquare,

@@ -12,7 +12,7 @@ import { cn } from "../../lib/cn.ts";
  *   accent: cobalt outline for rare informational actions.
  *   receipt: receipt-green outline; the total line's "Send this one".
  */
-const buttonStyles = cva(
+export const buttonStyles = cva(
   [
     "relative inline-flex items-center justify-center gap-1.5",
     "font-sans font-medium",

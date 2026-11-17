@@ -1,0 +1,235 @@
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
+import type { CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
+import { api } from "../api/client.ts";
+import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
+import { NoNumber } from "../components/calls/NoNumber.tsx";
+import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
+import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
+import { cn, timeAgo } from "../lib/cn.ts";
+import { findRow, nextRow, outcomeTitle, sectionRows, windowHint } from "../lib/dialler.ts";
+import { useMask } from "../lib/privacy.tsx";
+
+interface CallsSearch {
+  /** The open row, e.g. from a cadence's "Open call". */
+  prospect?: number;
+}
+
+export const Route = createFileRoute("/calls")({
+  staticData: { title: "Calls" },
+  validateSearch: (search: Record<string, unknown>): CallsSearch => {
+    const id = Number(search["prospect"]);
+    return Number.isInteger(id) && id > 0 ? { prospect: id } : {};
+  },
+  component: CallsPage,
+});
+
+function CallsPage() {
+  const { prospect } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
+  const open = (id: number | null) =>
+    void navigate({ search: id == null ? {} : { prospect: id }, replace: true });
+  return <CallsView data={query.data} error={query.error} selected={prospect} onOpen={open} />;
+}
+
+/** The page body, apart from the router so it renders from data alone. */
+export function CallsView({
+  data,
+  error,
+  selected,
+  onOpen,
+}: {
+  data: CallListResponse | undefined;
+  error?: Error | null;
+  selected: number | undefined;
+  onOpen: (prospectId: number | null) => void;
+}) {
+  // When Call was pressed, per prospect: the panel's timer reads it.
+  const [started, setStarted] = useState<{ prospectId: number; at: number } | null>(null);
+  const start = (prospectId: number) => setStarted({ prospectId, at: Date.now() });
+
+  const header = (
+    <div>
+      <h1 className="ln-eyebrow mb-1">Calls</h1>
+      <p className="text-[13px] text-ink-muted">
+        Due cadence calls first, then everyone else with a number.
+        {data?.enabled &&
+          ` Calls go out ${data.window.start}–${data.window.end} their time${data.window.weekdays ? ", weekdays" : ""}.`}
+      </p>
+    </div>
+  );
+
+  if (error) {
+    return (
+      <div className="flex flex-col gap-6">
+        {header}
+        <div className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+          couldn't load calls · {error.message}
+        </div>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="flex flex-col gap-6">
+        {header}
+        <div className="rounded-[var(--radius-md)] border border-ink-rule">
+          {[0, 1, 2].map((i) => (
+            <SkeletonRow key={i} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (!data.enabled) {
+    return (
+      <div className="flex flex-col gap-6">
+        {header}
+        <EmptyNote
+          note={
+            <>
+              Calls are off for this workspace. Turn them on in{" "}
+              <Link
+                to="/setup"
+                hash="calls"
+                className="text-ink-cream underline underline-offset-2"
+              >
+                Setup
+              </Link>
+              .
+            </>
+          }
+        />
+      </div>
+    );
+  }
+
+  const row = selected != null ? findRow(data, selected) : null;
+  const next = row ? nextRow(sectionRows(data, row.prospectId), row.prospectId) : null;
+  const section = (title: string, rows: CallListRow[], empty: string) => (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-[13px] font-medium text-ink-cream">
+        {title} {rows.length > 0 && `(${rows.length})`}
+      </h2>
+      {rows.length === 0 ? (
+        <div className="text-[12px] text-ink-faint">{empty}</div>
+      ) : (
+        <div className="flex flex-col divide-y divide-ink-rule rounded-[var(--radius-md)] border border-ink-rule">
+          {rows.map((r) => (
+            <CallRow
+              key={r.prospectId}
+              row={r}
+              data={data}
+              open={r.prospectId === selected}
+              onOpen={() => onOpen(r.prospectId)}
+              onStart={() => {
+                onOpen(r.prospectId);
+                start(r.prospectId);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {header}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <div className="flex min-w-0 flex-col gap-8">
+          {section("Due", data.due, "No cadence calls due.")}
+          {section("Call list", data.list, "Nobody else with a number.")}
+        </div>
+        <div className="min-w-0 lg:sticky lg:top-0 lg:self-start">
+          {row ? (
+            <DialPanel
+              key={row.prospectId}
+              row={row}
+              next={next}
+              dialMode={data.dialMode}
+              window={data.window}
+              startedAt={started?.prospectId === row.prospectId ? started.at : null}
+              onStart={() => start(row.prospectId)}
+              onOpen={onOpen}
+            />
+          ) : selected != null ? (
+            <EmptyNote note="This person isn't on the call list: no usable number, or they can't be contacted." />
+          ) : (
+            <div className="text-[12px] text-ink-faint">Open someone to see their brief.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CallRow({
+  row,
+  data,
+  open,
+  onOpen,
+  onStart,
+}: {
+  row: CallListRow;
+  data: CallListResponse;
+  open: boolean;
+  onOpen: () => void;
+  onStart: () => void;
+}) {
+  const mask = useMask();
+  const hint = windowHint(row, data.window);
+  const dialable = row.phone != null && !hint && data.dialMode === "tel";
+  return (
+    <div
+      onClick={(e) => {
+        // The row's own links and buttons must not also open it.
+        if ((e.target as HTMLElement).closest("a, button")) return;
+        onOpen();
+      }}
+      className={cn(
+        "flex cursor-pointer items-start justify-between gap-4 px-4 py-3",
+        "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
+        open && "bg-ink-surface",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="truncate text-left text-[13px] text-ink-cream hover:underline"
+        >
+          {mask("name", row.name) || "—"}
+        </button>
+        <div className="truncate text-[12px] text-ink-muted">
+          {[row.title, mask("company", row.company)].filter(Boolean).join(" · ")}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-ink-muted">
+          {row.phone == null ? (
+            <NoNumber row={row} />
+          ) : dialable ? (
+            <a href={`tel:${row.phone}`} onClick={onStart} className="hover:text-ink-cream">
+              {mask("phone", row.phone)}
+            </a>
+          ) : (
+            <span>{mask("phone", row.phone)}</span>
+          )}
+          {row.local.localTime && <span>· {row.local.localTime} their time</span>}
+          <span>· {row.reason}</span>
+          {row.lastTouchAt && <span>· last touch {timeAgo(row.lastTouchAt)}</span>}
+          {row.lastCall && (
+            <span>
+              · last call {outcomeTitle(row.lastCall.outcome)} {timeAgo(row.lastCall.at)}
+            </span>
+          )}
+        </div>
+      </div>
+      {/* The bridge's button lives in the panel only. */}
+      {(data.dialMode === "tel" || hint) && (
+        <CallControl row={row} dialMode={data.dialMode} hint={hint} onStart={onStart} />
+      )}
+    </div>
+  );
+}

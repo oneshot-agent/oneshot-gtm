@@ -10,6 +10,7 @@ import {
   Inbox,
   Layers,
   Mail,
+  Phone,
   Receipt,
   Settings,
   Users,
@@ -53,6 +54,7 @@ interface NavItem {
     | "/prospects"
     | "/inbox"
     | "/cadences"
+    | "/calls"
     | "/meetings"
     | "/receipts"
     | "/measure"
@@ -62,6 +64,8 @@ interface NavItem {
   icon: ComponentType<{ size?: number; className?: string }>;
   /** Which alert-data key, if any, lights a dot next to this nav item. */
   alert?: "queue-pending" | "doctor-fail" | "inbox-positive" | "meetings-pending";
+  /** Shown only when the workspace has this switched on. */
+  requires?: "calls";
 }
 
 const NAV: NavItem[] = [
@@ -70,12 +74,18 @@ const NAV: NavItem[] = [
   { to: "/prospects", label: "Prospects", icon: Users },
   { to: "/inbox", label: "Replies", icon: Mail, alert: "inbox-positive" },
   { to: "/cadences", label: "Cadences", icon: Layers },
+  { to: "/calls", label: "Calls", icon: Phone, requires: "calls" },
   { to: "/meetings", label: "Meetings", icon: CalendarClock, alert: "meetings-pending" },
   { to: "/receipts", label: "Receipts", icon: Receipt },
   { to: "/measure", label: "Measure", icon: BarChart3 },
   { to: "/plays", label: "Plays", icon: Feather },
   { to: "/setup", label: "Setup", icon: Settings, alert: "doctor-fail" },
 ];
+
+/** The nav as this workspace shows it: Calls only when calls are on. */
+export function navItems(enabled: { calls: boolean }): NavItem[] {
+  return NAV.filter((item) => !item.requires || enabled[item.requires]);
+}
 
 function RootLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -133,6 +143,14 @@ function RootLayout() {
     queryFn: api.meetings,
     refetchInterval: 60_000,
   });
+  // The Calls link shows only when calls are on. The same query /calls reads,
+  // so opening the page starts from it.
+  const callsQuery = useQuery({
+    queryKey: ["calls"],
+    queryFn: api.calls,
+    refetchInterval: 60_000,
+    retry: false,
+  });
 
   // <main> is the scroll container and it persists across routes, so without
   // this a navigation inherits the previous page's scroll offset: scroll down
@@ -174,6 +192,7 @@ function RootLayout() {
     "inbox-positive": (inboxAlertQuery.data?.threads ?? []).some(replyNeedsAttention),
     "meetings-pending": (meetingsAlertQuery.data?.awaitingOutcome.length ?? 0) > 0,
   };
+  const nav = navItems({ calls: callsQuery.data?.enabled === true });
 
   return (
     <PrivacyProvider>
@@ -226,7 +245,7 @@ function RootLayout() {
             </div>
 
             <nav className="flex flex-col gap-0.5" aria-label="primary">
-              {NAV.map(({ to, label, icon: Icon, alert }) => {
+              {nav.map(({ to, label, icon: Icon, alert }) => {
                 const hasAlert = alert ? alerts[alert] : false;
                 return (
                   <Link
