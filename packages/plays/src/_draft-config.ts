@@ -185,6 +185,9 @@ export function cadenceDraftSurface(payload: unknown): DraftSurface | null {
     case "linkedin_message":
     case "linkedin_invite":
       return { channel: "linkedin", stage: "follow_up" };
+    // A call brief is read, never sent as written: never stale.
+    case "call":
+      return null;
     default:
       return null;
   }

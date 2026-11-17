@@ -36,6 +36,7 @@ import {
   type OneShotConfig,
   isSlackWebhookUrl,
   getLedger,
+  callsOf,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -242,6 +243,9 @@ export async function getSetupStatus(req: Request): Promise<Response> {
   return jsonResponse(
     {
       cfg: publicCfg(cfg),
+      // The dialler's settings with every default filled (no secrets: the
+      // provider keys live in .env).
+      calls: callsOf(cfg),
       identities: identityViews(cfg),
       linkedinReads: linkedInReadsView(cfg),
       provisionedDomains: await cachedDomainViews(),
@@ -677,9 +681,11 @@ export function mergeSetupConfig(
     offerChecks: _checks,
     offerAnchor: _anchor,
     linkedin: _linkedin,
+    calls: _calls,
     ...kept
   } = current;
   const linkedin = mergeLinkedIn(body.linkedin, current.linkedin);
+  const calls = mergeCalls(body.calls, current.calls);
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
   const offerRules = mergeOfferRules(body.offerRules, current.offerRules);
   const offerChecks = mergeOfferChecks(body.offerChecks, current.offerChecks);
@@ -698,6 +704,7 @@ export function mergeSetupConfig(
     ...(offerChecks ? { offerChecks } : {}),
     ...(offerAnchor ? { offerAnchor } : {}),
     ...(linkedin ? { linkedin } : {}),
+    ...(calls ? { calls } : {}),
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
@@ -889,6 +896,83 @@ export function mergeLinkedIn(
     ...(templates ? { templates } : {}),
   };
   return Object.keys(next).length > 0 ? next : undefined;
+}
+
+const CALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const whole = (v: unknown, min: number) => typeof v === "number" && Number.isInteger(v) && v >= min;
+
+/**
+ * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
+ * `bridge` (set by `calls setup`, never by this form) survives a Setup save.
+ * Each key present replaces the stored one; `cadenceStep: null` removes the
+ * step (the Calls page only). A position under 2 (the first email is 1), a
+ * negative or fractional delay, a hold under a day, or a window that is not
+ * two HH:MM times with the start first is a 400.
+ */
+export function mergeCalls(
+  incoming: SetupRequest["calls"],
+  current: OneShotConfig["calls"],
+): OneShotConfig["calls"] {
+  if (incoming === undefined) return current;
+  if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming))
+    throw new SetupValidationError("calls must be an object");
+  const next: NonNullable<OneShotConfig["calls"]> = {
+    ...current,
+    enabled: current?.enabled ?? false,
+  };
+  if (incoming.enabled !== undefined) {
+    if (typeof incoming.enabled !== "boolean")
+      throw new SetupValidationError("calls.enabled must be true or false");
+    next.enabled = incoming.enabled;
+  }
+  if (incoming.cadenceStep !== undefined) {
+    const step = incoming.cadenceStep;
+    if (step === null) {
+      next.cadenceStep = null;
+    } else {
+      if (!step || typeof step !== "object" || !whole(step.position, 2))
+        throw new SetupValidationError(
+          "calls.cadenceStep.position must be a whole number, 2 or more (the first email is 1)",
+        );
+      if (!whole(step.delayDays, 0))
+        throw new SetupValidationError(
+          "calls.cadenceStep.delayDays must be a whole number of days",
+        );
+      if (step.holdDays !== undefined && !whole(step.holdDays, 1))
+        throw new SetupValidationError(
+          "calls.cadenceStep.holdDays must be a whole number, 1 or more",
+        );
+      next.cadenceStep = {
+        position: step.position,
+        delayDays: step.delayDays,
+        ...(step.holdDays !== undefined ? { holdDays: step.holdDays } : {}),
+      };
+    }
+  }
+  if (incoming.window !== undefined) {
+    const w = incoming.window;
+    if (
+      !w ||
+      typeof w !== "object" ||
+      typeof w.start !== "string" ||
+      typeof w.end !== "string" ||
+      !CALL_TIME.test(w.start) ||
+      !CALL_TIME.test(w.end) ||
+      w.start >= w.end
+    )
+      throw new SetupValidationError(
+        "calls.window needs a start and an end like 09:00 and 17:00, the start first",
+      );
+    if (w.weekdays !== undefined && typeof w.weekdays !== "boolean")
+      throw new SetupValidationError("calls.window.weekdays must be true or false");
+    next.window = {
+      start: w.start,
+      end: w.end,
+      ...(w.weekdays !== undefined ? { weekdays: w.weekdays } : {}),
+    };
+  }
+  return next;
 }
 
 function mergeLinkedInWriter(
