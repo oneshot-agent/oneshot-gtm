@@ -102,6 +102,40 @@ describe("loopback requests", () => {
     expect((await post(SKIP_MAIL, proxied)).status).not.toBe(403);
   });
 
+  it("are refused when they came through tailscale serve with no host allowed: before the first is allowed, and after the last is disallowed", async () => {
+    // Serve can be running while the allowed list is empty. It repeats the
+    // Host it was sent in X-Forwarded-Host, so a forged loopback Host shows.
+    const tagged = {
+      ...LOOPBACK,
+      "x-forwarded-host": "127.0.0.1:3030",
+      "x-forwarded-for": "100.64.0.9",
+      "x-forwarded-proto": "https",
+    };
+    const cases: Array<Record<string, string>> = [
+      tagged,
+      { host: "localhost:3030", "x-forwarded-host": "localhost:3030" },
+      { ...LOOPBACK, "x-forwarded-host": "127.0.0.1:3030", "tailscale-funnel-request": "?1" },
+      viaTailscale("mia@example.com", "127.0.0.1:3030"),
+    ];
+    const refused = async (): Promise<void> => {
+      for (const headers of cases) {
+        expect((await get("/api/me", headers)).status).toBe(403);
+        // No Origin, the way a non-browser client posts.
+        expect((await post(SKIP_MAIL, headers)).status).toBe(403);
+      }
+    };
+
+    expect(getSharedDb().allowedHosts()).toEqual([]);
+    await refused();
+
+    seed();
+    getSharedDb().disallowHost(TAILNET);
+    expect(getSharedDb().allowedHosts()).toEqual([]);
+    await refused();
+    // The host machine itself is still the owner.
+    expect((await get("/api/me", LOOPBACK)).status).toBe(200);
+  });
+
   it("are refused when they came through a proxy once a host is allowed: a loopback Host alone is not the owner", async () => {
     seed();
     // `tailscale serve` picks its backend from the TLS name, so a tailnet

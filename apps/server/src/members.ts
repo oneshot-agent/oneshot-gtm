@@ -15,12 +15,17 @@ import type { CurrentMember } from "@oneshot-gtm/shared-types";
  *
  * `tailscale serve` picks its backend from the TLS server name, not the Host
  * header, so a tailnet device can send `Host: 127.0.0.1` through it. Such a
- * request still carries the proxy's `X-Forwarded-*` headers. So once a host is
- * allowed, which is what opens the install to a tailnet, a loopback Host that
- * arrives with proxy headers is not the owner. An install with no allowed
- * host keeps the old rule, a loopback Host is enough, so a proxy someone
- * already runs in front of it (docs/webhooks.md) works as before. See
- * docs/members.md.
+ * request still carries the proxy's `X-Forwarded-*` headers, and its
+ * `X-Forwarded-Host` repeats the Host it sent. Two rules follow:
+ *  - A loopback Host with a loopback `X-Forwarded-Host` is never the owner,
+ *    whatever the allowed list holds: it came through `tailscale serve`, and
+ *    serve can be running before a host is allowed or after the last one is
+ *    disallowed.
+ *  - Once a host is allowed, a loopback Host with any proxy header is not the
+ *    owner. With no host allowed, a proxy that rewrites the Host to loopback
+ *    (docs/webhooks.md) works as before: it carries the public name in
+ *    `X-Forwarded-Host`, or no such header.
+ * See docs/members.md.
  */
 
 const IDENTITY_HEADER = "tailscale-user-login";
@@ -42,6 +47,18 @@ function isLoopbackHostname(hostname: string): boolean {
 function hostnameOf(host: string | null): string | null {
   if (!host) return null;
   return host.replace(/:\d+$/, "").toLowerCase() || null;
+}
+
+/**
+ * True when the request came through `tailscale serve` under a loopback Host.
+ * Serve passes the Host on and sets `X-Forwarded-Host` to the same value, so
+ * for a loopback Host that header is loopback too; a client cannot remove it.
+ * Call this only for a request whose Host is loopback.
+ */
+function forwardedUnderLoopbackHost(req: Request): boolean {
+  if (req.headers.has("tailscale-funnel-request")) return true;
+  const forwarded = hostnameOf(req.headers.get("x-forwarded-host"));
+  return forwarded !== null && isLoopbackHostname(forwarded);
 }
 
 /**
@@ -112,6 +129,8 @@ export function currentMember(req: Request): CurrentMember | null {
 
   if (isLoopbackHostname(hostname)) {
     if (identity !== null) return null;
+    // Through `tailscale serve`, so not local. This holds with no host allowed too.
+    if (forwardedUnderLoopbackHost(req)) return null;
     // With a host allowed, a proxied request is not local, whatever Host it claims.
     if (PROXY_HEADERS.some((h) => req.headers.has(h)) && anyHostAllowed()) return null;
     return localOwner();

@@ -67,10 +67,10 @@ Read from Tailscale's source (`ipn/ipnlocal/serve.go`), since the gate depends o
 
 - **Host.** The browser's `Host` header is passed through unchanged: the tailnet name, with the port when it is not 443. It is not rewritten to the backend's address. That is why the name has to be allowed.
 - **Sign-in.** Any `Tailscale-User-Login` the client sent is removed, and Tailscale sets its own for a device signed in as a tailnet user. A tagged device and a Funnel visitor get none, so they are refused. A login with non-ASCII characters arrives RFC 2047 encoded and is decoded before the match.
-- **A loopback Host can be forged.** Over HTTPS the backend is chosen by the TLS server name, not the `Host` header, so a tailnet device can send `Host: 127.0.0.1` through it. Every proxied request carries `X-Forwarded-Host` and `X-Forwarded-For`, which the client cannot remove. So once a host is allowed, a request with a loopback `Host` and those headers is refused rather than treated as the owner.
+- **A loopback Host can be forged.** Over HTTPS the backend is chosen by the TLS server name, not the `Host` header, so a tailnet device can send `Host: 127.0.0.1` through it. Every proxied request carries `X-Forwarded-Host`, set to the `Host` the client sent, and `X-Forwarded-For`; the client cannot remove either. So a request with a loopback `Host` and a loopback `X-Forwarded-Host` is refused rather than treated as the owner, whether or not a host is allowed: `tailscale serve` can be running before you allow a host and after you disallow the last one. Once a host is allowed, a loopback `Host` with any forwarding header is refused.
 
 ## Limits
 
-- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md).
+- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md).
 - **Connecting Gmail.** Google's sign-in returns to a loopback address, so do it in a browser on the host machine.
 - **One sign-in method.** Identity comes from Tailscale only.
