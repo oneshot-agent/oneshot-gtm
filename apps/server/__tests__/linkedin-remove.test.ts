@@ -13,6 +13,10 @@ const { removeLinkedInAccount, forceReconnectLinkedInAccount } =
   await import("../src/linkedin-remove.ts");
 const { adoptPendingLinkedInReplacements } = await import("../src/linkedin-replacement.ts");
 const { startLinkedInBackfill, runLinkedInBackfill } = await import("../src/linkedin-backfill.ts");
+// Compile route dependencies before timed callbacks: a timed-out import can resume
+// inside the next test and consume its provider mock or mutate its inbox fixtures.
+const { linkedInThreads } = await import("../src/api/replies-view.ts");
+const { repliesLinkedInRoute } = await import("../src/api/replies.ts");
 const store = getLinkedInInboxStore();
 beforeEach(() => {
   store.db.exec(
@@ -70,7 +74,6 @@ it("removes access in the owner workspace, retains history, and prevents stale r
     accountId: "old",
   });
   historyPreserved();
-  const { linkedInThreads } = await import("../src/api/replies-view.ts");
   expect(linkedInThreads()[0]).toMatchObject({
     canSend: false,
     canGenerate: false,
@@ -160,7 +163,6 @@ it("does not open a new login before provider cleanup succeeds", async () => {
 });
 
 it("routes removal through the explicit action and keeps history readable", async () => {
-  const { repliesLinkedInRoute } = await import("../src/api/replies.ts");
   const request = new Request("http://localhost/api/replies/linkedin", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -173,7 +175,6 @@ it("routes removal through the explicit action and keeps history readable", asyn
 });
 
 it("distinguishes a missing account from an unknown action without calling the provider", async () => {
-  const { repliesLinkedInRoute } = await import("../src/api/replies.ts");
   for (const action of ["remove", "force-reconnect"]) {
     const response = await repliesLinkedInRoute(
       new Request("http://localhost/api/replies/linkedin", {
@@ -191,7 +192,6 @@ it("distinguishes a missing account from an unknown action without calling the p
 });
 
 it("adds a permission by reconnecting the same account in its owner workspace, with history untouched", async () => {
-  const { repliesLinkedInRoute } = await import("../src/api/replies.ts");
   // A refusal left over from asking with a second connection must not block this.
   store.saveAccount({
     ...store.account("wallet:old")!,

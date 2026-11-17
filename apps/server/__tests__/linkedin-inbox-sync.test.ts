@@ -108,3 +108,79 @@ it("upserts edited/deleted messages and preserves a manual assignment", async ()
   });
   expect(store.thread(key)?.owner).toEqual({ workspace: "chosen", prospectId: 7, manual: true });
 });
+
+it("keeps a connection started by B owned by B when A syncs first, without browser polling", async () => {
+  const { connectLinkedIn } = await import("../src/linkedin-connect.ts");
+  const account = { id: "new", status: "connected", allowed_actions: ["invite", "view_profile"] };
+  sdk.mockImplementation(async (_workspace, op) => {
+    if (op.kind === "connect") return { intent_id: "from-b", url: "https://example.com/login" };
+    if (op.kind === "connection") return { status: "completed", account };
+    if (op.kind === "accounts") return { wallet: "shared-wallet", accounts: [account] };
+    if (op.kind === "status") return { sync_state: "complete" };
+    if (op.kind === "conversations") return { conversations: [], has_more: false };
+    if (op.kind === "messages") return { messages: [], has_more: false };
+    throw new Error(`Unexpected operation ${op.kind}`);
+  });
+  await connectLinkedIn("beta");
+  process.env["ONESHOT_GTM_WORKSPACE"] = "alpha";
+  try {
+    await refreshLinkedInInbox(true);
+    expect(store.account("shared-wallet:new")?.workspace).toBe("beta");
+    expect(sdk.mock.calls).toContainEqual(["alpha", { kind: "accounts" }]);
+    expect(sdk.mock.calls).toContainEqual(["beta", { kind: "connection", intentId: "from-b" }]);
+    await refreshLinkedInInbox(true);
+    expect(store.account("shared-wallet:new")?.workspace).toBe("beta");
+    expect(sdk.mock.calls.filter(([, op]) => op.kind === "connection")).toHaveLength(1);
+  } finally {
+    delete process.env["ONESHOT_GTM_WORKSPACE"];
+  }
+});
+
+it("defers discovery while ownership is unresolved and retries a failed intent lookup", async () => {
+  const { connectLinkedIn } = await import("../src/linkedin-connect.ts");
+  const account = { id: "new", status: "connected", allowed_actions: ["invite"] };
+  let ready = false;
+  sdk.mockImplementation(async (_workspace, op) => {
+    if (op.kind === "connect") return { intent_id: "retry-b", url: "https://example.com/login" };
+    if (op.kind === "connection") {
+      if (!ready) throw new Error("temporary lookup failure");
+      return { status: "completed", account };
+    }
+    if (op.kind === "accounts") return { wallet: "shared-wallet", accounts: [account] };
+    if (op.kind === "status") return { sync_state: "complete" };
+    if (op.kind === "conversations") return { conversations: [], has_more: false };
+    if (op.kind === "messages") return { messages: [], has_more: false };
+    throw new Error(`Unexpected operation ${op.kind}`);
+  });
+  await connectLinkedIn("beta");
+  await refreshLinkedInInbox(true);
+  expect(store.accounts()).toEqual([]);
+  ready = true;
+  await refreshLinkedInInbox(true);
+  expect(store.account("shared-wallet:new")?.workspace).toBe("beta");
+});
+
+it("does not claim a new account when its connection starts during another workspace's discovery", async () => {
+  const { connectLinkedIn } = await import("../src/linkedin-connect.ts");
+  let started = false;
+  const account = { id: "racing", status: "connected", allowed_actions: ["invite"] };
+  sdk.mockImplementation(async (_workspace, op) => {
+    if (op.kind === "connect") return { intent_id: "race-b", url: "https://example.com/login" };
+    if (op.kind === "connection") return { status: "completed", account };
+    if (op.kind === "accounts") {
+      if (!started) {
+        started = true;
+        await connectLinkedIn("beta");
+      }
+      return { wallet: "shared-wallet", accounts: [account] };
+    }
+    if (op.kind === "status") return { sync_state: "complete" };
+    if (op.kind === "conversations") return { conversations: [], has_more: false };
+    if (op.kind === "messages") return { messages: [], has_more: false };
+    throw new Error(`Unexpected operation ${op.kind}`);
+  });
+  await refreshLinkedInInbox(true);
+  expect(store.account("shared-wallet:racing")).toBeNull();
+  await refreshLinkedInInbox(true);
+  expect(store.account("shared-wallet:racing")?.workspace).toBe("beta");
+});

@@ -450,6 +450,7 @@ export const api = {
         linkedinSessionInvalidAt?: string | null;
         linkedinReadsPerDay?: number;
         linkedin?: {
+          accountKey?: string;
           invitesPerDay?: number;
           writer?: "template" | "model";
           templates?: Partial<Record<LinkedInTemplateStep, string>>;

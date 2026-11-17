@@ -3,8 +3,13 @@ import type { LinkedInAccount } from "@oneshot-agent/sdk";
 import {
   getLinkedInInboxStore,
   linkedInProfileReadAccount,
+  linkedInOutreachAccount,
+  linkedInAccountSelectionBlocker,
+  linkedInConversationFor,
   linkedInProfileReadBlocker,
 } from "../src/linkedin-inbox.ts";
+
+import { loadConfig, saveConfig } from "../src/config.ts";
 
 // Which connected account person research reads profiles through, and why
 // none can: never connected, needs a reconnect, or not granted profile views.
@@ -31,7 +36,8 @@ function save(
 }
 
 beforeEach(() => {
-  store.db.exec("DELETE FROM accounts");
+  store.db.exec("DELETE FROM accounts; DELETE FROM conversations;");
+  saveConfig({ ...loadConfig(), linkedin: undefined });
 });
 
 describe("linkedInProfileReadAccount", () => {
@@ -40,17 +46,26 @@ describe("linkedInProfileReadAccount", () => {
     expect(linkedInProfileReadBlocker()).toBe("none");
   });
 
-  it("picks a connected account granted profile views, the outreach account first", () => {
+  it("blocks sends and reads when several accounts have no selection", () => {
     save("reader", "alpha", "connected", ["read", "view_profile"]);
     save("outreach", "beta", "connected", ["read", "view_profile", "invite"]);
-    expect(linkedInProfileReadAccount()).toEqual({ workspace: "beta", accountId: "outreach" });
-    expect(linkedInProfileReadBlocker()).toBeNull();
+    expect(linkedInProfileReadAccount()).toBeNull();
+    expect(linkedInOutreachAccount()).toBeNull();
+    expect(linkedInProfileReadBlocker()).toBe("ambiguous");
   });
 
-  it("passes over the outreach account when it may not view profiles", () => {
+  it("never passes over the selected account when it loses grants", () => {
     save("outreach", "beta", "connected", ["read", "invite"]);
     save("reader", "alpha", "connected", ["view_profile"]);
-    expect(linkedInProfileReadAccount()).toEqual({ workspace: "alpha", accountId: "reader" });
+    saveConfig({ ...loadConfig(), linkedin: { accountKey: "wallet-beta:outreach" } });
+    expect(linkedInProfileReadAccount()).toBeNull();
+    expect(linkedInProfileReadBlocker()).toBe("no-grant");
+    save("outreach", "beta", "connected", ["read"]);
+    expect(linkedInOutreachAccount()).toEqual({
+      workspace: "beta",
+      accountId: "outreach",
+      canInvite: false,
+    });
   });
 
   it("says why no account can read: the grant, or a reconnect", () => {
@@ -64,4 +79,50 @@ describe("linkedInProfileReadAccount", () => {
     save("gone", "gamma", "connected", ["view_profile"], "2026-10-01T00:00:00.000Z");
     expect(linkedInProfileReadBlocker()).toBe("none");
   });
+});
+
+it("keeps single-account automatic selection unchanged", () => {
+  save("only", "alpha", "connected", ["invite", "view_profile"]);
+  expect(linkedInOutreachAccount()).toEqual({
+    workspace: "alpha",
+    accountId: "only",
+    canInvite: true,
+  });
+  expect(linkedInProfileReadAccount()).toEqual({ workspace: "alpha", accountId: "only" });
+  expect(linkedInAccountSelectionBlocker()).toBeNull();
+});
+
+it("never falls back when the selected account is disconnected, removed, or absent", () => {
+  save("other", "alpha", "connected", ["invite", "view_profile"]);
+  saveConfig({ ...loadConfig(), linkedin: { accountKey: "wallet-beta:selected" } });
+  expect(linkedInAccountSelectionBlocker()).toBe("missing");
+  expect(linkedInOutreachAccount()).toBeNull();
+  expect(linkedInProfileReadAccount()).toBeNull();
+  save("selected", "beta", "disconnected", ["invite", "view_profile"]);
+  expect(linkedInAccountSelectionBlocker()).toBe("disconnected");
+  expect(linkedInOutreachAccount()).toBeNull();
+  expect(linkedInProfileReadAccount()).toBeNull();
+  save("selected", "beta", "connected", ["invite", "view_profile"], "2026-11-17");
+  expect(linkedInAccountSelectionBlocker()).toBe("missing");
+  expect(linkedInOutreachAccount()).toBeNull();
+  expect(linkedInProfileReadAccount()).toBeNull();
+});
+
+it("only returns a cadence conversation belonging to the selected account", () => {
+  for (const owner of ["alpha", "beta"]) {
+    save(owner, owner, "connected", ["invite", "reply"]);
+    const accountKey = `wallet-${owner}:${owner}`;
+    store.saveConversation(accountKey, { id: owner, attendees: [] } as never, []);
+    store.assign(`linkedin:${accountKey}:${owner}`, { workspace: "alpha", prospectId: 1 });
+  }
+  const person = { workspace: "alpha", prospectId: 1, linkedinUrl: null };
+  expect(linkedInConversationFor(person)).toBeNull();
+  saveConfig({ ...loadConfig(), linkedin: { accountKey: "wallet-beta:beta" } });
+  expect(linkedInConversationFor(person)).toEqual({
+    conversationId: "beta",
+    accountId: "beta",
+    workspace: "beta",
+  });
+  save("beta", "beta", "disconnected", ["reply"]);
+  expect(linkedInConversationFor(person)).toBeNull();
 });

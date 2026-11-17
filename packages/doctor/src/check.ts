@@ -653,7 +653,8 @@ async function sourceRepoCheck(cfg: OneShotConfig): Promise<CheckResult | null> 
 
 /**
  * What live profile reads go through. A connected account that may view
- * profiles is "ok". One that needs a reconnect or the grant, with no working
+ * profiles is "ok". Selection errors pause sends and reads. Without an explicit
+ * selection, one that needs a reconnect or the grant, with no working
  * browser session behind it, is a warn: the reads are paused. Otherwise the
  * browser session reports: unset is fine (person research falls back to the
  * provider's history) and says so at "ok"; a cookie that never seeded a
@@ -672,6 +673,25 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   } catch {
     // an unreadable inbox store leaves the browser session to report
   }
+  if (
+    blocker === "ambiguous" ||
+    blocker === "missing" ||
+    (blocker === "disconnected" && cfg.linkedin?.accountKey)
+  ) {
+    return {
+      name,
+      group: "install",
+      severity: "warn",
+      message: `${
+        blocker === "ambiguous"
+          ? "several LinkedIn accounts are connected; this workspace has not selected one"
+          : blocker === "missing"
+            ? "this workspace's selected LinkedIn account was removed or is missing"
+            : "this workspace's selected LinkedIn account is disconnected"
+      } — LinkedIn sends and live profile reads are paused`,
+      hint: "choose a connected account on /setup → LinkedIn (linkedin.accountKey), or reconnect the selected account",
+    };
+  }
   if (blocker === null) {
     return {
       name,
@@ -683,7 +703,7 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   const browserOk = Boolean(
     cfg.linkedinBrowserProfileId && cfg.linkedinSessionCheckedAt && !cfg.linkedinSessionInvalidAt,
   );
-  if (blocker !== "none" && !browserOk) {
+  if (blocker !== "none" && (!browserOk || cfg.linkedin?.accountKey)) {
     return {
       name,
       group: "install",
