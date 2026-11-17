@@ -490,12 +490,19 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   const lines = body.split("\n").map((l) => l.trim());
   const greeting = leadingGreeting();
   const start = lines.findIndex((l) => l && !greeting.test(l));
-  if (start < 0) return true;
+  // The signature is the unpunctuated lines after the last sentence: a name
+  // or company there says nothing about what the product does.
+  let end = lines.length - 1;
+  while (end >= start && !/[.!?]["')]*$/.test(lines[end] ?? "")) end--;
+  if (start < 0 || end < start) return true;
   const sentences = lines
-    .slice(start)
+    .slice(start, end + 1)
     .join(" ")
     .split(/(?<=[.!?])\s/);
-  return !(offer ? sentences.slice(1) : sentences).some((s) => named.test(s));
+  // A question asks; it does not say what the product is.
+  return !(offer ? sentences.slice(1) : sentences).some(
+    (s) => !s.trim().endsWith("?") && named.test(s),
+  );
 }
 
 const OBSERVATION_OPENER =
