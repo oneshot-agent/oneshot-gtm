@@ -557,6 +557,50 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // The dialler (ledger-calls.ts): one row per call the founder made or
+    // logged. `provider` is 'tel' (a tel: link, nothing recorded) or 'twilio'
+    // (a bridged call: its SIDs, then the transcript and the model's
+    // suggested outcome). `outcome` is a shared-types `CallOutcome`, NULL
+    // until logged; `reply_intent` is the reply label it counts as, when it
+    // means one. `phone` is the number dialled, kept after a wrong-number
+    // clears the prospect's. A brief written for someone outside a cadence is
+    // cached per prospect in `call_briefs`, so reopening them pays nothing.
+    version: 25,
+    name: "calls",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS calls (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          prospect_id        INTEGER NOT NULL,
+          play_name          TEXT,
+          started_at         TEXT NOT NULL,
+          duration_sec       INTEGER,
+          outcome            TEXT,
+          reply_intent       TEXT,
+          note               TEXT,
+          phone              TEXT,
+          provider           TEXT NOT NULL DEFAULT 'tel',
+          provider_call_sid  TEXT,
+          recording_sid      TEXT,
+          transcript_status  TEXT NOT NULL DEFAULT 'none',
+          transcript_json    TEXT,
+          summary_json       TEXT,
+          created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_calls_prospect ON calls(prospect_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome);
+        CREATE TABLE IF NOT EXISTS call_briefs (
+          prospect_id  INTEGER PRIMARY KEY,
+          play_name    TEXT,
+          brief_json   TEXT NOT NULL,
+          brief_at     TEXT NOT NULL,
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        );
+      `);
+    },
+  },
 ];
 
 /**

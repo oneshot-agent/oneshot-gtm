@@ -33,6 +33,11 @@ export function contactAllowedClause(db: Database): string {
     SELECT 1 FROM inbox_replies ir WHERE ir.intent = 'unsubscribe'
       AND (ir.prospect_id = p.id OR lower(ir.from_email) = lower(p.email)))`);
   }
+  // Asked on a call not to be contacted again (ledger-calls.ts): every
+  // channel, whether or not a cadence was running to stop.
+  if (hasTable(db, "calls"))
+    clauses.push(`NOT EXISTS (
+    SELECT 1 FROM calls cl WHERE cl.prospect_id = p.id AND cl.outcome = 'do_not_contact')`);
   // Sync may have persisted a verdict before the cadence poll consumes it.
   if (
     db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_messages'").get()

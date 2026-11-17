@@ -940,6 +940,7 @@ export function setCadenceDraft(
         : null;
     // A LinkedIn message, connection request or known-connection skip is a
     // previewed non-email cadence draft; its version must not read as an email draft.
+    // A call brief is the founder's notes for a call, not an email draft either.
     const channel =
       payload &&
       typeof payload === "object" &&
@@ -947,7 +948,9 @@ export function setCadenceDraft(
         payload.kind === "linkedin_invite" ||
         payload.kind === "linkedin_connected")
         ? "linkedin"
-        : undefined;
+        : payload && typeof payload === "object" && payload.kind === "call"
+          ? "call"
+          : undefined;
     drafts.open({
       ...key,
       subject: input.draft.subject,
@@ -1251,7 +1254,7 @@ export function markLatestStepReplied(
     prospectId: number;
     playName: string;
     repliedAt?: string | null;
-    channel?: "email" | "linkedin";
+    channel?: "email" | "linkedin" | "call";
   },
 ): boolean {
   const channel = input.channel ?? "email";

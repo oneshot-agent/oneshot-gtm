@@ -689,6 +689,18 @@ export interface SetupRequest {
     templates?: Partial<Record<LinkedInTemplateStep, string>> | null;
     writer?: "template" | "model" | null;
   };
+  /**
+   * The dialler. `undefined` = leave unchanged. Each key present replaces the
+   * stored one (`cadenceStep: null` = the Calls page only); a key left out is
+   * kept, and so is a configured `bridge`, which this form never edits.
+   * Positions count the first email as 1 (2 or more); times are HH:MM with
+   * the start first. Anything else is a 400.
+   */
+  calls?: {
+    enabled?: boolean;
+    cadenceStep?: { position: number; delayDays: number; holdDays?: number } | null;
+    window?: { start: string; end: string; weekdays?: boolean };
+  };
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
   /** Slack incoming-webhook URL for reply/bounce/daily-summary notifications. Empty string clears it (feature off). */

@@ -148,6 +148,23 @@ import {
   outcomesByPlay as outOutcomesByPlay,
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
+import {
+  callAllowed as callsCallAllowed,
+  clearProspectPhone as callsClearProspectPhone,
+  getCall as callsGetCall,
+  getCallBrief as callsGetCallBrief,
+  insertCall as callsInsertCall,
+  lastCallsFor as callsLastCallsFor,
+  lastTouchFor as callsLastTouchFor,
+  listCallCandidates as callsListCallCandidates,
+  listCallsForProspect as callsListCallsForProspect,
+  phoneForCall as callsPhoneForCall,
+  recordCallChannelEvent as callsRecordCallChannelEvent,
+  saveCallBrief as callsSaveCallBrief,
+  setCallOutcome as callsSetCallOutcome,
+  type CallCandidate,
+} from "./ledger-calls.ts";
+import type { CallRecordView } from "@oneshot-gtm/shared-types";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { LearningStore } from "./learning-store.ts";
 import { CodeAnswerStore } from "./code-answers-store.ts";
@@ -1863,9 +1880,74 @@ export class Ledger {
     prospectId: number;
     playName: string;
     repliedAt?: string | null;
-    channel?: "email" | "linkedin";
+    channel?: "email" | "linkedin" | "call";
   }): boolean {
     return cadMarkLatestStepReplied(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#insertCall */
+  insertCall(input: Parameters<typeof callsInsertCall>[1]): number {
+    return callsInsertCall(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#setCallOutcome */
+  setCallOutcome(input: Parameters<typeof callsSetCallOutcome>[1]): boolean {
+    return callsSetCallOutcome(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#getCall */
+  getCall(id: number): CallRecordView | null {
+    return callsGetCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#listCallsForProspect */
+  listCallsForProspect(prospectId: number): CallRecordView[] {
+    return callsListCallsForProspect(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#lastCallsFor */
+  lastCallsFor(prospectIds: readonly number[]): ReturnType<typeof callsLastCallsFor> {
+    return callsLastCallsFor(this.db, prospectIds);
+  }
+
+  /** @see ledger-calls.ts#recordCallChannelEvent */
+  recordCallChannelEvent(input: Parameters<typeof callsRecordCallChannelEvent>[1]): void {
+    callsRecordCallChannelEvent(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#clearProspectPhone */
+  clearProspectPhone(prospectId: number): void {
+    callsClearProspectPhone(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#phoneForCall */
+  phoneForCall(prospectId: number, defaultCountry?: string): ReturnType<typeof callsPhoneForCall> {
+    return callsPhoneForCall(this.db, prospectId, defaultCountry);
+  }
+
+  /** @see ledger-calls.ts#getCallBrief */
+  getCallBrief(prospectId: number): ReturnType<typeof callsGetCallBrief> {
+    return callsGetCallBrief(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#saveCallBrief */
+  saveCallBrief(input: Parameters<typeof callsSaveCallBrief>[1]): void {
+    callsSaveCallBrief(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#listCallCandidates */
+  listCallCandidates(opts: Parameters<typeof callsListCallCandidates>[1]): CallCandidate[] {
+    return callsListCallCandidates(this.db, opts);
+  }
+
+  /** @see ledger-calls.ts#callAllowed */
+  callAllowed(prospectId: number): boolean {
+    return callsCallAllowed(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#lastTouchFor */
+  lastTouchFor(prospectIds: readonly number[]): Map<number, string> {
+    return callsLastTouchFor(this.db, prospectIds);
   }
 
   /** @see ledger-cadence.ts#recordCadenceReply */
