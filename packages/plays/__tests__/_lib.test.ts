@@ -725,6 +725,10 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai"),
       ).toContain("no-product-line");
+      // "Dr." does not end the offer sentence.
+      expect(
+        check("I can run Dr. Acme.ai's open treatment plans to booked visits for you."),
+      ).toContain("no-product-line");
       expect(
         check(
           "Want me to run your open treatment plans to booked visits? Acme.ai follows up with each patient until they book.\n\nSam\nacme.ai",

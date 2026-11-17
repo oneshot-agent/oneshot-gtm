@@ -66,6 +66,9 @@ function clipText(text: string, max: number): string {
 
 /** Leading words that open a one-liner without naming the product. */
 const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
+/** What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…". */
+const NAME_FOLLOWER =
+  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets)\b|\s+[a-z]*[^\Ws]s\b)/;
 
 /**
  * The product's name as the founder's one-liner opens with it ("OneShot is the
@@ -73,7 +76,9 @@ const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "m
  * offered. Null when the one-liner is unset or does not open with a name.
  */
 export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
-  const first = cfg.productOneLiner?.trim().match(/^[A-Z][\w.-]*\w/)?.[0];
-  if (!first || NOT_A_NAME.has(first.toLowerCase())) return null;
-  return first;
+  const m = cfg.productOneLiner?.trim().match(/^([A-Z][\w.-]*\w)(?:\s+[A-Z][\w.-]*\w)*(.*)$/s);
+  if (!m || NOT_A_NAME.has(m[1]!.toLowerCase())) return null;
+  // A name is what the sentence is about: a verb or a clause mark follows it.
+  // "Automate patient follow-ups" opens on an instruction, not a name.
+  return NAME_FOLLOWER.test(m[2]!) ? m[1]! : null;
 }

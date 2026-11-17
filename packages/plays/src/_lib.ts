@@ -495,9 +495,13 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   let end = lines.length - 1;
   while (end >= start && !/[.!?]["')]*$/.test(lines[end] ?? "")) end--;
   if (start < 0 || end < start) return true;
+  // Keep abbreviations inside their sentence ("Dr. Lee"), with the same rules
+  // the sentence counter uses.
   const sentences = lines
     .slice(start, end + 1)
     .join(" ")
+    .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
     .split(/(?<=[.!?])\s/);
   // A question asks; it does not say what the product is.
   return !(offer ? sentences.slice(1) : sentences).some(

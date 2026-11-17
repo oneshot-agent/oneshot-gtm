@@ -13,6 +13,8 @@ describe("productNameOf", () => {
       "Acme",
     );
     expect(productNameOf({ productOneLiner: "Acme.ai finds leaks." })).toBe("Acme.ai");
+    expect(productNameOf({ productOneLiner: "Acme: clinics book more." })).toBe("Acme");
+    expect(productNameOf({ productOneLiner: "Acme's agents book patients." })).toBe("Acme");
   });
 
   it("is null when the one-liner does not open with a name", () => {
@@ -21,5 +23,8 @@ describe("productNameOf", () => {
     expect(productNameOf({ productOneLiner: "We help clinics book patients." })).toBeNull();
     expect(productNameOf({ productOneLiner: "A tool for clinics." })).toBeNull();
     expect(productNameOf({ productOneLiner: "helps clinics book patients" })).toBeNull();
+    expect(
+      productNameOf({ productOneLiner: "Automate patient follow-ups for clinics." }),
+    ).toBeNull();
   });
 });
