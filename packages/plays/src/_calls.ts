@@ -23,12 +23,14 @@ import {
   CALL_REPLY_OUTCOMES,
   angleBlockFromJson,
   callsOf,
+  defaultPhoneCountry,
   doNotContactMatch,
   doNotContactOf,
   getLedger,
   loadConfig,
   logEvent,
   phoneLocalTime,
+  pickCallPhone,
   productBriefText,
   type CallCandidate,
   type OneShotConfig,
@@ -485,12 +487,15 @@ export function listCalls(now: Date = new Date()): CallListResponse {
 
   const due: CallListRow[] = [];
   const dueIds = new Set<number>();
-  for (const cad of ledger.listActiveCadences({ dueByIso: now.toISOString() })) {
-    if (dueIds.has(cad.prospect_id)) continue;
+  const dueCalls = ledger.listActiveCadences({ dueByIso: now.toISOString() }).flatMap((cad) => {
     const next = nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id);
-    if (next?.channel !== "call") continue;
-    if (!ledger.callAllowed(cad.prospect_id) || blocked(cad.prospect_id, cad.prospect_email))
-      continue;
+    return next?.channel === "call" ? [{ cad, next }] : [];
+  });
+  // One opt-out read for every due row, not one per row.
+  const allowed = ledger.callAllowedIds([...new Set(dueCalls.map((d) => d.cad.prospect_id))]);
+  for (const { cad, next } of dueCalls) {
+    if (dueIds.has(cad.prospect_id)) continue;
+    if (!allowed.has(cad.prospect_id) || blocked(cad.prospect_id, cad.prospect_email)) continue;
     const phone = phoneForCall(cad.prospect_id, cfg);
     dueIds.add(cad.prospect_id);
     due.push({
@@ -510,13 +515,23 @@ export function listCalls(now: Date = new Date()): CallListResponse {
   }
 
   const list: CallListRow[] = [];
-  for (const c of ledger.listCallCandidates({
+  const candidates = ledger.listCallCandidates({
     limit: CALL_LIST_LIMIT * 2,
     excludeProspectIds: [...dueIds],
-  })) {
+  });
+  const country = defaultPhoneCountry(cfg);
+  const wrong = ledger.wrongNumbersFor(
+    candidates.map((c) => c.prospectId),
+    country,
+  );
+  for (const c of candidates) {
     if (list.length >= CALL_LIST_LIMIT) break;
     if (blocked(c.prospectId, c.email)) continue;
-    const phone = phoneForCall(c.prospectId, cfg);
+    const phone = pickCallPhone(
+      { prospectPhone: c.prospectPhone, queuePhone: c.queuePhone, queueId: c.queueId },
+      wrong.get(c.prospectId),
+      country,
+    );
     if (!phone.phone) continue;
     list.push({
       prospectId: c.prospectId,

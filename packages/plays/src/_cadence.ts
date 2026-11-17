@@ -4031,7 +4031,6 @@ export function skipCadenceLinkedInSteps(input: {
   return true;
 }
 
-/** Advance past the current step, completing the cadence after the last one. */
 /**
  * The number to call a prospect on (`Ledger.phoneForCall`): their own phone,
  * else their queue row's, as E.164, reading national numbers in the
@@ -4127,6 +4126,7 @@ export function callStepIsNext(prospectId: number, playName: string): boolean {
   return nextStepInfo(playName, cadence.current_step, prospectId)?.channel === "call";
 }
 
+/** Advance past the current step, completing the cadence after the last one. */
 function advanceOrComplete(
   opts: RunCadenceStepOptions,
   seq: Sequence,

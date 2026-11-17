@@ -49,6 +49,52 @@ export function contactAllowedClause(db: Database): string {
   return clauses.length ? clauses.join(" AND ") : "1=1";
 }
 
+/**
+ * `contactAllowedClause` for a query over many prospects: the same opt-outs,
+ * read once as id and address sets instead of once per prospect. The
+ * per-prospect form scans `mailbox_messages` for each row, which took over
+ * two minutes across a few thousand prospects on a real ledger.
+ */
+export function contactAllowedSetClause(db: Database): string {
+  // Each part names its column `id` / `email`: a UNION takes the first part's names.
+  const ids: string[] = [];
+  const emails: string[] = [];
+  if (hasTable(db, "cadence_state"))
+    ids.push(`SELECT prospect_id AS id FROM cadence_state WHERE status = 'unsubscribed'`);
+  if (hasTable(db, "inbox_replies")) {
+    const columns = new Set(
+      (db.query("PRAGMA table_info(inbox_replies)").all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      ),
+    );
+    const said = [
+      ...(columns.has("kind") ? ["kind = 'unsubscribe'"] : []),
+      ...(columns.has("intent") ? ["intent = 'unsubscribe'"] : []),
+    ].join(" OR ");
+    if (said) {
+      ids.push(`SELECT prospect_id AS id FROM inbox_replies WHERE ${said}`);
+      emails.push(`SELECT lower(from_email) AS email FROM inbox_replies WHERE ${said}`);
+    }
+  }
+  if (hasTable(db, "calls"))
+    ids.push(`SELECT prospect_id AS id FROM calls WHERE outcome = 'do_not_contact'`);
+  if (hasTable(db, "mailbox_messages")) {
+    const said = `direction = 'inbound' AND json_extract(data, '$.kind') = 'unsubscribe'`;
+    ids.push(`SELECT prospect_id AS id FROM mailbox_messages WHERE ${said}`);
+    emails.push(
+      `SELECT lower(json_extract(data, '$.from')) AS email FROM mailbox_messages WHERE ${said}`,
+    );
+  }
+  const clauses: string[] = [];
+  if (ids.length)
+    clauses.push(`p.id NOT IN (SELECT id FROM (${ids.join(" UNION ")}) WHERE id IS NOT NULL)`);
+  if (emails.length)
+    clauses.push(
+      `(p.email IS NULL OR lower(p.email) NOT IN (SELECT email FROM (${emails.join(" UNION ")}) WHERE email IS NOT NULL))`,
+    );
+  return clauses.length ? clauses.join(" AND ") : "1=1";
+}
+
 /** Cross-channel enrollment guard. The SQL clause expects the prospect alias `p`. */
 export function isProspectOptedOut(db: Database, prospectId: number): boolean {
   return (

@@ -14,7 +14,7 @@ import {
   type CallRecordView,
   type ReplyIntent,
 } from "@oneshot-gtm/shared-types";
-import { contactAllowedClause } from "./contact-optout.ts";
+import { contactAllowedClause, contactAllowedSetClause } from "./contact-optout.ts";
 import { normalizePhone } from "./phone-timezone.ts";
 
 /**
@@ -272,21 +272,50 @@ export function phoneForCall(
   prospectId: number,
   defaultCountry = "US",
 ): { phone: string | null; raw: string | null; queueId: number | null } {
-  const sources = phoneSourcesFor(db, prospectId);
-  const wrong = new Set(
-    (
-      db
-        .query(
-          "SELECT phone FROM calls WHERE prospect_id = ? AND outcome = 'wrong_number' AND phone IS NOT NULL",
-        )
-        .all(prospectId) as Array<{ phone: string }>
-    ).map((r) => normalizePhone(r.phone, defaultCountry) ?? r.phone),
+  return pickCallPhone(
+    phoneSourcesFor(db, prospectId),
+    wrongNumbersFor(db, [prospectId]).get(prospectId),
+    defaultCountry,
   );
+}
+
+/** `phoneForCall` on sources already read (the Calls page reads them in one query). */
+export function pickCallPhone(
+  sources: { prospectPhone: string | null; queuePhone: string | null; queueId: number | null },
+  wrong: ReadonlySet<string> | undefined,
+  defaultCountry = "US",
+): { phone: string | null; raw: string | null; queueId: number | null } {
   for (const raw of [sources.prospectPhone, sources.queuePhone]) {
     const phone = normalizePhone(raw, defaultCountry);
-    if (phone && !wrong.has(phone)) return { phone, raw, queueId: sources.queueId };
+    if (phone && !wrong?.has(phone)) return { phone, raw, queueId: sources.queueId };
   }
   return { phone: null, raw: null, queueId: sources.queueId };
+}
+
+/** Numbers a call was logged `wrong_number` on, per prospect, normalised as `pickCallPhone` compares them. */
+export function wrongNumbersFor(
+  db: Database,
+  prospectIds: readonly number[],
+  defaultCountry = "US",
+): Map<number, Set<string>> {
+  const out = new Map<number, Set<string>>();
+  for (let i = 0; i < prospectIds.length; i += 400) {
+    const ids = prospectIds.slice(i, i + 400);
+    if (ids.length === 0) continue;
+    const rows = db
+      .query(
+        `SELECT prospect_id, phone FROM calls
+          WHERE prospect_id IN (${ids.map(() => "?").join(",")})
+            AND outcome = 'wrong_number' AND phone IS NOT NULL`,
+      )
+      .all(...ids) as Array<{ prospect_id: number; phone: string }>;
+    for (const r of rows) {
+      const set = out.get(r.prospect_id) ?? new Set<string>();
+      set.add(normalizePhone(r.phone, defaultCountry) ?? r.phone);
+      out.set(r.prospect_id, set);
+    }
+  }
+  return out;
 }
 
 function queuePhoneRow(
@@ -366,7 +395,7 @@ function hasTable(db: Database, name: string): boolean {
 /**
  * Everyone with a number the Calls page may list, best first, capped at
  * `limit`. Gates in SQL: contact still allowed on every channel
- * (`contactAllowedClause`, which includes a call logged do-not-contact), not
+ * (`contactAllowedSetClause`, which includes a call logged do-not-contact), not
  * rejected off-ICP, no meeting held, no cadence stopped as do-not-contact.
  * A bounced email does not block a call: the number is a different address.
  * The company do-not-contact list is the caller's (it is config).
@@ -430,7 +459,11 @@ export function listCallCandidates(
                    UNION ALL SELECT MAX(julianday(ce.occurred_at)) FROM channel_events ce WHERE ce.prospect_id = p.id
                    UNION ALL SELECT MAX(julianday(cl.started_at)) FROM calls cl WHERE cl.prospect_id = p.id)) AS last_touch
            FROM prospects p
-          WHERE ${contactAllowedClause(db)}
+          WHERE (NULLIF(trim(COALESCE(p.phone, '')), '') IS NOT NULL OR p.id IN (
+                  SELECT q.prospect_id FROM target_queue q
+                   WHERE q.prospect_id IS NOT NULL AND json_valid(q.payload_json)
+                     AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''))
+            AND ${contactAllowedSetClause(db)}
             AND COALESCE(p.icp_verdict, '') <> 'reject'
             AND NOT (${meetingHeld})
             AND NOT EXISTS (SELECT 1 FROM cadence_state dnc WHERE dnc.prospect_id = p.id
@@ -504,6 +537,29 @@ export function callAllowed(db: Database, prospectId: number): boolean {
       )
       .get(prospectId) != null
   );
+}
+
+/** `callAllowed` for many prospects at once (the Calls page's due rows): the ones allowed. */
+export function callAllowedIds(db: Database, prospectIds: readonly number[]): Set<number> {
+  const out = new Set<number>();
+  const meetingHeld = hasTable(db, "meetings")
+    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
+    : "0";
+  const allowed = contactAllowedSetClause(db);
+  for (let i = 0; i < prospectIds.length; i += 400) {
+    const ids = prospectIds.slice(i, i + 400);
+    if (ids.length === 0) continue;
+    const rows = db
+      .query(
+        `SELECT p.id FROM prospects p
+          WHERE p.id IN (${ids.map(() => "?").join(",")}) AND ${allowed}
+            AND COALESCE(p.icp_verdict, '') <> 'reject'
+            AND NOT (${meetingHeld})`,
+      )
+      .all(...ids) as Array<{ id: number }>;
+    for (const r of rows) out.add(r.id);
+  }
+  return out;
 }
 
 /** The last touch on any channel for these prospects (sends, channel events, calls), ISO. */

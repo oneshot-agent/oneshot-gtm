@@ -150,6 +150,7 @@ import {
 } from "./ledger-outcomes.ts";
 import {
   callAllowed as callsCallAllowed,
+  callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
   getCall as callsGetCall,
   getCallBrief as callsGetCallBrief,
@@ -159,6 +160,7 @@ import {
   listCallCandidates as callsListCallCandidates,
   listCallsForProspect as callsListCallsForProspect,
   phoneForCall as callsPhoneForCall,
+  wrongNumbersFor as callsWrongNumbersFor,
   recordCallChannelEvent as callsRecordCallChannelEvent,
   saveCallBrief as callsSaveCallBrief,
   setCallOutcome as callsSetCallOutcome,
@@ -1920,6 +1922,14 @@ export class Ledger {
     callsClearProspectPhone(this.db, prospectId);
   }
 
+  /** @see ledger-calls.ts#wrongNumbersFor */
+  wrongNumbersFor(
+    prospectIds: readonly number[],
+    defaultCountry?: string,
+  ): Map<number, Set<string>> {
+    return callsWrongNumbersFor(this.db, prospectIds, defaultCountry);
+  }
+
   /** @see ledger-calls.ts#phoneForCall */
   phoneForCall(prospectId: number, defaultCountry?: string): ReturnType<typeof callsPhoneForCall> {
     return callsPhoneForCall(this.db, prospectId, defaultCountry);
@@ -1943,6 +1953,11 @@ export class Ledger {
   /** @see ledger-calls.ts#callAllowed */
   callAllowed(prospectId: number): boolean {
     return callsCallAllowed(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#callAllowedIds */
+  callAllowedIds(prospectIds: readonly number[]): Set<number> {
+    return callsCallAllowedIds(this.db, prospectIds);
   }
 
   /** @see ledger-calls.ts#lastTouchFor */
