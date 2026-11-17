@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BASE_PORT,
   loadConfig,
   loadRegistry,
   serviceWritePath,
@@ -12,6 +13,7 @@ import { buildFetchHandler } from "../src/server.ts";
 import { _setLaunchSpawn, workspaceCreate } from "../src/api/workspace.ts";
 
 let tmp: string;
+const firstPort = BASE_PORT + 1;
 const spawn = vi.fn();
 const run = vi.fn(async (_command: string, _args: string[]) => {});
 const req = (body: unknown) =>
@@ -47,7 +49,7 @@ describe("POST /api/workspaces", () => {
       expect(res.status).toBe(201);
       expect(await res.json()).toEqual({
         name: "acme",
-        port: 3031,
+        port: firstPort,
         persistent: true,
         warning: null,
       });
@@ -68,7 +70,7 @@ describe("POST /api/workspaces", () => {
       expect(loadConfig()).toEqual(parent);
       const service = readFileSync(target(platform), "utf8");
       expect(service).toContain(entry.home);
-      expect(service).toContain("3031");
+      expect(service).toContain(String(firstPort));
       expect(service).toContain("--no-env-file");
       expect(service).toContain("ONESHOT_GTM_WORKSPACES");
       expect(service).toContain("ONESHOT_GTM_NO_BROWSER");
@@ -96,8 +98,8 @@ describe("POST /api/workspaces", () => {
       create({ name: "acme" }),
     ]);
     expect(results.map((r) => r.status)).toEqual([201, 201, 409]);
-    expect(loadRegistry().workspaces["acme"]!.port).toBe(3031);
-    expect(loadRegistry().workspaces["beta"]!.port).toBe(3032);
+    expect(loadRegistry().workspaces["acme"]!.port).toBe(firstPort);
+    expect(loadRegistry().workspaces["beta"]!.port).toBe(firstPort + 1);
     expect((await results[2]!.json()).error).toContain("already exists");
     expect((await create({ name: "default" })).status).toBe(409);
   });
@@ -138,7 +140,7 @@ describe("POST /api/workspaces", () => {
       expect(res.status).toBe(201);
       expect(await res.json()).toMatchObject({
         name: "acme",
-        port: 3031,
+        port: firstPort,
         persistent: false,
         warning: expect.stringContaining("won't survive a reboot"),
       });
@@ -147,7 +149,7 @@ describe("POST /api/workspaces", () => {
         env: expect.objectContaining({
           ONESHOT_GTM_HOME: join(tmp, "registry", "acme"),
           ONESHOT_GTM_WORKSPACE: "acme",
-          PORT: "3031",
+          PORT: String(firstPort),
           ONESHOT_GTM_NO_BROWSER: "1",
         }),
       });
@@ -183,7 +185,7 @@ describe("POST /api/workspaces", () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({
       name: "acme",
-      port: 3031,
+      port: firstPort,
       error: expect.stringContaining("workspace retained"),
     });
     expect(existsSync(target("linux"))).toBe(true);

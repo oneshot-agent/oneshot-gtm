@@ -19,7 +19,7 @@ beforeEach(() => {
     open,
     location: { href: "http://dashboard.local:3030/queue?filter=x#top", assign },
   });
-  mocks.create.mockResolvedValue({ name: "acme", port: 3031, persistent: true, warning: null });
+  mocks.create.mockResolvedValue({ name: "acme", port: 4031, persistent: true, warning: null });
   mocks.roster.mockResolvedValue({ workspaces: [{ name: "acme", running: false }] });
 });
 afterEach(() => {
@@ -37,7 +37,7 @@ describe("new workspace navigation", () => {
     mocks.roster.mockResolvedValue({ workspaces: [{ name: "acme", running: true }] });
     await vi.advanceTimersByTimeAsync(1000);
     await promise;
-    expect(win.location.href).toBe("http://dashboard.local:3031/");
+    expect(win.location.href).toBe("http://dashboard.local:4031/");
     expect(win.opener).toBeNull();
   });
 
@@ -45,7 +45,7 @@ describe("new workspace navigation", () => {
     open.mockReturnValue(null as never);
     mocks.create.mockResolvedValue({
       name: "acme",
-      port: 3031,
+      port: 4031,
       persistent: false,
       warning: "This server won't survive a reboot.",
     });
@@ -54,7 +54,7 @@ describe("new workspace navigation", () => {
     expect(mocks.warning).toHaveBeenCalledWith("This server won't survive a reboot.", {
       duration: Infinity,
     });
-    expect(assign).toHaveBeenCalledWith("http://dashboard.local:3031/");
+    expect(assign).toHaveBeenCalledWith("http://dashboard.local:4031/");
   });
 
   it("closes the reserved tab and reports rejected creation", async () => {
