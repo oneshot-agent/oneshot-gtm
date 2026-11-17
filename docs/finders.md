@@ -85,7 +85,7 @@ When someone holds several current roles (a job plus a board seat or a side proj
 
 ### Live LinkedIn reads
 
-Bought research can trail a live profile by months. **Connect LinkedIn** on Setup signs you in twice, back to back: once for [messaging](./linkedin.md), once for a hosted browser session that reads profiles as you. Where the page lists a company, the page wins over the bought history.
+Bought research can trail a live profile by months. **Connect LinkedIn** on Setup connects the [account this workspace selects](./linkedin.md#choosing-this-workspaces-account) for messaging and profile reads. Without an explicit selection, a verified hosted browser session can serve as the fallback when the single account cannot read profiles. Several connected accounts with no selection, or a missing, removed or disconnected selection, pause live reads, including browser fallback. Where the page lists a company, the page wins over the bought history.
 
 - Reads show up as profile views from your account.
 - They run 15 seconds apart and stop at `linkedinReadsPerDay` (default 95, counted from 00:00 UTC for a connected account). The platform allows about 100 views a day per account; the rest identify reply senders.

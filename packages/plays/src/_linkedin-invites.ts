@@ -162,7 +162,14 @@ export function linkedInSenderFor(
   prospectId: number,
   playName: string,
 ): { workspace: string; accountId: string } | null {
-  return liveLinkedInInvite(prospectId, playName)?.sentBy ?? linkedInOutreachAccount();
+  const selected = linkedInOutreachAccount();
+  const sentBy = liveLinkedInInvite(prospectId, playName)?.sentBy;
+  if (
+    sentBy &&
+    (sentBy.accountId !== selected?.accountId || sentBy.workspace !== selected.workspace)
+  )
+    return null;
+  return selected;
 }
 
 /**
@@ -174,6 +181,8 @@ export function storedLinkedInConversation(
   prospectId: number,
   playName: string,
 ): { conversationId: string; accountId: string; workspace: string } | null {
+  const selected = linkedInOutreachAccount();
+  if (!selected) return null;
   const sent = getLedger()
     .listSequenceEventsForProspectPlay(prospectId, playName)
     .filter((e) => e.channel === "linkedin" && e.status === "sent");
@@ -182,7 +191,8 @@ export function storedLinkedInConversation(
     const conversationId = str(meta.conversationId);
     const accountId = str(meta.accountId);
     const workspace = str(meta.accountWorkspace);
-    if (conversationId && accountId && workspace) return { conversationId, accountId, workspace };
+    if (conversationId && accountId === selected.accountId && workspace === selected.workspace)
+      return { conversationId, accountId, workspace };
   }
   return null;
 }

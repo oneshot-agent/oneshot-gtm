@@ -14,7 +14,18 @@ Withdrawing is an action on your LinkedIn account. A withdrawal that fails is tr
 
 ## Connecting
 
-**Connect LinkedIn** on Setup runs two sign-ins back to back: the messaging account, shared by every workspace, then the [profile-reading session](./finders.md#live-linkedin-reads) for this workspace. **Replies → Connections & reply preferences → LinkedIn** manages the account afterwards.
+**Connect LinkedIn** on Setup connects a messaging account. When it can view profiles, the same connection handles [live profile reads](./finders.md#live-linkedin-reads); otherwise Setup offers a browser sign-in. **Replies → Connections & reply preferences → LinkedIn** manages connections afterwards. An account connected from workspace B belongs to B even if workspace A syncs first. Accounts remain in the shared store; their owning workspace supplies the wallet credentials.
+
+### Choosing this workspace's account
+
+On **Setup → LinkedIn → Send and read profiles as**, choose the connected account this workspace uses. The picker saves `linkedin.accountKey` through Setup. This is the account's shared-store key, not its display name or provider account ID. Two workspaces can select different accounts, or deliberately select the same one.
+
+- With no key and exactly one connected account, that account is used automatically, as before.
+- With no key and several connected accounts, invites, cadence LinkedIn messages and live profile reads pause. Setup and `doctor` explain how to choose an account.
+- A key whose account is missing, removed or disconnected also pauses those actions. Reconnect it or explicitly choose another connected account. Losing an invite or profile-view permission never switches accounts.
+- An explicit selection also prevents profile reads from silently using a browser session instead. Existing cached research remains available.
+
+Clearing the picker restores automatic selection only when exactly one account is connected. Existing pending sends are checked through the account that submitted them; withdrawals still use the account that sent the invite. A cadence does not reuse an earlier invite or conversation from a different selected account.
 
 A new connection asks for `read`, `reply`, `view_profile` and `invite`. An older one adds a missing permission with **Allow profile access** or **Allow connection requests**: you sign in to the same account again and nothing is re-imported.
 

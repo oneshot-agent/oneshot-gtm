@@ -768,6 +768,8 @@ export interface OneShotConfig {
    *   it waits as long as it takes.
    */
   linkedin?: {
+    /** Shared account key used for this workspace's sends and profile reads. */
+    accountKey?: string;
     invitesPerDay?: number;
     inviteTimeoutDays?: number;
     inviteExpiryDays?: number;

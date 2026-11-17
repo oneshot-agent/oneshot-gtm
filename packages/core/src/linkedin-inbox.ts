@@ -12,7 +12,7 @@ import {
 } from "./linkedin-fields.ts";
 import { sharedDir, currentWorkspaceName } from "./shared-db.ts";
 import { listWorkspaces } from "./workspaces.ts";
-import { configDir } from "./config.ts";
+import { configDir, loadConfig } from "./config.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import { Ledger, openLedgerDatabase } from "./ledger.ts";
 import { classifyReply } from "./reply-classify.ts";
@@ -786,23 +786,39 @@ export function getLinkedInInboxStore() {
   return (singleton ??= new LinkedInInboxStore());
 }
 
-/**
- * The connected LinkedIn account outreach invites go out from, and the
- * workspace that owns it (OneShot calls must run as that workspace's wallet).
- * Prefers an account granted `invite`; falls back to any connected one so the
- * invite call itself reports the missing permission. Null when none is
- * connected. `canInvite` says whether the picked account holds that grant.
- */
+/** Resolve only the workspace's selection; grants never change which account it uses. */
+function selectedLinkedInAccount(): LinkedInAccountRecord | null {
+  const accounts = getLinkedInInboxStore().accounts();
+  const key = loadConfig().linkedin?.accountKey;
+  const connected = accounts.filter((a) => !a.removedAt && a.account.status === "connected");
+  return key
+    ? (connected.find((a) => a.key === key) ?? null)
+    : connected.length === 1
+      ? connected[0]!
+      : null;
+}
+
+/** A selection problem blocks both outreach and live reads, including browser fallback. */
+export function linkedInAccountSelectionBlocker(): "ambiguous" | "missing" | "disconnected" | null {
+  const accounts = getLinkedInInboxStore().accounts();
+  const key = loadConfig().linkedin?.accountKey;
+  if (key) {
+    const account = accounts.find((a) => a.key === key);
+    if (!account || account.removedAt) return "missing";
+    return account.account.status === "connected" ? null : "disconnected";
+  }
+  return accounts.filter((a) => !a.removedAt && a.account.status === "connected").length > 1
+    ? "ambiguous"
+    : null;
+}
+
+/** The workspace's sender and its owning workspace (whose wallet makes the call). */
 export function linkedInOutreachAccount(): {
   workspace: string;
   accountId: string;
   canInvite: boolean;
 } | null {
-  const connected = getLinkedInInboxStore()
-    .accounts()
-    .filter((a) => !a.removedAt && a.account.status === "connected");
-  const pick =
-    connected.find((a) => a.account.allowed_actions.includes("invite")) ?? connected[0] ?? null;
+  const pick = selectedLinkedInAccount();
   return pick
     ? {
         workspace: pick.workspace,
@@ -812,33 +828,24 @@ export function linkedInOutreachAccount(): {
     : null;
 }
 
-/**
- * The connected account person research reads profiles through: one granted
- * `view_profile`, the outreach account when it qualifies. Null when no account
- * can read; `linkedInProfileReadBlocker` says why.
- */
+/** Profile reads use the same selected account, only when it grants profile views. */
 export function linkedInProfileReadAccount(): { workspace: string; accountId: string } | null {
-  const readers = getLinkedInInboxStore()
-    .accounts()
-    .filter(
-      (a) =>
-        !a.removedAt &&
-        a.account.status === "connected" &&
-        a.account.allowed_actions.includes("view_profile"),
-    );
-  const outreach = linkedInOutreachAccount();
-  const pick =
-    readers.find((a) => outreach && a.account.id === outreach.accountId) ?? readers[0] ?? null;
-  return pick ? { workspace: pick.workspace, accountId: pick.account.id } : null;
+  const pick = selectedLinkedInAccount();
+  return pick?.account.allowed_actions.includes("view_profile")
+    ? { workspace: pick.workspace, accountId: pick.account.id }
+    : null;
 }
 
-/**
- * Why no connected account can read profiles: `none` when no account was
- * ever connected (reads fall back to the browser session, if any),
- * `disconnected` when every account needs a reconnect, `no-grant` when a
- * connected account was not granted `view_profile`. Null when one can read.
- */
-export function linkedInProfileReadBlocker(): "none" | "disconnected" | "no-grant" | null {
+/** Why live account reads are unavailable; selection errors also forbid browser fallback. */
+export function linkedInProfileReadBlocker():
+  | "none"
+  | "disconnected"
+  | "no-grant"
+  | "ambiguous"
+  | "missing"
+  | null {
+  const selection = linkedInAccountSelectionBlocker();
+  if (selection) return selection;
   if (linkedInProfileReadAccount()) return null;
   const accounts = getLinkedInInboxStore()
     .accounts()
@@ -933,8 +940,10 @@ export function linkedInConversationFor(input: {
   linkedinUrl: string | null;
 }): { conversationId: string; accountId: string; workspace: string } | null {
   const store = getLinkedInInboxStore();
+  const selected = selectedLinkedInAccount();
+  if (!selected) return null;
   const key = input.linkedinUrl ? canonicalLinkedInProfileKey(input.linkedinUrl) : null;
-  for (const t of store.threads()) {
+  for (const t of store.threads(selected.key)) {
     const account = store.account(t.accountKey);
     if (!account || account.removedAt || account.account.status !== "connected") continue;
     let match = t.owner?.workspace === input.workspace && t.owner.prospectId === input.prospectId;
