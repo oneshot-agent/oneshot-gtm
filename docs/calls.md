@@ -25,7 +25,7 @@ A cadence that is already running keeps its plan: turning calls on never adds a 
 
 Two lists:
 
-- **Due**: cadences whose next step is a call. A due call with no number shows **Find phone** on the prospect's queue row; the lookup is paid and runs only when you click it. When the cadence reaches a call and no usable number is stored, the step is skipped at once so the emails keep going.
+- **Due**: cadences whose next step is a call. A due call with no number says so and links to the prospect's queue row. The dialler never buys a number itself. When the cadence reaches a call and no usable number is stored, the step is skipped at once so the emails keep going.
 - **Call list**: everyone else with a number, best first: a positive reply with no meeting yet, then people connected on LinkedIn, then people in a live cadence by their priority score, then the rest.
 
 Both lists apply the same gates as sending: the company do-not-contact list, an opt-out on any channel, an ICP reject and a meeting already held. A bounced email does not stop a call.
