@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallBrief, CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
 import { api } from "../src/api/client.ts";
-import { briefKey, saveCall } from "../src/components/calls/DialPanel.tsx";
+import { briefKey, dialledNumber, saveCall } from "../src/components/calls/DialPanel.tsx";
 import { CallStepActions } from "../src/components/calls/CallStepActions.tsx";
 import { CallsView } from "../src/routes/calls.tsx";
 import {
@@ -406,5 +406,23 @@ describe("calls page: review fixes", () => {
     expect(html).toContain("Open call");
     expect(html).toMatch(/<button[^>]*aria-expanded="false"/);
     expect(html).toContain('title="Stop cadence"');
+  });
+
+  it("names the number Call dialled, not one a refresh put on the row since", () => {
+    const handlers = { start: vi.fn(), refresh: vi.fn() };
+    const r = {
+      phone: "+15126531187",
+      local: { zones: [], localTime: null, inWindow: true, opensAt: null },
+    };
+    beginCall(
+      { preventDefault: vi.fn() },
+      r,
+      { start: "00:00", end: "23:59", weekdays: false },
+      handlers,
+    );
+    expect(handlers.start).toHaveBeenCalledWith("+15126531187");
+    expect(dialledNumber(1000, "+15126531187", "+15126539999")).toBe("+15126531187");
+    // No call started here: the number on the row is the one dialled by hand.
+    expect(dialledNumber(null, null, "+15126539999")).toBe("+15126539999");
   });
 });

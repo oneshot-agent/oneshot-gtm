@@ -39,6 +39,13 @@ describe("cadenceSelection", () => {
     expect(result.previewable.map((c) => c.prospectId)).toEqual([1, 3]);
     expect(result.sendable.map((c) => c.prospectId)).toEqual([1]);
   });
+  it("previews a call step's brief but never counts it in a batch send", () => {
+    const rows = [row(1), row(2, { nextStepChannel: "call", nextStepLabel: "Call" })];
+    const result = cadenceSelection(rows, new Set(rows.map(cadenceKey)));
+    expect(result.previewable.map((c) => c.prospectId)).toEqual([1, 2]);
+    expect(result.sendable.map((c) => c.prospectId)).toEqual([1]);
+    expect(result.stoppable.map((c) => c.prospectId)).toEqual([1, 2]);
+  });
   it("leaves a row waiting on its invite's acceptance out of selection, even if it was selected", () => {
     const rows = [
       row(1),

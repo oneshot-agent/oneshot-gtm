@@ -56,6 +56,19 @@ export async function saveCall(
 }
 
 /**
+ * The number a log names: the one Call dialled, captured when it was pressed
+ * (a refresh may have changed the row's since); the row's own when no call
+ * was started here (dialled by hand from the number shown).
+ */
+export function dialledNumber(
+  startedAt: number | null,
+  dialledPhone: string | null,
+  rowPhone: string | null,
+): string | null {
+  return startedAt != null ? dialledPhone : rowPhone;
+}
+
+/**
  * The open row: the brief to read, Call, the outcome keys, a note, and
  * Save & next. One panel per prospect (keyed by the page), so nothing typed
  * for one person carries over to the next.
@@ -68,6 +81,7 @@ export function DialPanel({
   now,
   onRefresh,
   startedAt,
+  dialledPhone,
   onStart,
   onLogged,
   onOpen,
@@ -83,7 +97,9 @@ export function DialPanel({
   onRefresh: () => void;
   /** When Call was pressed for this row (ms); null before. */
   startedAt: number | null;
-  onStart: () => void;
+  /** The number Call dialled, captured when it was pressed; null before. */
+  dialledPhone: string | null;
+  onStart: (phone: string | null) => void;
   /**
    * A call was logged for this prospect: the timer it was submitted with
    * (`startedAt` then) is spent, so a later log never reuses it.
@@ -133,7 +149,7 @@ export function DialPanel({
   const request = logCallRequest(state, {
     durationSec: startedAt != null ? elapsed : null,
     playName: row.playName,
-    phone: row.phone,
+    phone: dialledNumber(startedAt, dialledPhone, row.phone),
   });
   const submit = () => {
     if (request && !save.isPending) save.mutate({ req: request, timer: startedAt });
@@ -311,7 +327,7 @@ export function CallControl({
   dialMode: CallListResponse["dialMode"];
   window: CallListResponse["window"];
   now: Date;
-  onStart: () => void;
+  onStart: (phone: string | null) => void;
   onRefresh: () => void;
   className?: string;
 }) {

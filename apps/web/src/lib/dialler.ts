@@ -90,11 +90,12 @@ export function beginCall(
   e: { preventDefault: () => void },
   row: Pick<CallListRow, "phone" | "local">,
   window: CallListResponse["window"],
-  handlers: { start: () => void; refresh: () => void },
+  handlers: { start: (phone: string | null) => void; refresh: () => void },
   now: Date = new Date(),
 ): boolean {
   if (canDial(row, window, now)) {
-    handlers.start();
+    // The number the link dials, as it reads now: the log names this one.
+    handlers.start(row.phone);
     return true;
   }
   e.preventDefault();
@@ -222,10 +223,11 @@ export function logCallRequest(
   };
 }
 
-/** When Call was pressed, and for whom: the dial panel's timer. */
+/** When Call was pressed, for whom, and the number it dialled: the dial panel's timer. */
 export interface CallTimer {
   prospectId: number;
   at: number;
+  phone: string | null;
 }
 
 /**

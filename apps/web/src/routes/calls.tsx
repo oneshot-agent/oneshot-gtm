@@ -59,7 +59,8 @@ export function CallsView({
 }) {
   // When Call was pressed, per prospect: the panel's timer reads it.
   const [started, setStarted] = useState<CallTimer | null>(null);
-  const start = (prospectId: number) => setStarted({ prospectId, at: Date.now() });
+  const start = (prospectId: number, phone: string | null) =>
+    setStarted({ prospectId, at: Date.now(), phone });
   // The call window is read on this clock, so a row turns callable (or not)
   // as a boundary passes, without waiting on the next poll.
   const [now, refresh] = useNow(CLOCK_TICK_MS);
@@ -146,9 +147,9 @@ export function CallsView({
               onRefresh={refresh}
               open={r.prospectId === selected}
               onOpen={() => onOpen(r.prospectId)}
-              onStart={() => {
+              onStart={(phone) => {
                 onOpen(r.prospectId);
-                start(r.prospectId);
+                start(r.prospectId, phone);
               }}
             />
           ))}
@@ -181,7 +182,8 @@ export function CallsView({
               now={now}
               onRefresh={refresh}
               startedAt={started?.prospectId === row.prospectId ? started.at : null}
-              onStart={() => start(row.prospectId)}
+              dialledPhone={started?.prospectId === row.prospectId ? started.phone : null}
+              onStart={(phone) => start(row.prospectId, phone)}
               onLogged={(id, at) => setStarted((s) => timerAfterLog(s, { prospectId: id, at }))}
               onOpen={onOpen}
               isOpen={(id) => selectedRef.current === id}
@@ -212,7 +214,7 @@ function CallRow({
   onRefresh: () => void;
   open: boolean;
   onOpen: () => void;
-  onStart: () => void;
+  onStart: (phone: string | null) => void;
 }) {
   const mask = useMask();
   const hint = windowHint(row, data.window, now);
