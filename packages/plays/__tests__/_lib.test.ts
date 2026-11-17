@@ -737,6 +737,12 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
       ).toContain("no-product-line");
+      // Lowercase prose splits on its plain marks.
+      expect(
+        check(
+          "want me to run your open treatment plans to booked visits? acme.ai follows up with each patient until they book. want me to start?",
+        ),
+      ).not.toContain("no-product-line");
       // A quoted sentence inside the offer does not end it.
       expect(
         check(

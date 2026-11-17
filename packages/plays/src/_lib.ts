@@ -534,9 +534,10 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
     .join(" ")
     .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
     .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
-    // A new sentence starts with a capital: a quoted "Your visit is due." inside
-    // the offer does not end it.
-    .split(/(?<=[.!?]["')”’]*)\s+(?=["'“‘(]*[\p{Lu}\d])/u);
+    // A mark ends a sentence; one inside closing quotes only when a capital
+    // follows, so a quoted "Your visit is due." inside the offer does not end
+    // it. Lowercase prose still splits on its plain marks.
+    .split(/(?<=[.!?])\s+|(?<=[.!?]["')”’]+)\s+(?=["'“‘(]*[\p{Lu}\d])/u);
   // A question asks; it does not say what the product is.
   return !(offer ? sentences.slice(1) : sentences).some(
     (s) => sentenceMark(s.trim()) !== "?" && named.test(s),
