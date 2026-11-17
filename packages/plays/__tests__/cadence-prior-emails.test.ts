@@ -14,7 +14,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "TestProduct",
+      productOneLiner: "a test product", // no leading name: no-product-line stays out of it
       productDomain: null,
       sendingDomain: null,
       emailProvider: "oneshot" as const,
@@ -108,7 +108,7 @@ function ctx(prospectId = 42, angleJson: string | null = null) {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "TestProduct",
+      productOneLiner: "a test product", // no leading name: no-product-line stays out of it
       productDomain: null,
       sendingDomain: null,
       emailProvider: "oneshot" as const,

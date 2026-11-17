@@ -25,7 +25,7 @@ const llm = {
 
 const cfg: Record<string, unknown> = {
   founderName: "Founder",
-  productOneLiner: "Acme schedules field crews",
+  productOneLiner: "schedules field crews for Acme", // no leading name: no-product-line stays out of it
   productBrief:
     "Acme plans crew routes, books jobs into open slots and texts customers the arrival time.",
   pilotOffer: "four weeks on one depot",

@@ -216,6 +216,9 @@ tells that outlive a vocabulary list, and in a cold email each one reads as tech
   The reader raised no objection. Answering one you invented makes the email about you.
 - **Announcing the point.** "let me explain why", "here's why that matters". Make the point.
 - **Formulaic sayings.** "at the end of the day", "make no mistake", "the bottom line is".
+- **Slogans and maxims.** "A demo answers questions, but a number moves a board." A general saying
+  about how things work, set as two clauses against each other, is about no one. Every sentence is
+  about this reader, their firm, or what you will do; state the point plainly in their terms.
 - **Repeated sentence openings.** Three sentences starting on the same word reads as a template
   filling itself in. Two is fine.
 - **Stacked dramatic fragments.** "Fast. Cheap. Done." One fragment lands. A run is a tic.
@@ -243,4 +246,4 @@ Do not treat any of these as a tell on its own:
 - Acknowledge complexity when it exists. "Impressive but unsettling" beats "impressive".
 - Let the thought determine the structure. Do not manufacture messiness or symmetry.
 
-The phrase-level bans above — openers, CTAs, filler, closers, hedges, vocabulary, punctuation, length, scheduling links — are enforced post-generation by `lintEmail()`, which holds a flagged draft for the founder rather than regenerating it. The structural rules — invented artifacts, rhetorical moves, hedging constructions — are on you: nothing checks them. Compliance up front means zero rewrite cost.
+The phrase-level bans above — openers, CTAs, filler, closers, hedges, vocabulary, punctuation, length, scheduling links, slogan lines — are checked post-generation by `lintEmail()`: a flagged draft gets one bounded rewrite, and a draft still flagged after it is held for the founder. Most structural rules — invented artifacts, rhetorical moves, hedging constructions — are on you: nothing checks them. Compliance up front means zero rewrite cost.

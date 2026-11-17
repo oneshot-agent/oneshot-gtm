@@ -41,6 +41,8 @@ const NAMED: Record<string, string> = {
   "weak-offer": "the offer was rated a weak fit",
   "no-offer": "no offer could be written",
   "thin-body": "too thin to send",
+  "no-product-line": "never says what the product is",
+  "slogan-line": "slogan line",
 };
 
 export function humanizeFlag(flag: string): string {

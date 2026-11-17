@@ -63,3 +63,17 @@ export function productBriefText(
 function clipText(text: string, max: number): string {
   return text.length > max ? `${sliceText(text, Math.max(0, max - 1))}…` : text;
 }
+
+/** Leading words that open a one-liner without naming the product. */
+const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
+
+/**
+ * The product's name as the founder's one-liner opens with it ("OneShot is the
+ * execution layer…" → "OneShot"), for checks that a message names what is being
+ * offered. Null when the one-liner is unset or does not open with a name.
+ */
+export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
+  const first = cfg.productOneLiner?.trim().match(/^[A-Z][\w.-]*\w/)?.[0];
+  if (!first || NOT_A_NAME.has(first.toLowerCase())) return null;
+  return first;
+}

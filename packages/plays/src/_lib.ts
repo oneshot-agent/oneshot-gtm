@@ -22,6 +22,7 @@ import {
   verifyEmail,
   withDeadline,
   outboundSendKey,
+  productNameOf,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { createHash } from "node:crypto";
@@ -447,6 +448,56 @@ export function closingEitherOrQuestion(body: string, sigLines?: string[]): bool
 
 const RULE_OF_THREE = /(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/;
 
+const PERSON_WORD =
+  /\b(?:i|i'd|i'm|i'll|me|my|we|we're|we'd|we'll|us|our|you|you're|you'd|your|yours)\b/i;
+const CONTRAST = /,\s*but\s+|;\s+|,\s*while\s+/i;
+const GENERIC_SUBJECT =
+  /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b|(?:[a-z]+\s+)?[a-z]{3,}s\s+(?:are|is|do|don't|can|can't|will|won't|need|get|make|move|win|lose|buy|answer|have|were)\b)/i;
+
+/**
+ * Sentences that are a general saying rather than something about this
+ * reader: short, no person in them, no name after the first word, and two
+ * generic clauses set against each other ("A demo answers questions, but a
+ * hard number moves a board."). Plain contrasts about them or their firm pass.
+ */
+export function sloganSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => {
+      const words = s.split(/\s+/);
+      if (words.length < 6 || words.length > 20) return false;
+      if (PERSON_WORD.test(s)) return false;
+      if (words.slice(1).some((w) => /^[^a-z]*[A-Z][a-z]/.test(w))) return false;
+      const clauses = s.replace(/[.!?]+$/, "").split(CONTRAST);
+      return clauses.length === 2 && clauses.every((c) => GENERIC_SUBJECT.test(c.trim()));
+    });
+}
+
+/**
+ * True when a follow-up never says, in a sentence of its own, which product is
+ * offering: a reader who skimmed the first email cannot place "through Acme"
+ * inside the offer. With an offer, the first sentence is the offer and the
+ * name must come after it; without one, anywhere counts. Unknown name (no
+ * one-liner, or one that opens without a name) passes.
+ */
+function missingProductLine(body: string, offer: string | null | undefined): boolean {
+  const name = productNameOf(loadConfig());
+  if (name == null) return false;
+  // A whole word: a signature domain ("acmeclinics.com" for Acme) is not the name.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = new RegExp(`(?<![\\w.-])${escaped}(?![\\w-]|\\.\\w)`, "i");
+  const lines = body.split("\n").map((l) => l.trim());
+  const greeting = leadingGreeting();
+  const start = lines.findIndex((l) => l && !greeting.test(l));
+  if (start < 0) return true;
+  const sentences = lines
+    .slice(start)
+    .join(" ")
+    .split(/(?<=[.!?])\s/);
+  return !(offer ? sentences.slice(1) : sentences).some((s) => named.test(s));
+}
+
 const OBSERVATION_OPENER =
   /^(?:i (?:noticed|saw|see|came across|was looking at|read|stumbled on|have been following)\b|(?:just )?saw (?:that|you|your)\b|noticed\b|you mentioned\b|congrat|loved\b|great (?:post|launch|talk|episode|article)\b|your (?:recent )?(?:post|launch|talk|article|episode|announcement)\b)/i;
 
@@ -630,6 +681,7 @@ export function lintEmail(
   if (opts.followUp && opts.offer && thinBody(body)) flags.push("thin-body");
   if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
   if (opts.followUp && announcesSignoff(written)) flags.push("signoff-body");
+  if (opts.followUp && missingProductLine(body, opts.offer)) flags.push("no-product-line");
   if (mentionsStaleDemoDay(body, opts.demoDay ?? null)) flags.push("stale-demo-day");
   if (written.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(written)) flags.push("curly-quotes");
@@ -638,6 +690,7 @@ export function lintEmail(
     if (re.test(written)) flags.push(label);
   }
   if (RULE_OF_THREE.test(written)) flags.push("rule-of-three");
+  if (sloganSentences(written).length > 0) flags.push("slogan-line");
   if ((written.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
   // Any scheduling link, not only the one vendor the string match used to catch.
   if (/\b(?:calendly|cal\.com|savvycal|zcal)\b|calendar\.app\.google/i.test(body)) {
@@ -968,13 +1021,13 @@ export function voiceKey(card: string): string {
 
 const VOICE_BUDGET: Record<VoiceSurface, string> = {
   intro:
-    "VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
+    "VOICE BUDGET: at most ONE deflating line in the whole email, never in the CTA; never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
   followup:
-    "VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
+    "VOICE BUDGET: at most ONE deflating line in the whole email, never in the CTA; never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
   breakup:
     "VOICE BUDGET: no aphorism in a breakup. Use one brief closing line in the founder's register. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
   reply:
-    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
+    "VOICE BUDGET: at most ONE deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes); never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
 };
 
 /**
@@ -1363,6 +1416,10 @@ const WRITING_REPAIRS: Record<string, string> = {
     "Open with the OFFER: the first sentence after the greeting says what you will do for them. Drop the observation about them or move it after the offer as a short why-now clause.",
   "opens-without-offer":
     "Open with the OFFER: the first sentence after the greeting offers to do it for them, in plain words. Move anything else after it.",
+  "no-product-line":
+    "After the offer, add one sentence of its own that names the product and says what it is and does, in plain words from PRODUCT, for a reader who never read the first email. Naming it inside the offer is not enough. Keep the offer opening and the word budget.",
+  "slogan-line":
+    "Delete the general saying, or rewrite it as a plain statement about this reader's work. Every sentence is about them, their firm, or what you will do.",
 };
 
 /** The `signoff-subject` repair for a workspace whose `subjectCase` is not `lowercase`. */

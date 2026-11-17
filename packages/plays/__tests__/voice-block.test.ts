@@ -55,7 +55,7 @@ describe("voiceBlock", () => {
     );
     expect(out.text).toContain("Factual grounding, audience and channel constraints");
     expect(out.text).not.toContain("sentence texture only");
-    expect(out.text).toContain("VOICE BUDGET: at most ONE aphoristic");
+    expect(out.text).toContain("VOICE BUDGET: at most ONE deflating line");
     expect(out.text).toContain("never in the CTA");
     expect(out.text).toContain("never as \"X isn't A, it's B\"");
     expect(out.key).toBe(voiceKey(CARD));
@@ -67,7 +67,7 @@ describe("voiceBlock", () => {
     expect(voiceBlock("breakup")!.text).toContain("no aphorism in a breakup");
     expect(voiceBlock("breakup")!.text).not.toContain("at most ONE");
     expect(voiceBlock("reply")!.text).toContain("logistics mode");
-    expect(voiceBlock("followup")!.text).toContain("at most ONE aphoristic");
+    expect(voiceBlock("followup")!.text).toContain("never an aphorism, slogan or general saying");
   });
 
   it("truncates an over-long card but keys on the whole of it", () => {
