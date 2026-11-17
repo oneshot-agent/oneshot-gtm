@@ -66,6 +66,8 @@ function clipText(text: string, max: number): string {
 
 /** Leading words that open a one-liner without naming the product. */
 const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
+const NAME_TOKEN = /^[A-Z][\w.-]*/;
+const MORE_NAME = /^\s[A-Z][\w.-]*/;
 /** What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…". */
 const NAME_FOLLOWER =
   /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets)\b|\s+[a-z]*[^\Ws]s\b)/;
@@ -76,9 +78,17 @@ const NAME_FOLLOWER =
  * offered. Null when the one-liner is unset or does not open with a name.
  */
 export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
-  const m = cfg.productOneLiner?.trim().match(/^([A-Z][\w.-]*\w)(?:\s+[A-Z][\w.-]*\w)*(.*)$/s);
-  if (!m || NOT_A_NAME.has(m[1]!.toLowerCase())) return null;
+  const text = cfg.productOneLiner?.trim() ?? "";
+  let name = NAME_TOKEN.exec(text)?.[0] ?? "";
+  // "Acme." ends the token, not the name: a trailing dot or dash is punctuation.
+  while (name && ".-".includes(name[name.length - 1]!)) name = name.slice(0, -1);
+  if (!name || NOT_A_NAME.has(name.toLowerCase())) return null;
+  // Skip the rest of a multi-word name ("Acme Clinics is…").
+  let rest = text.slice(name.length);
+  for (let next = MORE_NAME.exec(rest); next; next = MORE_NAME.exec(rest)) {
+    rest = rest.slice(next[0].length);
+  }
   // A name is what the sentence is about: a verb or a clause mark follows it.
   // "Automate patient follow-ups" opens on an instruction, not a name.
-  return NAME_FOLLOWER.test(m[2]!) ? m[1]! : null;
+  return NAME_FOLLOWER.test(rest) ? name : null;
 }

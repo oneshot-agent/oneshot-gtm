@@ -468,8 +468,10 @@ export function sloganSentences(text: string): string[] {
       const words = s.split(/\s+/);
       if (words.length < 6 || words.length > 20) return false;
       if (PERSON_WORD.test(s)) return false;
-      if (words.slice(1).some((w) => /^[^a-z]*[A-Z][a-z]/.test(w))) return false;
-      const clauses = s.replace(/[.!?]+$/, "").split(CONTRAST);
+      if (words.slice(1).some((w) => /^[^a-zA-Z]*[A-Z][a-z]/.test(w))) return false;
+      let end = s.length;
+      while (end > 0 && ".!?".includes(s[end - 1]!)) end--;
+      const clauses = s.slice(0, end).split(CONTRAST);
       return clauses.length === 2 && clauses.every((c) => GENERIC_SUBJECT.test(c.trim()));
     });
 }
@@ -481,6 +483,13 @@ export function sloganSentences(text: string): string[] {
  * name must come after it; without one, anywhere counts. Unknown name (no
  * one-liner, or one that opens without a name) passes.
  */
+/** True when a line ends a sentence: [.!?], then any closing quotes or brackets. */
+function endsSentence(line: string): boolean {
+  let i = line.length - 1;
+  while (i >= 0 && "\"')".includes(line[i]!)) i--;
+  return i >= 0 && ".!?".includes(line[i]!);
+}
+
 function missingProductLine(body: string, offer: string | null | undefined): boolean {
   const name = productNameOf(loadConfig());
   if (name == null) return false;
@@ -493,7 +502,7 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   // The signature is the unpunctuated lines after the last sentence: a name
   // or company there says nothing about what the product does.
   let end = lines.length - 1;
-  while (end >= start && !/[.!?]["')]*$/.test(lines[end] ?? "")) end--;
+  while (end >= start && !endsSentence(lines[end] ?? "")) end--;
   if (start < 0 || end < start) return true;
   // Keep abbreviations inside their sentence ("Dr. Lee"), with the same rules
   // the sentence counter uses.
