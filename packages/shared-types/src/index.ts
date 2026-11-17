@@ -717,6 +717,8 @@ export interface SetupRequest {
    * the two literals is ignored (keeps the current value).
    */
   queueReviewOrder?: "ranked" | "newest";
+  /** Look up a phone number for each approved row (a paid call each). `undefined` = leave unchanged. */
+  phoneOnApprove?: boolean;
   /**
    * How reply intents are labelled. `undefined` = leave unchanged; `null` =
    * back to the default (`llm`). `decisions` needs a `model`; `minConfidence`
@@ -1183,6 +1185,23 @@ export interface QueueDossierView {
   posts: DossierPostView[];
   /** When the newsfeed was captured, or null when it never ran (it runs on approval). */
   newsfeedFetchedAt: string | null;
+}
+
+/** Why a queue row gets no phone lookup (`apps/server/src/api/queue-phone.ts`). */
+export type PhoneLookupSkipView =
+  | "status"
+  | "sending"
+  | "no_linkedin"
+  | "has_phone"
+  | "no_number"
+  | "running";
+
+/** `GET /api/queue/find-phones`: approved rows the bulk lookup would take, and why the rest would not. */
+export interface FindPhonesPreview {
+  eligible: number;
+  /** The eligible rows; the bulk POST sends these back so it buys only what was confirmed. */
+  ids: number[];
+  skipped: Partial<Record<PhoneLookupSkipView, number>>;
 }
 
 export interface QueueRowDetail {

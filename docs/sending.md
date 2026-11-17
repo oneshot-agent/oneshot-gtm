@@ -84,6 +84,16 @@ While a workspace's dashboard runs, it syncs each Smartlead mailbox about once a
 - Read, archive and draft state belong to the workspace. They do not change the mailbox.
 - Removing an identity stops its sync and keeps its conversations.
 
+## Phone numbers
+
+Queue can look up a prospect's direct phone number. Each lookup is a paid call (see the [pricing page](https://docs.oneshotagent.com/pricing)), and a number is not guaranteed.
+
+- **One row.** **Find phone** in an approved or sent row's case. The lookup runs in the background and can take a few minutes; the number shows with the row's identity when it lands.
+- **Every approved row.** **Find phones** on the approved list looks up each approved row without a number, after you confirm the count.
+- **On approval.** `"phoneOnApprove": true` in the workspace's `config.json`, or the toggle under Setup → Queue & time zone, looks up a number for each row you approve. Off by default. It stops at the daily spend ceiling.
+
+A row needs a LinkedIn URL; lookups without one fail, so they are not bought. A lookup that finds no number is kept for 30 days. One the provider could not answer is not kept, and **Find phone** asks again. A number found after the row was sent also fills the prospect's phone.
+
 ## Deliverability
 
 - **Bounces.** Read from connected Gmail mailboxes every 30 minutes. A hard bounce stops the cadence and suppresses the address. A policy block (`5.7.x`) stops the cadence too, since the next step would be refused the same way, but does not suppress the address: it is a verdict on the message, not the mailbox. `autoReply.stopOnBlock: false` keeps blocked cadences running. `doctor` warns above 2% per identity and fails above 5%, once an identity has 20 sends.

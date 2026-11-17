@@ -1454,6 +1454,93 @@ export async function enrichProfile(
 }
 
 /**
+ * First usable phone from an enrichProfile (`profile.phone`), LLM extract
+ * (`extract.phone`), or deepResearchPerson (`enrichment.fullphone[]`) shape:
+ * the single read site for all three. Raw string, no E.164 normalization.
+ */
+export function extractFirstPhone(source: unknown): string | null {
+  if (!source || typeof source !== "object") return null;
+  const obj = source as Record<string, unknown>;
+
+  // deepResearchPerson `enrichment.fullphone` array shape
+  const fullphone = obj["fullphone"];
+  if (Array.isArray(fullphone)) {
+    for (const entry of fullphone) {
+      if (entry && typeof entry === "object") {
+        const v = (entry as Record<string, unknown>)["fullphone"];
+        if (typeof v === "string" && v.trim().length > 0) return v.trim();
+      } else if (typeof entry === "string" && entry.trim().length > 0) {
+        return entry.trim();
+      }
+    }
+  }
+
+  // enrichProfile `profile.phone` OR LLM-extract `extract.phone` shape
+  const phone = obj["phone"];
+  if (typeof phone === "string" && phone.trim().length > 0) return phone.trim();
+
+  return null;
+}
+
+/** What a phone lookup said: the profile's `phone_lookup`, or `unavailable` when it says nothing. */
+export type PhoneLookupOutcome = "found" | "none" | "not_attempted" | "unavailable" | "pending";
+
+/**
+ * How long a phone lookup waits for its number, in seconds. A reveal can
+ * land minutes after the profile; the SDK's own default is 360 s.
+ */
+export const PHONE_TIMEOUT_SEC = 300;
+
+/**
+ * A person's direct phone number: a profile read with the phone add-on, kept
+ * in the paid cache as its own lookup (`enrich.phone`), since an
+ * `enrich.profile` result carries no number. A number is never guaranteed;
+ * `lookup` says why there is none. Lookups by email and name alone failed
+ * every time measured, so callers send a LinkedIn URL.
+ */
+export async function findPhone(input: EnrichInput, ctx: CallContext, cache?: PaidCacheOptions) {
+  const out = await withPaidCache("enrich.phone", input, cache, async () => {
+    const agent = await getAgent();
+    // No idempotency key: a retry under one would replay the failed job.
+    const opts: Parameters<OneShot["personProfile"]>[0] = {
+      includePhone: true,
+      waitForPhones: true,
+      phoneTimeoutSec: PHONE_TIMEOUT_SEC,
+      ...buildAuditOpts(ctx, "enrich.phone"),
+    };
+    if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+    if (input.email) opts.email = input.email;
+    if (input.name) opts.name = input.name;
+    if (input.companyDomain) opts.company_domain = input.companyDomain;
+
+    const result: EnrichProfileResult = await agent.personProfile(opts);
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "enrich.phone",
+      signedReceipt: result,
+      costUsd: result.cost,
+      oneshotRequestId: result.request_id,
+    });
+    return { result, receiptId };
+  });
+  const phone = extractFirstPhone(out.result.profile);
+  const said = out.result.profile?.phone_lookup;
+  // "found" with no number on the row is no answer.
+  const lookup: PhoneLookupOutcome = phone
+    ? "found"
+    : said && said !== "found"
+      ? said
+      : "unavailable";
+  return {
+    phone,
+    lookup,
+    receiptId: out.receiptId,
+    cost: out.receiptId !== 0 ? (out.result.cost ?? 0) : 0,
+    ...(out.cached ? { cached: out.cached } : {}),
+  };
+}
+
+/**
  * A person dossier in the shape the research readers and the cached rows
  * already use: the profile under `result.enrichment`, articles as a list, and
  * the written summary and posts under `result.dossier`. SDK 0.52 returns the

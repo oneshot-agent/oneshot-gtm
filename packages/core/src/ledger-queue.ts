@@ -17,6 +17,7 @@ import type {
   ProspectPriority,
   QueueListFilters,
   QueueOfferSkipFilter,
+  QueuePhoneLookup,
   QueueRow,
   QueueSearchOpts,
   QueueShowFilter,
@@ -1683,6 +1684,73 @@ export class QueueStore {
     this.db
       .prepare(`UPDATE target_queue SET payload_json = ? WHERE id = ?`)
       .run(JSON.stringify(input.payload), input.id);
+  }
+
+  /**
+   * Record a phone lookup on an approved or sent row: `$.phoneLookup`
+   * always (`null` removes it), `$.phone` only when a number was found. One
+   * statement, so nothing else in the payload is touched. A row a send or a
+   * live drain lease holds is refused (`busy`): the drain sends from the
+   * payload it claimed. A sent row's status no longer moves, so its lease
+   * does not matter.
+   *
+   * `linkedinUrl` binds the write to the person the lookup was for: when the
+   * row's profile no longer names the same person (an import replaced the
+   * payload), nothing is written (`moved`). Checked in the same transaction
+   * as the write.
+   */
+  setQueuePhoneLookup(
+    id: number,
+    input: { phone?: string | null; lookup: QueuePhoneLookup | null; linkedinUrl?: string },
+  ): "written" | "busy" | "gone" | "moved" {
+    return this.db
+      .transaction((): "written" | "busy" | "gone" | "moved" => {
+        if (input.linkedinUrl !== undefined) {
+          const current = this.db
+            .query(
+              `SELECT CASE WHEN json_valid(payload_json)
+                           THEN json_extract(payload_json, '$.linkedinUrl') END AS url
+                 FROM target_queue WHERE id = ?`,
+            )
+            .get(id) as { url: unknown } | null;
+          if (!current) return "gone";
+          const now =
+            typeof current.url === "string" ? canonicalLinkedInProfileKey(current.url) : null;
+          if (!now || now !== canonicalLinkedInProfileKey(input.linkedinUrl)) return "moved";
+        }
+        return this.writeQueuePhoneLookup(id, input);
+      })
+      .immediate();
+  }
+
+  private writeQueuePhoneLookup(
+    id: number,
+    input: { phone?: string | null; lookup: QueuePhoneLookup | null },
+  ): "written" | "busy" | "gone" {
+    const cutoff = new Date(Date.now() - DRAIN_LEASE_SECONDS * 1000).toISOString();
+    const phone = input.phone?.trim();
+    const set =
+      input.lookup === null
+        ? "json_remove(payload_json, '$.phoneLookup')"
+        : `json_set(payload_json, '$.phoneLookup', json(?)${phone ? ", '$.phone', ?" : ""})`;
+    const values =
+      input.lookup === null ? [] : [JSON.stringify(input.lookup), ...(phone ? [phone] : [])];
+    const changed = this.db
+      .prepare(
+        `UPDATE target_queue
+            SET payload_json = ${set}
+          WHERE id = ?
+            AND status IN ('approved', 'sent')
+            AND send_started_at IS NULL
+            AND (status = 'sent' OR drain_claimed_at IS NULL OR drain_claimed_at < ?)
+            AND json_valid(payload_json)`,
+      )
+      .run(...values, id, cutoff).changes;
+    if (changed === 1) return "written";
+    const row = this.db.query(`SELECT status FROM target_queue WHERE id = ?`).get(id) as {
+      status: string;
+    } | null;
+    return row && (row.status === "approved" || row.status === "sent") ? "busy" : "gone";
   }
 
   /**

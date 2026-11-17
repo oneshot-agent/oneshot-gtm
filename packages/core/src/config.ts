@@ -377,6 +377,11 @@ export function volumeGoalPerDayOf(cfg: { volumeGoalPerDay?: unknown }): number 
   return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
+/** `phoneOnApprove`: only the literal `true` turns the paid lookup on. */
+export function phoneOnApproveOf(cfg: { phoneOnApprove?: unknown }): boolean {
+  return cfg.phoneOnApprove === true;
+}
+
 /** Days a learning proposal waits for a decision before the sweep retires it. */
 export const DEFAULT_LEARNING_EXPIRE_AFTER_DAYS = 7;
 
