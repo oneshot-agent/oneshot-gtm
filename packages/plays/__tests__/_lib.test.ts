@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 // The subject checks below are the lowercase rule's: a workspace that sets it.
-const product = vi.hoisted(() => ({ oneLiner: null as string | null }));
+const product = vi.hoisted(() => ({
+  oneLiner: null as string | null,
+  founderName: undefined as string | undefined,
+}));
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
@@ -10,6 +13,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       ...actual.loadConfig(),
       subjectCase: "lowercase",
       productOneLiner: product.oneLiner,
+      ...(product.founderName ? { founderName: product.founderName } : {}),
     }),
   };
 });
@@ -641,6 +645,7 @@ describe("lintEmail — slogan-line", () => {
     "We agree the target first, but your team decides when it is done.",
     // A firm named first, not a generic plural.
     "Atlas is measured on booked visits, but a demo answers questions.",
+    "Atlas can predict failure, but a number moves a board.",
   ])("passes a plain sentence: %s", (line) => {
     expect(sloganSentences(line)).toEqual([]);
   });
@@ -727,6 +732,12 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai"),
       ).toContain("no-product-line");
+      // The configured signature is peeled, punctuation and all.
+      product.founderName = "Sam at Acme.ai.";
+      expect(
+        check("Want me to run your open treatment plans to booked visits?\n\nSam at Acme.ai."),
+      ).toContain("no-product-line");
+      product.founderName = undefined;
       // "Dr." does not end the offer sentence.
       expect(
         check("I can run Dr. Acme.ai's open treatment plans to booked visits for you."),

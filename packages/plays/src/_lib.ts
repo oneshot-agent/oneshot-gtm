@@ -451,9 +451,11 @@ const RULE_OF_THREE = /(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/;
 const PERSON_WORD =
   /\b(?:i|i'd|i'm|i'll|me|my|we|we're|we'd|we'll|us|our|you|you're|you'd|your|yours)\b/i;
 const CONTRAST = /,\s*but\s+|;\s+|,\s*while\s+/i;
-// The bare plural takes plural verbs only: "Atlas is…" is a firm, not a plural.
-const GENERIC_SUBJECT =
-  /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b|(?:[a-z]+\s+)?[a-z]{3,}s\s+(?:are|do|don't|can|can't|will|won't|need|get|make|move|win|lose|buy|answer|have|were)\b)/i;
+const GENERIC_SUBJECT = /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b)/i;
+// A bare plural, lowercase so a firm named first ("Atlas can…") is not one, with
+// plural verbs only ("Atlas is…" never matches).
+const BARE_PLURAL =
+  /^(?:[a-z]+\s+)?[a-z]{3,}s\s+(?:are|do|don't|can|can't|will|won't|need|get|make|move|win|lose|buy|answer|have|were)\b/;
 
 /**
  * Sentences that are a general saying rather than something about this
@@ -473,7 +475,10 @@ export function sloganSentences(text: string): string[] {
       let end = s.length;
       while (end > 0 && ".!?".includes(s[end - 1]!)) end--;
       const clauses = s.slice(0, end).split(CONTRAST);
-      return clauses.length === 2 && clauses.every((c) => GENERIC_SUBJECT.test(c.trim()));
+      return (
+        clauses.length === 2 &&
+        clauses.every((c) => GENERIC_SUBJECT.test(c.trim()) || BARE_PLURAL.test(c.trim()))
+      );
     });
 }
 
@@ -497,11 +502,14 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   // A whole word: a signature domain ("acmeclinics.com" for Acme) is not the name.
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const named = new RegExp(`(?<![\\w.-])${escaped}(?![\\w-]|\\.\\w)`, "i");
-  const lines = body.split("\n").map((l) => l.trim());
+  const lines = bodyWithoutSignature(body)
+    .split("\n")
+    .map((l) => l.trim());
   const greeting = leadingGreeting();
   const start = lines.findIndex((l) => l && !greeting.test(l));
-  // The signature is the unpunctuated lines after the last sentence: a name
-  // or company there says nothing about what the product does.
+  // The configured signature is peeled above; any other one is the
+  // unpunctuated lines after the last sentence. A name or company there says
+  // nothing about what the product does.
   let end = lines.length - 1;
   while (end >= start && !endsSentence(lines[end] ?? "")) end--;
   if (start < 0 || end < start) return true;
