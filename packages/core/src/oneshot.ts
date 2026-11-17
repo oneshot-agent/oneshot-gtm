@@ -36,6 +36,7 @@ import {
 } from "@oneshot-agent/sdk";
 import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
+import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import { triggerAngleRefresh } from "./angle.ts";
 import { currentDoNotContact, loadConfig, oneshotEnvReady } from "./config.ts";
 import { describeDoNotContact, doNotContactMatch } from "./do-not-contact.ts";
@@ -1482,8 +1483,109 @@ export function extractFirstPhone(source: unknown): string | null {
   return null;
 }
 
-/** What a phone lookup said: the profile's `phone_lookup`, or `unavailable` when it says nothing. */
-export type PhoneLookupOutcome = "found" | "none" | "not_attempted" | "unavailable" | "pending";
+/**
+ * What a phone lookup said: the profile's `phone_lookup`, or `unavailable`
+ * when it says nothing. `other_person` is ours: the profile the number came
+ * with names someone else (`phoneOwnerMatches`).
+ */
+export type PhoneLookupOutcome =
+  | "found"
+  | "none"
+  | "not_attempted"
+  | "unavailable"
+  | "pending"
+  | "other_person";
+
+/** The lowercased `/in/` slug of a LinkedIn profile URL, with or without a scheme. */
+function linkedinSlugOf(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim();
+  const key = canonicalLinkedInProfileKey(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+  return key ? key.slice("linkedin.com/in/".length) : null;
+}
+
+/** A slug's generated id: its last hyphen part, when it is long and carries a digit. */
+function slugIdOf(slug: string): string | null {
+  const last = slug.slice(slug.lastIndexOf("-") + 1);
+  return last.length >= 6 && /\d/.test(last) ? last : null;
+}
+
+/** Credentials and suffixes that trail a name ("Pat Lee DDS", "Pat Lee Jr"). */
+const NAME_SUFFIXES = new Set([
+  "jr",
+  "sr",
+  "ii",
+  "iii",
+  "iv",
+  "md",
+  "dds",
+  "dmd",
+  "phd",
+  "mba",
+  "cpa",
+  "cfa",
+  "fca",
+  "fcpa",
+  "facd",
+  "esq",
+  "rn",
+  "np",
+  "pe",
+  "pmp",
+]);
+
+/** Titles that lead a name ("Dr. Pat Lee"). */
+const NAME_PREFIXES = new Set(["dr", "mr", "mrs", "ms", "mx", "prof"]);
+
+/**
+ * A person's name as comparable tokens: accents folded, lowercased, anything
+ * after a comma (credentials) dropped, initials, leading titles and trailing
+ * credentials left out. "Noel A. Komatz" and "noel komatz" agree.
+ */
+function personNameTokens(value: string): string[] {
+  const tokens = (value.split(",")[0] ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['\u2019]/g, "")
+    .split(/[^a-z]+/)
+    .filter((t) => t.length > 1);
+  while (tokens.length > 1 && NAME_PREFIXES.has(tokens[0]!)) tokens.shift();
+  while (tokens.length > 1 && NAME_SUFFIXES.has(tokens[tokens.length - 1]!)) tokens.pop();
+  return tokens;
+}
+
+/**
+ * Whether a phone lookup's profile is the person asked for. Asked by
+ * LinkedIn URL, the provider can still answer with someone else (asked
+ * Kevin Smith, got Kennedy Smith), and their number must not land on the
+ * row. The same profile slug, or the same generated id at the slug's end (a
+ * name change: natasha-rodriguez-a63674108 is natasha-vigo-a63674108), is a
+ * match. Otherwise the first and last names decide: both must agree. A
+ * different profile with no names to compare is no match; a profile that
+ * names neither a URL nor a person contradicts nothing.
+ */
+export function phoneOwnerMatches(input: EnrichInput, profile: object | null | undefined): boolean {
+  const p = (profile ?? {}) as { linkedin_url?: unknown; full_name?: unknown; name?: unknown };
+  const asked = linkedinSlugOf(input.linkedinUrl);
+  const got = linkedinSlugOf(p.linkedin_url);
+  if (asked && got) {
+    if (asked === got) return true;
+    const id = slugIdOf(asked);
+    if (id && id === slugIdOf(got)) return true;
+  }
+  const gotName = [p.full_name, p.name].find(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  );
+  const a = input.name ? personNameTokens(input.name) : [];
+  const b = gotName ? personNameTokens(gotName) : [];
+  if (a.length > 0 && b.length > 0) {
+    if (a[0] !== b[0]) return false;
+    // One name is a single token: the first name is all there is to compare.
+    return a.length < 2 || b.length < 2 || a[a.length - 1] === b[b.length - 1];
+  }
+  return !(asked && got);
+}
 
 /**
  * How long a phone lookup waits for its number, in seconds. A reveal can
@@ -1523,14 +1625,19 @@ export async function findPhone(input: EnrichInput, ctx: CallContext, cache?: Pa
     });
     return { result, receiptId };
   });
-  const phone = extractFirstPhone(out.result.profile);
+  // Judged on every read, cached ones too: the cache keeps the answer as
+  // bought, so asking again is not billed for the same stranger.
+  const samePerson = phoneOwnerMatches(input, out.result.profile);
+  const phone = samePerson ? extractFirstPhone(out.result.profile) : null;
   const said = out.result.profile?.phone_lookup;
   // "found" with no number on the row is no answer.
-  const lookup: PhoneLookupOutcome = phone
-    ? "found"
-    : said && said !== "found"
-      ? said
-      : "unavailable";
+  const lookup: PhoneLookupOutcome = !samePerson
+    ? "other_person"
+    : phone
+      ? "found"
+      : said && said !== "found"
+        ? said
+        : "unavailable";
   return {
     phone,
     lookup,

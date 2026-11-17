@@ -75,6 +75,14 @@ function text(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
+/** The row's person name: `name`, else first and last. The lookup checks the profile it gets against it. */
+function nameOf(payload: Record<string, unknown>): string | undefined {
+  return (
+    text(payload["name"]) ??
+    text([text(payload["firstName"]), text(payload["lastName"])].filter(Boolean).join(" "))
+  );
+}
+
 /** The row's LinkedIn profile URL. Lookups without one failed every time measured. */
 function linkedinOf(payload: Record<string, unknown>): string | null {
   const url = text(payload["linkedinUrl"]);
@@ -84,9 +92,9 @@ function linkedinOf(payload: Record<string, unknown>): string | null {
 /**
  * Why `row` gets no lookup, or null when it can have one. `force` looks
  * again over a stored number or a "none". `bulk` also leaves out a row whose
- * last lookup found no number: asking again is the same answer. `own` is a
- * job rechecking its row: its own in-flight entry and a send in progress do
- * not stop it (the result waits for the send).
+ * last lookup found no number, or only someone else's: asking again is the
+ * same answer. `own` is a job rechecking its row: its own in-flight entry
+ * and a send in progress do not stop it (the result waits for the send).
  */
 export function phoneLookupSkip(
   row: QueueRow,
@@ -100,7 +108,7 @@ export function phoneLookupSkip(
   if (opts.force) return null;
   if (text(payload["phone"])) return "has_phone";
   const last = payload["phoneLookup"] as Partial<QueuePhoneLookup> | undefined;
-  if (opts.bulk && last?.status === "none") return "no_number";
+  if (opts.bulk && (last?.status === "none" || last?.status === "other_person")) return "no_number";
   return null;
 }
 
@@ -179,7 +187,7 @@ async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promi
   const input = {
     linkedinUrl: linkedinOf(payload)!,
     ...(text(payload["email"]) ? { email: text(payload["email"])! } : {}),
-    ...(text(payload["name"]) ? { name: text(payload["name"])! } : {}),
+    ...(nameOf(payload) ? { name: nameOf(payload)! } : {}),
   };
   const ctx = {
     playName: row.play_name,
@@ -193,7 +201,11 @@ async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promi
     phone: out.phone,
     cached: Boolean(out.cached),
     lookup: {
-      status: out.phone ? "done" : out.lookup === "none" ? "none" : "unavailable",
+      status: out.phone
+        ? "done"
+        : out.lookup === "none" || out.lookup === "other_person"
+          ? out.lookup
+          : "unavailable",
       at: new Date().toISOString(),
       costUsd: out.cost,
     },
