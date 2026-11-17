@@ -19,4 +19,4 @@ X-Webhook-Signature: t=<unix-seconds>,v1=<hex>
 
 The hex is an HMAC-SHA256 of `<timestamp>.<raw JSON body>`. A signed delivery is accepted for five minutes and only once.
 
-Without the secret the endpoints accept unsigned posts. The server binds `127.0.0.1` only. If you put it behind a proxy, set the secret first.
+Without the secret the endpoints accept unsigned posts. The server binds `127.0.0.1` only. If you put it behind a proxy, set the secret first. Once a host is allowed for [members](./members.md#limits), a proxy that adds forwarding headers is refused.

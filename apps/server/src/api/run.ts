@@ -453,7 +453,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   });
 
   // Loopback-only CORS for SSE: mirror loopback origins, omit the header
-  // otherwise (the outer fetch handler already enforces a loopback Host).
+  // otherwise (the outer fetch handler already enforces a loopback or allowed
+  // Host; a member's page is same-origin and needs no CORS header).
   const origin = req.headers.get("origin") ?? "";
   const isLoopback = isLoopbackOrigin(origin);
   const sseHeaders: Record<string, string> = {

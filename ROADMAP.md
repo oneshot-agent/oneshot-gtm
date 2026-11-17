@@ -61,6 +61,6 @@ _Nothing approved and waiting._
 - **Manage SPF/DKIM/DMARC.** OneShot auto-provisions and warms sending domains.
 - **Hold your customer data.** Local SQLite ledger only.
 - **Lock you into one LLM.** BYO key, swap providers freely.
-- **Auth, multi-user, hosted DB.** Out of scope for a local-first tool.
+- **Host your database.** There is no hosted DB and no accounts with us. Several people on your own install is supported: [members](./docs/members.md) reach it over your tailnet.
 - **Tauri / Electron desktop wrap.** `bunx oneshot-gtm-server` opens your browser; that's enough.
 - **Adopt Effect.** Skipped for shipping speed. Plain `async`/`await` keeps the code forkable.
