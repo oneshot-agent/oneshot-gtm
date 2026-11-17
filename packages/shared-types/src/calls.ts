@@ -116,4 +116,6 @@ export interface LogCallRequest {
   playName?: string;
   /** For `not_now`: ISO date the cadence resumes. */
   holdUntil?: string;
+  /** The number the founder dialled (a new call): a wrong_number lands on it, not on a number stored since. */
+  phone?: string;
 }

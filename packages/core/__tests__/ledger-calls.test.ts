@@ -397,4 +397,82 @@ describe("ledger calls: review fixes", () => {
     );
     expect(ledger.getCadenceDraft({ prospectId: id, playName: "p" })).toBeNull();
   });
+
+  it("takes a queue row's phone matched by a whitespace-padded address", () => {
+    const id = ledger.upsertProspect({ name: "Q", email: "q@a.test" });
+    const qid = ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: " Q@a.test ", phone: "(512) 653-1187" },
+      dedupeKey: "q",
+      source: "s",
+    })!;
+    expect(ledger.phoneForCall(id)).toEqual({
+      phone: "+15126531187",
+      raw: "(512) 653-1187",
+      queueId: qid,
+    });
+  });
+
+  it("never logs over a call's do_not_contact outcome", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@a.test", phone: phone(1) });
+    const callId = ledger.insertCall({
+      prospectId: id,
+      startedAt: "2026-11-17T10:00:00.000Z",
+      outcome: "do_not_contact",
+    });
+    expect(ledger.setCallOutcome({ id: callId, prospectId: id, outcome: "interested" })).toBe(
+      false,
+    );
+    expect(ledger.getCall(callId)!.outcome).toBe("do_not_contact");
+    expect(ledger.callAllowed(id)).toBe(false);
+    expect(ledger.listCallCandidates({ limit: 10 })).toEqual([]);
+    // The same outcome again is a re-log, not a change.
+    expect(
+      ledger.setCallOutcome({ id: callId, prospectId: id, outcome: "do_not_contact", note: "n" }),
+    ).toBe(true);
+    expect(ledger.getCall(callId)!.note).toBe("n");
+  });
+
+  it("tier 1 follows the latest answer, by email or on a call", () => {
+    const id = ledger.upsertProspect({ name: "R", email: "r@a.test", phone: phone(1) });
+    const tier = () => ledger.listCallCandidates({ limit: 10 })[0]!.tier;
+    ledger.recordInboxReply({
+      id: "r1",
+      threadKey: "t",
+      prospectId: id,
+      fromEmail: "r@a.test",
+      body: "sounds good",
+      receivedAt: "2026-11-01T00:00:00Z",
+    });
+    ledger.setInboxReplyIntent("r1", "interested", null);
+    expect(tier()).toBe(1);
+    // A call after it, logged not interested, ends it.
+    ledger.insertCall({
+      prospectId: id,
+      startedAt: "2026-11-02T00:00:00.000Z",
+      outcome: "not_interested",
+    });
+    expect(tier()).toBe(4);
+    // A neutral answer later (an auto-reply) leaves it where it stands.
+    ledger.recordInboxReply({
+      id: "r2",
+      threadKey: "t",
+      prospectId: id,
+      fromEmail: "r@a.test",
+      body: "out of office",
+      receivedAt: "2026-11-03T00:00:00Z",
+    });
+    ledger.setInboxReplyIntent("r2", "auto_reply", null);
+    expect(tier()).toBe(4);
+    // A later call logged interested brings it back.
+    ledger.insertCall({
+      prospectId: id,
+      startedAt: "2026-11-04T00:00:00.000Z",
+      outcome: "interested",
+    });
+    expect(ledger.listCallCandidates({ limit: 10 })[0]).toMatchObject({
+      tier: 1,
+      replyIntent: "interested",
+    });
+  });
 });

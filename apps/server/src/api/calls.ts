@@ -6,7 +6,8 @@
  *    for the dial panel. A due call step's stored preview, else a cached
  *    on-demand brief; a paid completion only when none is stored or
  *    `regenerate` (body, or `?regenerate=1`) asks for a new one.
- *  - POST /api/prospects/:id/call (LogCallRequest): log an outcome.
+ *  - POST /api/prospects/:id/call (LogCallRequest): log an outcome. 409
+ *    when it would change a call logged do-not-contact.
  *  - GET /api/prospects/:id/calls: the prospect's calls, newest first.
  */
 import { callsOf, getLedger, loadConfig } from "@oneshot-gtm/core";
@@ -22,6 +23,8 @@ import { jsonResponse } from "../server.ts";
 
 /** Longest note kept on a call. */
 const MAX_NOTE_CHARS = 4000;
+/** Longest dialled number read: a number with its extension fits. */
+const MAX_PHONE_CHARS = 64;
 
 export function listCallsRoute(req: Request): Response {
   try {
@@ -112,6 +115,13 @@ export async function logCallRoute(
   const playName = body["playName"];
   if (playName !== undefined && playName !== null && typeof playName !== "string")
     return jsonResponse({ error: "playName must be a string" }, 400, req);
+  const phone = body["phone"];
+  if (
+    phone !== undefined &&
+    phone !== null &&
+    (typeof phone !== "string" || phone.length > MAX_PHONE_CHARS)
+  )
+    return jsonResponse({ error: "phone must be the number dialled" }, 400, req);
   const request: LogCallRequest = {
     outcome: body["outcome"],
     ...(typeof note === "string" ? { note } : {}),
@@ -119,6 +129,7 @@ export async function logCallRoute(
     ...(callId != null ? { callId: prospectIdOf(callId)! } : {}),
     ...(typeof playName === "string" && playName ? { playName } : {}),
     ...(typeof holdUntil === "string" ? { holdUntil } : {}),
+    ...(typeof phone === "string" && phone.trim() ? { phone } : {}),
   };
   try {
     return jsonResponse({ call: recordCall(prospectId, request) }, 200, req);

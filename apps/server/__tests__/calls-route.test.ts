@@ -108,6 +108,25 @@ describe("POST /api/prospects/:id/call", () => {
       "voicemail",
     ]);
   });
+
+  it("refuses to change a call logged do-not-contact (409) and checks the number dialled", async () => {
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: "+15126531187" });
+    const params = { id: String(id) };
+    expect(
+      (await logCallRoute(post(`/x`, { outcome: "no_answer", phone: 15126531187 }), params)).status,
+    ).toBe(400);
+    const res = await logCallRoute(
+      post(`/x`, { outcome: "do_not_contact", phone: "(512) 653-1187" }),
+      params,
+    );
+    const { call } = await res.json();
+    const change = await logCallRoute(
+      post(`/x`, { outcome: "interested", callId: call.id }),
+      params,
+    );
+    expect(change.status).toBe(409);
+    expect(ledger.getCall(call.id)!.outcome).toBe("do_not_contact");
+  });
 });
 
 describe("POST /api/calls/brief", () => {

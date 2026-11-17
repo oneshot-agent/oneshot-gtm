@@ -553,4 +553,95 @@ describe("review fixes", () => {
     expect(out.list.map((r) => r.prospectId)).toEqual([open[2], open[1]]);
     expect(out.list).toHaveLength(2);
   });
+
+  it("PRIOR EMAILS and the emailed opener read email sends only, never a LinkedIn message", async () => {
+    callsOn();
+    const id = enroll();
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 1,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { label: "LinkedIn message", body: "Saw your post on renewals." },
+    });
+    responses.push("{}");
+    const prospect = ledger.getProspectById(id)!;
+    const coldBrief = await buildCallBrief({ prospect, playName: PLAY, cfg: cfg as never });
+    expect(prompts[0]).not.toContain("PRIOR EMAILS");
+    expect(coldBrief.opener).toContain("cold call");
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 2,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "renewals", body: "About your renewals." },
+    });
+    responses.push("{}");
+    const brief = await buildCallBrief({ prospect, playName: PLAY, cfg: cfg as never });
+    expect(prompts[1]).toContain("About your renewals.");
+    expect(prompts[1]).not.toContain("Saw your post on renewals.");
+    expect(brief.opener).toContain("I emailed you recently");
+  });
+
+  it("a log on an existing call completes only its own cadence's call step", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    // A call made in another play, whose cadence is not at a call step.
+    const other = ledger.insertCall({
+      prospectId: id,
+      playName: "__other",
+      startedAt: new Date().toISOString(),
+      phone: "+15126531187",
+    });
+    const call = recordCall(id, { outcome: "no_answer", callId: other });
+    expect(call.playName).toBe("__other");
+    expect(cadence(id).current_step).toBe(1);
+    expect(callEvents(id)).toEqual([]);
+    // A call with no play recorded still finds the due step.
+    const loose = ledger.insertCall({ prospectId: id, startedAt: new Date().toISOString() });
+    recordCall(id, { outcome: "no_answer", callId: loose });
+    expect(cadence(id).current_step).toBe(2);
+  });
+
+  it("a call logged do_not_contact keeps that outcome: a change is refused with 409", () => {
+    callsOn();
+    const id = enroll();
+    const call = recordCall(id, { outcome: "do_not_contact" });
+    expect(() => recordCall(id, { outcome: "interested", callId: call.id })).toThrow(
+      expect.objectContaining({ status: 409 }),
+    );
+    expect(ledger.getCall(call.id)!.outcome).toBe("do_not_contact");
+    expect(ledger.callAllowed(id)).toBe(false);
+    expect(cadence(id).status).toBe("unsubscribed");
+    // Logging it again as do_not_contact is a re-log.
+    expect(recordCall(id, { outcome: "do_not_contact", callId: call.id }).outcome).toBe(
+      "do_not_contact",
+    );
+  });
+
+  it("wrong_number lands on the number dialled, not on one stored since", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@x.test", phone: "+15126539999" });
+    // Dialled the old number; the stored one changed before the outcome was logged.
+    const call = recordCall(id, { outcome: "wrong_number", phone: "(512) 653-1187" });
+    expect(ledger.callPhone(call.id)).toBe("+15126531187");
+    expect(ledger.getProspectById(id)!.phone).toBe("+15126539999");
+    expect(ledger.phoneForCall(id).phone).toBe("+15126539999");
+    expect(ledger.wrongNumbersFor([id]).get(id)).toEqual(new Set(["+15126531187"]));
+  });
+
+  it("the fallback offer drops trailing dots and spaces from the product line", () => {
+    const brief = parseCallBrief("{}", {
+      firstName: null,
+      fullName: null,
+      founderName: null,
+      product: "Widgets renewals. . ",
+      offer: null,
+      angle: null,
+      emailed: false,
+    });
+    expect(brief.offer).toBe("Widgets renewals.");
+  });
 });

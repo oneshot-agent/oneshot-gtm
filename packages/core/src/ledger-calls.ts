@@ -135,7 +135,12 @@ export function insertCall(
   return Number(result.lastInsertRowid);
 }
 
-/** Log the outcome on a call already written (a bridged call). False when no such call is the prospect's. */
+/**
+ * Log the outcome on a call already written (a bridged call). False when no
+ * such call is the prospect's, or when it was logged `do_not_contact`: the
+ * person's opt-out is never logged over (it is what `contactAllowedClause`
+ * reads), so only the same outcome again touches it.
+ */
 export function setCallOutcome(
   db: Database,
   input: {
@@ -152,7 +157,8 @@ export function setCallOutcome(
       .prepare(
         `UPDATE calls SET outcome = ?, reply_intent = ?, note = COALESCE(?, note),
                 duration_sec = COALESCE(?, duration_sec), play_name = COALESCE(play_name, ?)
-         WHERE id = ? AND prospect_id = ?`,
+         WHERE id = ? AND prospect_id = ?
+           AND (COALESCE(outcome, '') <> 'do_not_contact' OR ? = 'do_not_contact')`,
       )
       .run(
         input.outcome,
@@ -162,6 +168,7 @@ export function setCallOutcome(
         input.playName ?? null,
         input.id,
         input.prospectId,
+        input.outcome,
       ).changes > 0
   );
 }
@@ -286,7 +293,7 @@ export function phoneSourcesFor(
       ? byProspect
       : queuePhoneRow(
           db,
-          "q.prospect_id IS NULL AND json_valid(q.payload_json) AND lower(json_extract(q.payload_json, '$.email')) = lower(?)",
+          "q.prospect_id IS NULL AND json_valid(q.payload_json) AND lower(trim(json_extract(q.payload_json, '$.email'))) = lower(?)",
           p.email.trim(),
         );
   return { prospectPhone: p.phone?.trim() || null, ...row };
@@ -419,6 +426,10 @@ export interface CallCandidate {
 }
 
 const POSITIVE_INTENTS = REPLY_INTENTS.filter((i) => i.polarity === "positive").map((i) => i.label);
+/** Labels that say where a person stands: a neutral one (an auto-reply, "not now") leaves it as it was. */
+const DECIDING_INTENTS = REPLY_INTENTS.filter((i) => i.polarity !== "neutral").map((i) => i.label);
+const sqlList = (labels: readonly string[]) =>
+  labels.map((l) => `'${l.replace(/'/g, "''")}'`).join(",");
 
 function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
@@ -447,10 +458,11 @@ function callGatesSql(db: Database): string {
  * A bounced email does not block a call: the number is a different address.
  * The company do-not-contact list is the caller's (it is config).
  *
- * Order: a positive reply (email intent, or a call logged interested) with no
- * meeting booked or held yet; then connected on LinkedIn (an accepted invite
- * or a known connection); then in a live cadence, by its queue row's priority
- * score; then the rest, most recently touched first.
+ * Order: a positive latest answer (an email reply's intent, or a call's
+ * outcome, whichever is newer) with no meeting booked or held yet; then
+ * connected on LinkedIn (an accepted invite or a known connection); then in a
+ * live cadence, by its queue row's priority score; then the rest, most
+ * recently touched first.
  */
 export function listCallCandidates(
   db: Database,
@@ -464,12 +476,17 @@ export function listCallCandidates(
   const meetingAny = hasTable(db, "meetings")
     ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND COALESCE(m.outcome, '') NOT IN ('cancelled', 'no_show'))`
     : "0";
-  const intents = POSITIVE_INTENTS.map((l) => `'${l.replace(/'/g, "''")}'`).join(",");
-  const positiveIntent = `COALESCE(
-      (SELECT ir.intent FROM inbox_replies ir
-        WHERE ir.prospect_id = p.id AND ir.intent IN (${intents})
-        ORDER BY ir.received_at DESC LIMIT 1),
-      (SELECT 'interested' FROM calls cl WHERE cl.prospect_id = p.id AND cl.outcome = 'interested' LIMIT 1))`;
+  // The person's latest positive or negative answer, by email or on a call,
+  // when it is positive: "not interested" after "interested" drops them out
+  // of tier 1. Both reads are index seeks on (prospect_id, time).
+  const deciding = sqlList(DECIDING_INTENTS);
+  const positiveIntent = `(SELECT CASE WHEN r.intent IN (${sqlList(POSITIVE_INTENTS)}) THEN r.intent END FROM (
+        SELECT ir.intent AS intent, julianday(ir.received_at) AS t FROM inbox_replies ir
+         WHERE ir.prospect_id = p.id AND ir.intent IN (${deciding})
+        UNION ALL
+        SELECT cl.reply_intent, julianday(cl.started_at) FROM calls cl
+         WHERE cl.prospect_id = p.id AND cl.reply_intent IN (${deciding})) r
+      ORDER BY r.t DESC LIMIT 1)`;
   const noMeeting = `NOT EXISTS (SELECT 1 FROM deal_outcomes d WHERE d.prospect_id = p.id AND d.outcome = 'meeting_booked')
       AND NOT (${meetingAny})`;
   const linkedInConnected = `EXISTS (

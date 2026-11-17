@@ -29,6 +29,7 @@ import {
   getLedger,
   loadConfig,
   logEvent,
+  normalizePhone,
   phoneLocalTime,
   pickCallPhone,
   productBriefText,
@@ -51,6 +52,7 @@ import {
   sequenceOffer,
   stopCadencesForOptOut,
   type CadenceContext,
+  type PriorStepRow,
   type StepPayload,
 } from "./_cadence.ts";
 
@@ -68,6 +70,13 @@ const CALL_CANDIDATE_PAGES = 5;
 const NOT_NOW_DEFAULT_DAYS = 14;
 
 const str = (v: unknown): string => (typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "");
+
+/** The text without its trailing dots and spaces. A scan, not a regex: the input is config text (CodeQL: polynomial backtracking). */
+function trimEndDots(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === "." || /\s/.test(text[end - 1]!))) end--;
+  return text.slice(0, end);
+}
 
 /** The brief as one block of text: the stored preview's body, and what the lint reads. */
 export function callBriefText(brief: CallBrief): string {
@@ -118,7 +127,7 @@ export function parseCallBrief(
     str(parsed["offer"]) ||
     str(fallback.offer) ||
     str(fallback.angle) ||
-    (fallback.product ? `${fallback.product.replace(/[.\s]+$/, "")}.` : "");
+    (fallback.product ? `${trimEndDots(fallback.product)}.` : "");
   const opener =
     str(parsed["opener"]) ||
     `${hi}, ${who}. ${
@@ -170,6 +179,22 @@ export function callBriefFlags(brief: CallBrief): string[] {
 }
 
 /**
+ * The emails already sent in this play, for the brief's PRIOR EMAILS block:
+ * a LinkedIn message or a call is not one, nor is a skipped step.
+ */
+function priorEmails(prospectId: number, playName: string): PriorStepRow[] {
+  const emailSteps = new Set(
+    getLedger()
+      .listSequenceEventsForProspectPlay(prospectId, playName)
+      .filter((e) => e.channel === "email")
+      .map((e) => e.step_index),
+  );
+  return getPriorStepsForProspect(prospectId, playName).filter(
+    (s) => s.status !== "skipped" && !!s.body && emailSteps.has(s.stepIndex),
+  );
+}
+
+/**
  * Write the brief for a call to this prospect: a paid completion on the
  * workspace's configured model. The inputs follow a follow-up email's: the
  * prospect's role and researched facts, the sequence's offer (with the
@@ -196,11 +221,7 @@ export async function buildCallBrief(input: {
     : cfg.productBrief?.trim()
       ? `PRODUCT BRIEF (the only source of product claims):\n${productBriefText(cfg) ?? ""}`
       : null;
-  const prior = playName
-    ? getPriorStepsForProspect(prospect.id, playName).filter(
-        (s) => s.status !== "skipped" && !!s.body,
-      )
-    : [];
+  const prior = playName ? priorEmails(prospect.id, playName) : [];
   const priorBlock =
     prior.length > 0
       ? [
@@ -338,11 +359,11 @@ function holdUntilIso(raw: string | undefined, now: Date): string {
     : new Date(now.getTime() + NOT_NOW_DEFAULT_DAYS * 24 * 3600 * 1000).toISOString();
 }
 
-/** Thrown for a request `recordCall` refuses; the route answers 400 or 404 with its message. */
+/** Thrown for a request `recordCall` refuses; the route answers with its status and message. */
 export class CallLogError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404,
+    readonly status: 400 | 404 | 409,
   ) {
     super(message);
     this.name = "CallLogError";
@@ -366,7 +387,13 @@ export class CallLogError extends Error {
  *   - not_now: the step is done and every live cadence is held until
  *     `holdUntil` (default two weeks);
  *   - do_not_contact: every cadence stops as unsubscribed, and the call's
- *     outcome blocks every channel (`contactAllowedClause`).
+ *     outcome blocks every channel (`contactAllowedClause`). It is final: a
+ *     later log on the same call that changes it is refused (409).
+ *
+ * A log on an existing call (`callId`) completes only the call step of the
+ * cadence that call was made in, when it recorded one. A new call records
+ * `req.phone`, the number the founder dialled, when it parses, so a
+ * wrong_number lands on that number even if the stored one changed since.
  */
 export function recordCall(
   prospectId: number,
@@ -407,8 +434,16 @@ function applyCallOutcome(
 ): { callId: number; stepPlay: string | null } {
   const ledger = getLedger();
   const { outcome, note, durationSec, cfg, now } = ctx;
-  const stepPlay = callStepPlay(prospectId, req.playName);
-  const playName = stepPlay ?? req.playName ?? null;
+  const existing = req.callId != null ? ledger.getCall(req.callId) : null;
+  if (req.callId != null && existing?.prospectId !== prospectId)
+    throw new CallLogError("call not found", 404);
+  if (existing?.outcome === "do_not_contact" && outcome !== "do_not_contact")
+    throw new CallLogError("this call was logged do not contact; that stays", 409);
+  // An existing call's own cadence, when it recorded one: never another
+  // cadence whose next step happens to be a call.
+  const stepPlay = callStepPlay(prospectId, existing?.playName ?? req.playName);
+  const playName = stepPlay ?? existing?.playName ?? req.playName ?? null;
+  const country = defaultPhoneCountry(cfg);
   let callId: number;
   let dialled: string | null;
   if (req.callId != null) {
@@ -420,7 +455,7 @@ function applyCallOutcome(
     dialled = ledger.callPhone(callId);
   } else {
     const number = phoneForCall(prospectId, cfg);
-    dialled = number.phone ?? number.raw;
+    dialled = normalizePhone(req.phone, country) ?? number.phone ?? number.raw;
     callId = ledger.insertCall({
       prospectId,
       playName,
@@ -445,8 +480,7 @@ function applyCallOutcome(
     });
   }
   // Only the number that rang the wrong person: a replacement stays.
-  if (outcome === "wrong_number")
-    ledger.clearProspectPhone(prospectId, dialled, defaultPhoneCountry(cfg));
+  if (outcome === "wrong_number") ledger.clearProspectPhone(prospectId, dialled, country);
   if (outcome === "not_now") {
     const until = holdUntilIso(req.holdUntil, now);
     for (const c of ledger.listCadencesForProspect(prospectId)) {

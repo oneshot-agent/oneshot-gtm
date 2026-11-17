@@ -26,7 +26,7 @@ A cadence that is already running keeps its plan: turning calls on never adds a 
 Two lists:
 
 - **Due**: cadences whose next step is a call. A due call with no number says so and links to the prospect's queue row. The dialler never buys a number itself. When the cadence reaches a call and no usable number is stored, the step is skipped at once so the emails keep going.
-- **Call list**: everyone else with a number, best first: a positive reply with no meeting yet, then people connected on LinkedIn, then people in a live cadence by their priority score, then the rest.
+- **Call list**: everyone else with a number, best first: a positive latest answer (by email or on a call; a later "not interested" ends it) with no meeting yet, then people connected on LinkedIn, then people in a live cadence by their priority score, then the rest.
 
 Both lists apply the same gates as sending: the company do-not-contact list, an opt-out on any channel, an ICP reject and a meeting already held. A bounced email does not stop a call.
 
@@ -41,14 +41,14 @@ Opening a row shows a brief: an opener that points back to your email, the offer
 | Outcome                                        | What it does                                                                |
 | ---------------------------------------------- | --------------------------------------------------------------------------- |
 | No answer, voicemail, gatekeeper, wrong person | The call step is done; the cadence moves on.                                |
-| Wrong number                                   | As above, and the number is cleared and never offered again.                |
+| Wrong number                                   | As above, and the number you dialled is cleared and never offered again.    |
 | Interested                                     | Counts as a reply: live cadences stop as replied.                           |
 | Meeting booked                                 | As interested, and a meeting is recorded.                                   |
 | Not now                                        | The step is done and live cadences wait until the date you pick.            |
 | Not interested                                 | Counts as a reply; live cadences stop.                                      |
 | Do not contact                                 | Every cadence stops and the person is never contacted again on any channel. |
 
-Replies and the funnel count a call the way they count an email reply.
+Replies and the funnel count a call the way they count an email reply. Do not contact is final: a call logged with it cannot be changed to another outcome.
 
 ## Your responsibility
 
