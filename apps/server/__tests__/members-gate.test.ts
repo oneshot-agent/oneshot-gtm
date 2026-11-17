@@ -141,7 +141,7 @@ describe("requests on an allowed host", () => {
     expect((await post(SKIP_MAIL, headers)).status).not.toBe(403);
     // A page on another workspace's port of the same host is the same install.
     expect(
-      (await post(SKIP_MAIL, { ...headers, origin: `https://${TAILNET}:3031` })).status,
+      (await post(SKIP_MAIL, { ...headers, origin: `https://${TAILNET}:4031` })).status,
     ).not.toBe(403);
     // The cancel route repeats the Origin check itself.
     expect((await post("/api/run/999999/cancel", headers)).status).not.toBe(403);

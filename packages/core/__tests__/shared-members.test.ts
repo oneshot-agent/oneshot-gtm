@@ -88,13 +88,13 @@ describe("members", () => {
 
 describe("allowed hosts", () => {
   it("stores the bare hostname whatever form it was typed in", () => {
-    expect(normalizeAllowedHost("https://GTM-Host.Tail1234.ts.net:3031/queue?x=1")).toBe(
+    expect(normalizeAllowedHost("https://GTM-Host.Tail1234.ts.net:4031/queue?x=1")).toBe(
       "gtm-host.tail1234.ts.net",
     );
     expect(normalizeAllowedHost("gtm-host.tail1234.ts.net.")).toBe("gtm-host.tail1234.ts.net");
     expect(normalizeAllowedHost("100.64.0.7:3030")).toBe("100.64.0.7");
 
-    expect(db.allowHost("https://GTM-Host.Tail1234.ts.net:3031/")).toBe(true);
+    expect(db.allowHost("https://GTM-Host.Tail1234.ts.net:4031/")).toBe(true);
     expect(db.allowHost("gtm-host.tail1234.ts.net")).toBe(false);
     expect(db.allowedHosts()).toEqual(["gtm-host.tail1234.ts.net"]);
     expect(db.isAllowedHost("GTM-HOST.tail1234.ts.net")).toBe(true);

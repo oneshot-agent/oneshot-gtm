@@ -322,7 +322,7 @@ workspace
   .action(runOrFail(commandWorkspaceRemove));
 
 // Members: who may use this install from another machine. The lists are in the
-// shared database, so they hold for every workspace whatever --workspace says.
+// shared database, so they hold for every workspace, whichever one a command runs against.
 const members = program
   .command("members")
   .description(
