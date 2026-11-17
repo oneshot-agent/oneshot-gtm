@@ -69,6 +69,7 @@ import type {
   ProspectSearchResponse,
   QueueRowDetail,
   WorkspaceInfo,
+  CurrentMember,
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
@@ -378,6 +379,9 @@ export const api = {
   // just the same read again, never a 404 on an uncaptured query variant.
   doctorRefreshBalance: () =>
     getJson<{ checks: DoctorCheck[] }>(IS_DEMO ? "/doctor" : "/doctor?refresh=1"),
+  // Who this browser is signed in as: the owner on the host machine, or the
+  // member Tailscale named.
+  me: () => getJson<CurrentMember>("/me"),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {

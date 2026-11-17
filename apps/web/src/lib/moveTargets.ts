@@ -18,7 +18,24 @@ export function moveTargets(info: WorkspaceInfo | undefined): MoveTarget[] {
     .map((w) => ({ name: w.name, port: w.port, running: w.running }));
 }
 
+/** The part of `window.location` a workspace link is built from. */
+export type PageLocation = Pick<Location, "protocol" | "hostname">;
+
+/**
+ * Another workspace's dashboard: its own port, on the protocol and hostname
+ * this page was opened with. On the host machine that is loopback; for a
+ * member it is the allowed host they browse to, where loopback would be their
+ * own machine.
+ */
+export function workspaceUrl(
+  port: number,
+  path = "/",
+  page: PageLocation = window.location,
+): string {
+  return `${page.protocol}//${page.hostname}:${port}${path}`;
+}
+
 /** Where the moved row can be reviewed: the destination's queue, pending filter. */
-export function movedRowUrl(port: number): string {
-  return `http://127.0.0.1:${port}/queue?status=pending`;
+export function movedRowUrl(port: number, page?: PageLocation): string {
+  return workspaceUrl(port, "/queue?status=pending", page);
 }

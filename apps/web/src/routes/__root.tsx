@@ -158,6 +158,10 @@ function RootLayout() {
   });
   const workspace = workspaceQuery.data?.current ?? null;
 
+  // Who is signed in. The demo is a snapshot with no members in it.
+  const meQuery = useQuery({ queryKey: ["me"], queryFn: api.me, enabled: !IS_DEMO });
+  const me = meQuery.data ?? null;
+
   // Several workspaces run at once, each its own server on its own port. Name
   // the tab and tint its icon, or they are indistinguishable in the tab strip.
   useDocumentTitle(workspace?.name ?? null);
@@ -322,6 +326,15 @@ function RootLayout() {
               workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
               {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
               local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+              {me?.email ? (
+                <>
+                  {" "}
+                  · signed in as{" "}
+                  <span className="text-ink-cream" title={`${me.email} · ${me.role}`}>
+                    {me.name ?? me.email}
+                  </span>
+                </>
+              ) : null}
             </div>
             <div className="flex items-center gap-3">
               <PrivacyToggle />

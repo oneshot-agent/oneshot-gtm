@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { api } from "../api/client.ts";
+import { workspaceUrl } from "./moveTargets.ts";
 
 /**
  * Open another workspace's dashboard, auto-starting its server when stopped.
@@ -27,7 +28,7 @@ export async function openWorkspace(
   hooks: { onLaunchStart?: () => void; onSettled?: () => void } = {},
 ): Promise<void> {
   if (row.isCurrent) return;
-  const url = `http://127.0.0.1:${row.port}/`;
+  const url = workspaceUrl(row.port);
   if (row.running) {
     window.open(url, "_blank");
     return;
