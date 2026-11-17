@@ -2423,6 +2423,16 @@ export interface WorkspaceInfo {
   }>;
 }
 
+/**
+ * Who a request is acting as, served by GET /api/me. `email` is null for the
+ * local owner: someone on the host machine itself when no owner is listed.
+ */
+export interface CurrentMember {
+  email: string | null;
+  name: string | null;
+  role: "owner" | "member";
+}
+
 /* ── Calendar meetings (issue #577) ──────────────────────────────────── */
 
 export type MeetingOutcomeView = "held" | "no_show" | "cancelled" | "rescheduled";

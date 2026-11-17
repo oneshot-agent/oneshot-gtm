@@ -38,7 +38,8 @@ import {
   type InboxSendReplyRequest,
   type ReplyLearningStatus,
 } from "@oneshot-gtm/shared-types";
-import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { isAllowedOrigin } from "../members.ts";
+import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import {
   startLinkedInBackfill,
@@ -71,7 +72,7 @@ function internalRequest(req: Request, body: unknown) {
 }
 async function payload(req: Request): Promise<Record<string, unknown>> {
   if (demoMode()) throw new Error("Read-only demo");
-  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) throw new Error("Forbidden origin");
+  if (!isAllowedOrigin(req.headers.get("origin") ?? "")) throw new Error("Forbidden origin");
   if (!req.headers.get("content-type")?.includes("application/json"))
     throw new Error("JSON is required");
   const b: unknown = await req.json();
