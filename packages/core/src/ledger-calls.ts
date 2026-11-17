@@ -425,6 +425,21 @@ function hasTable(db: Database, name: string): boolean {
 }
 
 /**
+ * The gates past the opt-outs that every Calls-page row passes, as SQL over
+ * the prospect alias `p`: not rejected off-ICP, no meeting held, no cadence
+ * stopped as do-not-contact. Shared by the call list and the due rows.
+ */
+function callGatesSql(db: Database): string {
+  const meetingHeld = hasTable(db, "meetings")
+    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
+    : "0";
+  return `COALESCE(p.icp_verdict, '') <> 'reject'
+            AND NOT (${meetingHeld})
+            AND NOT EXISTS (SELECT 1 FROM cadence_state dnc WHERE dnc.prospect_id = p.id
+                             AND dnc.status = 'stopped' AND dnc.stop_reason = 'do_not_contact')`;
+}
+
+/**
  * Everyone with a number the Calls page may list, best first, capped at
  * `limit`. Gates in SQL: contact still allowed on every channel
  * (`contactAllowedSetClause`, which includes a call logged do-not-contact), not
@@ -446,9 +461,6 @@ export function listCallCandidates(
     excludeProspectIds?: readonly number[];
   },
 ): CallCandidate[] {
-  const meetingHeld = hasTable(db, "meetings")
-    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
-    : "0";
   const meetingAny = hasTable(db, "meetings")
     ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND COALESCE(m.outcome, '') NOT IN ('cancelled', 'no_show'))`
     : "0";
@@ -516,10 +528,7 @@ export function listCallCandidates(
                      AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> '')
                  OR lower(trim(p.email)) IN (SELECT email FROM mail_phone))
             AND ${contactAllowedSetClause(db)}
-            AND COALESCE(p.icp_verdict, '') <> 'reject'
-            AND NOT (${meetingHeld})
-            AND NOT EXISTS (SELECT 1 FROM cadence_state dnc WHERE dnc.prospect_id = p.id
-                             AND dnc.status = 'stopped' AND dnc.stop_reason = 'do_not_contact')
+            AND ${callGatesSql(db)}
             ${excludeSql}
        ),
        base AS (
@@ -581,20 +590,15 @@ function sqliteToIso(value: string): string {
 
 /**
  * The live gates the Calls page applies to one prospect (a due call step),
- * the same as `listCallCandidates`': contact allowed, not off-ICP, no meeting
- * held. False when any refuses.
+ * the same as `listCallCandidates`': contact allowed, then `callGatesSql`.
+ * False when any refuses.
  */
 export function callAllowed(db: Database, prospectId: number): boolean {
-  const meetingHeld = hasTable(db, "meetings")
-    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
-    : "0";
   return (
     db
       .query(
         `SELECT 1 FROM prospects p
-          WHERE p.id = ? AND ${contactAllowedClause(db)}
-            AND COALESCE(p.icp_verdict, '') <> 'reject'
-            AND NOT (${meetingHeld})`,
+          WHERE p.id = ? AND ${contactAllowedClause(db)} AND ${callGatesSql(db)}`,
       )
       .get(prospectId) != null
   );
@@ -603,19 +607,14 @@ export function callAllowed(db: Database, prospectId: number): boolean {
 /** `callAllowed` for many prospects at once (the Calls page's due rows): the ones allowed. */
 export function callAllowedIds(db: Database, prospectIds: readonly number[]): Set<number> {
   const out = new Set<number>();
-  const meetingHeld = hasTable(db, "meetings")
-    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
-    : "0";
-  const allowed = contactAllowedSetClause(db);
+  const gates = `${contactAllowedSetClause(db)} AND ${callGatesSql(db)}`;
   for (let i = 0; i < prospectIds.length; i += 400) {
     const ids = prospectIds.slice(i, i + 400);
     if (ids.length === 0) continue;
     const rows = db
       .query(
         `SELECT p.id FROM prospects p
-          WHERE p.id IN (${ids.map(() => "?").join(",")}) AND ${allowed}
-            AND COALESCE(p.icp_verdict, '') <> 'reject'
-            AND NOT (${meetingHeld})`,
+          WHERE p.id IN (${ids.map(() => "?").join(",")}) AND ${gates}`,
       )
       .all(...ids) as Array<{ id: number }>;
     for (const r of rows) out.add(r.id);

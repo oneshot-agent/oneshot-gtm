@@ -42,6 +42,12 @@ describe("normalizePhone", () => {
     expect(normalizePhone(null)).toBeNull();
   });
 
+  it("drops a bracketed trunk zero after the country code, where the plan has one", () => {
+    expect(normalizePhone("+44 (0)20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("+44(0) 20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("+49 (0)30 123456")).toBe("+4930123456");
+  });
+
   it("takes the country from the workspace time zone, else the United States", () => {
     expect(countryOfTimeZone("Europe/London")).toBe("GB");
     expect(defaultPhoneCountry({ timezone: "Europe/London" })).toBe("GB");

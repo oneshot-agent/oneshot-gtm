@@ -182,6 +182,18 @@ describe("ledger calls", () => {
     expect(isProspectOptedOut((ledger as unknown as { db: Database }).db, id)).toBe(true);
   });
 
+  it("a cadence stopped as do-not-contact blocks the call, alone and in a batch", () => {
+    const id = ledger.upsertProspect({ name: "S", email: "s@a.test", phone: "+15126531187" });
+    const other = ledger.upsertProspect({ name: "T", email: "t@a.test", phone: "+15126531188" });
+    const db = (ledger as unknown as { db: Database }).db;
+    db.prepare(
+      `INSERT INTO cadence_state (prospect_id, play_name, status, stop_reason, current_step, enrolled_at)
+       VALUES (?, 'p', 'stopped', 'do_not_contact', 0, datetime('now'))`,
+    ).run(id);
+    expect(ledger.callAllowed(id)).toBe(false);
+    expect([...ledger.callAllowedIds([id, other])]).toEqual([other]);
+  });
+
   it("lists calls newest first and the last call per prospect", () => {
     const id = ledger.upsertProspect({ name: "L", email: "l@a.test" });
     ledger.insertCall({

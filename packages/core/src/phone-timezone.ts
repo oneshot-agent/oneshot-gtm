@@ -210,7 +210,16 @@ export function normalizePhone(
   // number) is not one number.
   if (!/^\+?[\d\s\-()./]+$/.test(s)) return null;
   const plus = s.startsWith("+");
+  // "+44 (0)20 …": the bracketed trunk zero is a national habit, not part of
+  // the number, where the country's plan has a trunk "0" (Italy keeps it).
+  const trunkZero = plus && /^\+\d{1,3}\s*\(0\)/.test(s);
   s = s.replace(/\D/g, "");
+  if (trunkZero) {
+    const plan = Object.values(CALLING_CODES).find(
+      (p) => p.trunk === "0" && s.startsWith(`${p.code}0`),
+    );
+    if (plan) s = `${plan.code}${s.slice(plan.code.length + 1)}`;
+  }
   if (plus) return e164(s);
   if (s.startsWith("00")) return e164(s.slice(2));
   const country = (defaultCountry ?? "US").toUpperCase();
