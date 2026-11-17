@@ -484,13 +484,6 @@ export function sloganSentences(text: string): string[] {
     });
 }
 
-/**
- * True when a follow-up never says, in a sentence of its own, which product is
- * offering: a reader who skimmed the first email cannot place "through Acme"
- * inside the offer. With an offer, the first sentence is the offer and the
- * name must come after it; without one, anywhere counts. Unknown name (no
- * one-liner, or one that opens without a name) passes.
- */
 /** The mark that ends a sentence ([.!?], before any closing quotes or brackets), or null. */
 function sentenceMark(text: string): string | null {
   let i = text.length - 1;
@@ -498,6 +491,15 @@ function sentenceMark(text: string): string | null {
   return i >= 0 && ".!?".includes(text[i]!) ? text[i]! : null;
 }
 
+const INITIALISM = /\b(?:\p{Lu}\.){2,}(?!\s+\p{Lu})/gu;
+
+/**
+ * True when a follow-up never says, in a sentence of its own, which product is
+ * offering: a reader who skimmed the first email cannot place "through Acme"
+ * inside the offer. With an offer, the first sentence is the offer and the
+ * name must come after it; without one, anywhere counts. Unknown name (no
+ * one-liner, or one that opens without a name) passes.
+ */
 function missingProductLine(body: string, offer: string | null | undefined): boolean {
   const name = productNameOf(loadConfig());
   if (name == null) return false;
@@ -534,6 +536,8 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
     .join(" ")
     .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
     .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    // So do initialisms ("U.S. clinics"), unless a capital follows.
+    .replace(INITIALISM, (m) => m.replace(/\./g, ""))
     // A mark ends a sentence; one inside closing quotes only when a capital
     // follows, so a quoted "Your visit is due." inside the offer does not end
     // it. Lowercase prose still splits on its plain marks.

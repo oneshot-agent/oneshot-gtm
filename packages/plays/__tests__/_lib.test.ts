@@ -749,6 +749,10 @@ describe("lintEmail — no-product-line", () => {
           'I can send the reminder "Your visit is due." through Acme.ai for your team. Want me to?',
         ),
       ).toContain("no-product-line");
+      // An initialism does not end the offer sentence.
+      expect(
+        check("I can run open treatment plans for your U.S. clinics through Acme.ai this month."),
+      ).toContain("no-product-line");
       // A company line after a declarative close is the sign-off too.
       expect(
         check("I can run your open treatment plans to booked visits.\n\nSam Lee\nAcme.ai Inc."),
