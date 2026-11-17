@@ -510,8 +510,15 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   // The configured signature is peeled above; any other one is the
   // unpunctuated lines after the last sentence. A name or company there says
   // nothing about what the product does.
+  // A short line after the closing question ("Acme Inc.") is the sign-off too.
+  const lastQuestion = lines.findLastIndex((l) => l.includes("?"));
+  const signsOff = (i: number): boolean => {
+    const line = lines[i] ?? "";
+    if (sentenceMark(line) === null) return true;
+    return lastQuestion >= 0 && i > lastQuestion && line.split(/\s+/).length <= 4;
+  };
   let end = lines.length - 1;
-  while (end >= start && sentenceMark(lines[end] ?? "") === null) end--;
+  while (end >= start && signsOff(end)) end--;
   if (start < 0 || end < start) return true;
   // Keep abbreviations inside their sentence ("Dr. Lee"), with the same rules
   // the sentence counter uses.

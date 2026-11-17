@@ -84,12 +84,13 @@ const NAME_FOLLOWER =
  */
 export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
   const text = cfg.productOneLiner?.trim() ?? "";
-  let name = NAME_TOKEN.exec(text)?.[0] ?? "";
+  const token = NAME_TOKEN.exec(text)?.[0] ?? "";
   // "Acme." ends the token, not the name: a trailing dot or dash is punctuation.
+  let name = token;
   while (name && ".-".includes(name[name.length - 1]!)) name = name.slice(0, -1);
   if (!name || NOT_A_NAME.has(name.toLowerCase())) return null;
   // Skip the rest of a multi-word name ("Acme Clinics is…").
-  let rest = text.slice(name.length);
+  let rest = text.slice(token.length);
   for (let next = MORE_NAME.exec(rest); next; next = MORE_NAME.exec(rest)) {
     rest = rest.slice(next[0].length);
   }

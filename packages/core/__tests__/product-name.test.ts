@@ -14,6 +14,7 @@ describe("productNameOf", () => {
     );
     expect(productNameOf({ productOneLiner: "Acme.ai finds leaks." })).toBe("Acme.ai");
     expect(productNameOf({ productOneLiner: "Acme: clinics book more." })).toBe("Acme");
+    expect(productNameOf({ productOneLiner: "Acme. helps clinics." })).toBe("Acme");
     expect(productNameOf({ productOneLiner: "Acme's agents book patients." })).toBe("Acme");
   });
 

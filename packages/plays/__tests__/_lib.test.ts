@@ -732,6 +732,10 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai"),
       ).toContain("no-product-line");
+      // A company line after the closing question is the sign-off.
+      expect(
+        check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
+      ).toContain("no-product-line");
       // A closing quote ends the sentence before it, and a quoted question asks.
       expect(
         check(
