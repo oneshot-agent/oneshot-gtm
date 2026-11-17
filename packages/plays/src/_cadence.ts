@@ -4110,15 +4110,20 @@ function awaitCallStep(
     return { action: "skipped", payload: null, receiptIds: [], note: "Call awaits the founder" };
   }
   if (!opts.dryRun) {
-    getLedger().recordSequenceEvent({
-      prospectId: opts.prospectId,
-      playName: opts.playName,
-      stepIndex: stepEntryIndex + 1,
-      channel: "call",
-      status: "skipped",
-      metadata: { reason, label: step.label ?? null },
+    const ledger = getLedger();
+    // A skipped call's brief was never used: discard it with the skip.
+    ledger.transaction(() => {
+      ledger.recordSequenceEvent({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        stepIndex: stepEntryIndex + 1,
+        channel: "call",
+        status: "skipped",
+        metadata: { reason, label: step.label ?? null },
+      });
+      ledger.clearCadenceDraft({ prospectId: opts.prospectId, playName: opts.playName });
+      advanceOrComplete(opts, seq, stepEntryIndex);
     });
-    advanceOrComplete(opts, seq, stepEntryIndex);
   }
   return { action: "skipped", payload: null, receiptIds: [], note: `${reason} — call skipped` };
 }

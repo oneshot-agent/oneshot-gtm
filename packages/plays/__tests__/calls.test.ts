@@ -167,6 +167,19 @@ describe("the unattended runner on a due call", () => {
     expect(callEvents(id)).toMatchObject([{ status: "skipped", step_index: 2 }]);
   });
 
+  it("discards the unused brief when the call is skipped", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id, 3 * DAY + 1000);
+    ledger.setCadenceDraft({
+      prospectId: id,
+      playName: PLAY,
+      draft: { subject: "call", body: "brief", flags: [], payload: { kind: "call" } },
+    });
+    await runCadenceStepForProspect({ prospectId: id, playName: PLAY, dryRun: false });
+    expect(ledger.getCadenceDraft({ prospectId: id, playName: PLAY })).toBeNull();
+  });
+
   it("is skipped at once when there is no usable number", async () => {
     callsOn();
     const id = enroll("not a number");

@@ -48,6 +48,12 @@ describe("normalizePhone", () => {
     expect(defaultPhoneCountry({ timezone: null })).toBe("US");
     expect(defaultPhoneCountry({ timezone: "Mars/Base" })).toBe("US");
   });
+
+  it("reads an old zone name the runtime still accepts", () => {
+    expect(countryOfTimeZone("Asia/Calcutta")).toBe("IN");
+    expect(defaultPhoneCountry({ timezone: "US/Pacific" })).toBe("US");
+    expect(countryOfTimeZone("Europe/Kiev")).toBe("UA");
+  });
 });
 
 describe("phoneTimeZones", () => {

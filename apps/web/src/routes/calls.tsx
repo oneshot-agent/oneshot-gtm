@@ -180,6 +180,7 @@ export function CallsView({
               onRefresh={refresh}
               startedAt={started?.prospectId === row.prospectId ? started.at : null}
               onStart={() => start(row.prospectId)}
+              onLogged={(id) => setStarted((s) => (s?.prospectId === id ? null : s))}
               onOpen={onOpen}
               isOpen={(id) => selectedRef.current === id}
             />

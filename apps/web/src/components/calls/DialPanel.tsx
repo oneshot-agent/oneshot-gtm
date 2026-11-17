@@ -69,6 +69,7 @@ export function DialPanel({
   onRefresh,
   startedAt,
   onStart,
+  onLogged,
   onOpen,
   isOpen,
 }: {
@@ -83,6 +84,8 @@ export function DialPanel({
   /** When Call was pressed for this row (ms); null before. */
   startedAt: number | null;
   onStart: () => void;
+  /** A call was logged for this prospect: its timer is spent, so a later log never reuses it. */
+  onLogged: (prospectId: number) => void;
   onOpen: (prospectId: number | null) => void;
   /** Whether this prospect is still the open row. */
   isOpen: (prospectId: number) => boolean;
@@ -115,6 +118,7 @@ export function DialPanel({
   const save = useMutation({
     mutationFn: (req: LogCallRequest) => saveCall(api.logCall, row, req, next, onOpen, isOpen),
     onSuccess: (_data, req) => {
+      onLogged(row.prospectId);
       void qc.invalidateQueries({ queryKey: ["calls"] });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });

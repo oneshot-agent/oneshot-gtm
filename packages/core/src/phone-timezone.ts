@@ -60,11 +60,34 @@ export function phoneTimeZones(phone: string): string[] {
 /** The ISO country a zone belongs to (tz `zone.tab`); null when no country lists it. */
 export function countryOfTimeZone(zone: string | null | undefined): string | null {
   if (!zone) return null;
+  const names = [zone, LEGACY_ZONES[zone]].filter((z): z is string => !!z);
   for (const [country, zones] of Object.entries(COUNTRIES)) {
-    if (zones.includes(zone)) return country;
+    if (names.some((z) => zones.includes(z))) return country;
   }
   return null;
 }
+
+/**
+ * Old names the runtime still accepts for a zone (tz `backward`) whose
+ * country `zone.tab` lists only under the current name.
+ */
+const LEGACY_ZONES: Record<string, string> = {
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Saigon": "Asia/Ho_Chi_Minh",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Europe/Kiev": "Europe/Kyiv",
+  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+  "Atlantic/Faeroe": "Atlantic/Faroe",
+  "Pacific/Truk": "Pacific/Chuuk",
+  "Pacific/Ponape": "Pacific/Pohnpei",
+  "US/Eastern": "America/New_York",
+  "US/Central": "America/Chicago",
+  "US/Mountain": "America/Denver",
+  "US/Pacific": "America/Los_Angeles",
+  "US/Alaska": "America/Anchorage",
+  "US/Hawaii": "Pacific/Honolulu",
+};
 
 /**
  * Calling code and trunk prefix for a national number written without its

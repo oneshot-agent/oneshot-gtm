@@ -249,8 +249,12 @@ export function clearProspectPhone(
     phone: string | null;
   } | null;
   if (!row?.phone || normalizePhone(row.phone, defaultCountry) !== wrong) return false;
-  db.prepare("UPDATE prospects SET phone = NULL WHERE id = ?").run(prospectId);
-  return true;
+  // Only the number just read: a replacement saved since then is kept.
+  return (
+    db
+      .prepare("UPDATE prospects SET phone = NULL WHERE id = ? AND phone = ?")
+      .run(prospectId, row.phone).changes > 0
+  );
 }
 
 /** The number a call dialled, as stored on it; null when none. */
