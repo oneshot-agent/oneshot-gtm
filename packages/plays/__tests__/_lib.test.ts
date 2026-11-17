@@ -794,6 +794,19 @@ describe("lintEmail — no-product-line", () => {
     }
   });
 
+  it("reads the name after an introducing word", () => {
+    product.oneLiner = "Meet Acme: scheduling for clinics.";
+    try {
+      expect(
+        lintEmail("re: plans", "Acme books the patients your plans left open.", 110, undefined, {
+          followUp: true,
+        }),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
   it("checks nothing when the one-liner does not open with a name", () => {
     product.oneLiner = "We help clinics book patients.";
     try {

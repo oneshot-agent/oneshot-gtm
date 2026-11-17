@@ -66,6 +66,7 @@ function clipText(text: string, max: number): string {
 
 /** Leading words that open a one-liner without naming the product. */
 const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
+const INTRODUCING = /^(?:Meet|Introducing|Try|Say hello to)\s+/;
 const NAME_TOKEN = /^[A-Z][\w.-]*/;
 const MORE_NAME = /^\s+[A-Z][\w.-]*/;
 /**
@@ -83,7 +84,8 @@ const NAME_FOLLOWER =
  * offered. Null when the one-liner is unset or does not open with a name.
  */
 export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
-  const text = cfg.productOneLiner?.trim() ?? "";
+  // "Meet Acme: …" introduces the name; the name is the word after it.
+  const text = (cfg.productOneLiner?.trim() ?? "").replace(INTRODUCING, "");
   const token = NAME_TOKEN.exec(text)?.[0] ?? "";
   // "Acme." ends the token, not the name: a trailing dot or dash is punctuation.
   let name = token;

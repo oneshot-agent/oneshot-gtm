@@ -19,6 +19,10 @@ describe("productNameOf", () => {
       "Acme",
     );
     expect(productNameOf({ productOneLiner: "Acme  Clinics  is the playbook." })).toBe("Acme");
+    expect(productNameOf({ productOneLiner: "Meet Acme: scheduling for clinics." })).toBe("Acme");
+    expect(productNameOf({ productOneLiner: "Introducing Acme, scheduling for clinics." })).toBe(
+      "Acme",
+    );
     expect(productNameOf({ productOneLiner: "Acme's agents book patients." })).toBe("Acme");
   });
 
