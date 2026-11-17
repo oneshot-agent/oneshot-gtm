@@ -88,6 +88,7 @@ export type StepChannel =
   | "linkedin"
   | "x"
   | "direct_mail"
+  | "call"
   | "reddit"
   | "hacker-news";
 
@@ -2504,6 +2505,7 @@ export * from "./onboarding.ts";
 export * from "./linkedin-measure.ts";
 export * from "./offer-similarity.ts";
 export * from "./linkedin-template.ts";
+export * from "./calls.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {
