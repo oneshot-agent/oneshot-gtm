@@ -15,8 +15,12 @@ import type { CurrentMember } from "@oneshot-gtm/shared-types";
  *
  * `tailscale serve` picks its backend from the TLS server name, not the Host
  * header, so a tailnet device can send `Host: 127.0.0.1` through it. Such a
- * request still carries the proxy's `X-Forwarded-*` headers, which is why a
- * loopback Host alone does not make a request local. See docs/members.md.
+ * request still carries the proxy's `X-Forwarded-*` headers. So once a host is
+ * allowed, which is what opens the install to a tailnet, a loopback Host that
+ * arrives with proxy headers is not the owner. An install with no allowed
+ * host keeps the old rule, a loopback Host is enough, so a proxy someone
+ * already runs in front of it (docs/webhooks.md) works as before. See
+ * docs/members.md.
  */
 
 const IDENTITY_HEADER = "tailscale-user-login";
@@ -83,6 +87,11 @@ function isAllowedHostname(hostname: string): boolean {
   return loggedShared("allowed_hosts", false, () => getSharedDb().isAllowedHost(hostname));
 }
 
+/** True once `members allow-host` has opened the install beyond loopback. A failed read counts as open. */
+function anyHostAllowed(): boolean {
+  return loggedShared("allowed_hosts", true, () => getSharedDb().allowedHosts().length > 0);
+}
+
 /**
  * The owner for a request made on the host machine: the listed owner when
  * there is one, else a local owner without an email, which is what a
@@ -102,8 +111,9 @@ export function currentMember(req: Request): CurrentMember | null {
   const identity = req.headers.get(IDENTITY_HEADER);
 
   if (isLoopbackHostname(hostname)) {
-    // A proxied request is not local, whatever Host it claims.
-    if (identity !== null || PROXY_HEADERS.some((h) => req.headers.has(h))) return null;
+    if (identity !== null) return null;
+    // With a host allowed, a proxied request is not local, whatever Host it claims.
+    if (PROXY_HEADERS.some((h) => req.headers.has(h)) && anyHostAllowed()) return null;
     return localOwner();
   }
 

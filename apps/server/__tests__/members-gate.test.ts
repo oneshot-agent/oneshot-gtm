@@ -94,7 +94,15 @@ describe("loopback requests", () => {
     });
   });
 
-  it("are refused when they came through a proxy: a loopback Host alone is not the owner", async () => {
+  it("behave as before behind a proxy that rewrites the Host, while no host is allowed", async () => {
+    // docs/webhooks.md: a proxy in front of the server is a supported setup.
+    getSharedDb().addMember({ email: "owner@example.com", role: "owner" });
+    const proxied = { ...LOOPBACK, "x-forwarded-for": "203.0.113.9", "x-forwarded-host": "hooks" };
+    expect((await get("/api/health", proxied)).status).toBe(200);
+    expect((await post(SKIP_MAIL, proxied)).status).not.toBe(403);
+  });
+
+  it("are refused when they came through a proxy once a host is allowed: a loopback Host alone is not the owner", async () => {
     seed();
     // `tailscale serve` picks its backend from the TLS name, so a tailnet
     // device can send any Host. A tagged device or a Funnel visitor gets no
