@@ -69,6 +69,7 @@ import type {
   ProspectSearchResponse,
   QueueRowDetail,
   WorkspaceInfo,
+  WorkspaceCreateResult,
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
@@ -379,6 +380,7 @@ export const api = {
   doctorRefreshBalance: () =>
     getJson<{ checks: DoctorCheck[] }>(IS_DEMO ? "/doctor" : "/doctor?refresh=1"),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
+  workspaceCreate: (name: string) => postJson<WorkspaceCreateResult>("/workspaces", { name }),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
       name,

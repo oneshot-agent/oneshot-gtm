@@ -2410,6 +2410,13 @@ export interface MoveQueueRowResult {
 }
 
 /** Workspace identity + roster served by GET /api/workspace. */
+export interface WorkspaceCreateResult {
+  name: string;
+  port: number;
+  persistent: boolean;
+  warning: string | null;
+}
+
 export interface WorkspaceInfo {
   current: { name: string; home: string; port: number };
   workspaces: Array<{

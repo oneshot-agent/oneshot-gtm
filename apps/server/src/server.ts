@@ -87,7 +87,7 @@ import { deriveBriefRoute } from "./api/derive-brief.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
-import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
+import { workspaceCreate, workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
 import {
   pauseDomainRoute,
   resumeDomainRoute,
@@ -273,6 +273,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/workspace", workspaceInfo),
   route("POST", "/api/workspace/launch", workspaceLaunch),
+  route("POST", "/api/workspaces", (req) => workspaceCreate(req)),
   route("POST", "/api/run/:playName", runPlay),
   // Distinct shape from the line above (three segments, not two), so the
   // patterns can't collide however they are ordered.

@@ -88,7 +88,7 @@ Finders poll while the dashboard runs. `ui --install-service` keeps it running a
 
 ## Workspaces
 
-One workspace is one product: one voice, one ICP, one ledger, one sender pool. A second product gets a second workspace.
+One workspace is one product: one voice, one ICP, one ledger, one sender pool. A second product gets a second workspace. Open the workspace switcher in the dashboard and choose **New workspace**, enter a name, and it opens when ready. Finish its profile and keys in Setup. The CLI route is also available:
 
 ```bash
 bun run cli -- workspace create acme

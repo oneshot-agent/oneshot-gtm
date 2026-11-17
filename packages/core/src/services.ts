@@ -1,4 +1,5 @@
 /** Service descriptions shared by the CLI and dashboard workspace creation. */
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,8 @@ export interface ServiceSpec extends ServiceNames {
   entry: string;
   /** Plain words after the entry; never paths, so they need no quoting. */
   args: string[];
+  /** Bun flags before the script (dashboard creation suppresses repository .env loading). */
+  runtimeArgs?: string[];
   /** Environment in the order it is written. PATH is added by the renderers. */
   env: Array<[name: string, value: string]>;
   /** Where launchd sends stdout and stderr. systemd uses the user journal. */
@@ -59,7 +62,7 @@ export function resolveDashboardServicePaths(port?: number): DashboardServicePat
   }
   return {
     bunBin: process.execPath,
-    serverEntry: fileURLToPath(new URL("../../../apps/server/src/bin.ts", import.meta.url)),
+    serverEntry: dashboardServerEntry(),
     home,
     workspace: currentWorkspaceName(),
     port: resolvedPort,
@@ -123,7 +126,9 @@ export function dashboardService(p: DashboardServicePaths): ServiceSpec {
  * SIGTERM shutdown; logs land in the workspace home next to events.jsonl.
  */
 export function renderLaunchdService(s: ServiceSpec): string {
-  const argv = [s.bunBin, s.entry, ...s.args].map((a) => `    <string>${xml(a)}</string>`);
+  const argv = [s.bunBin, ...(s.runtimeArgs ?? []), s.entry, ...s.args].map(
+    (a) => `    <string>${xml(a)}</string>`,
+  );
   const env = [...s.env, ["PATH", `${dirname(s.bunBin)}:/usr/bin:/bin`] as const].map(
     ([name, value]) => `    <key>${xml(name)}</key>\n    <string>${xml(value)}</string>`,
   );
@@ -166,6 +171,7 @@ ${env.join("\n")}
 export function renderSystemdService(s: ServiceSpec): string {
   const exec = [
     `"${systemdQuoted(s.bunBin, "exec")}"`,
+    ...(s.runtimeArgs ?? []).map((arg) => `"${systemdQuoted(arg, "exec")}"`),
     `"${systemdQuoted(s.entry, "exec")}"`,
     ...s.args,
   ].join(" ");
@@ -217,4 +223,10 @@ function systemdQuoted(value: string, field: "exec" | "env"): string {
 
 function xml(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/** Source checkouts and the published server bundle both launch the same server entry. */
+export function dashboardServerEntry(): string {
+  const source = fileURLToPath(new URL("../../../apps/server/src/bin.ts", import.meta.url));
+  return existsSync(source) ? source : fileURLToPath(new URL("./bin.mjs", import.meta.url));
 }
