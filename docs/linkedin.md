@@ -25,7 +25,7 @@ On **Setup → LinkedIn → Send and read profiles as**, choose the connected ac
 - A key whose account is missing, removed or disconnected also pauses those actions. Reconnect it or explicitly choose another connected account. Losing an invite or profile-view permission never switches accounts.
 - An explicit selection also prevents profile reads from silently using a browser session instead. Existing cached research remains available.
 
-Clearing the picker restores automatic selection only when exactly one account is connected. Existing pending sends are checked through the account that submitted them; withdrawals still use the account that sent the invite. A cadence whose earlier invite belongs to a different account waits instead of silently changing sender.
+Clearing the picker restores automatic selection only when exactly one account is connected. Existing pending sends are checked through the account that submitted them; withdrawals still use the account that sent the invite. A cadence does not reuse an earlier invite or conversation from a different selected account.
 
 A new connection asks for `read`, `reply`, `view_profile` and `invite`. An older one adds a missing permission with **Allow profile access** or **Allow connection requests**: you sign in to the same account again and nothing is re-imported.
 
