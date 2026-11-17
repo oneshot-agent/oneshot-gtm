@@ -5,15 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallBrief, CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
 import { api } from "../src/api/client.ts";
 import { briefKey, saveCall } from "../src/components/calls/DialPanel.tsx";
+import { CallStepActions } from "../src/components/calls/CallStepActions.tsx";
 import { CallsView } from "../src/routes/calls.tsx";
 import {
   beginCall,
+  defaultHoldUntil,
   dialKeyAction,
   inCallWindow,
   dialReducer,
   logCallRequest,
   nextRow,
   OUTCOME_KEYS,
+  timerAfterLog,
   type DialKeyEvent,
   type DialState,
 } from "../src/lib/dialler.ts";
@@ -349,5 +352,59 @@ describe("dial keys and Save & next", () => {
     expect(
       logCallRequest({ outcome: "interested", note: "", holdUntil: "2026-12-01" }, {}),
     ).toEqual({ outcome: "interested" });
+  });
+});
+
+describe("calls page: review fixes", () => {
+  it("the default hold is seven calendar days ahead across a clock change", () => {
+    const tz = process.env.TZ;
+    process.env.TZ = "America/New_York";
+    try {
+      // 168 hours from 00:30 on Oct 26 is 23:30 on Nov 1, after the clocks go back.
+      expect(defaultHoldUntil(new Date(2026, 9, 26, 0, 30))).toBe("2026-11-02");
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
+
+  it("a finished save spends only the timer it was submitted with", () => {
+    const first = { prospectId: 1, at: 1000 };
+    expect(timerAfterLog(first, { prospectId: 1, at: 1000 })).toBeNull();
+    // Call pressed again for the same person while the save ran.
+    const again = { prospectId: 1, at: 2000 };
+    expect(timerAfterLog(again, { prospectId: 1, at: 1000 })).toBe(again);
+    // Saved with no call running; one started since is kept.
+    expect(timerAfterLog(again, { prospectId: 1, at: null })).toBe(again);
+    // Someone else's timer is kept.
+    expect(timerAfterLog({ prospectId: 2, at: 1000 }, { prospectId: 1, at: 1000 })).toEqual({
+      prospectId: 2,
+      at: 1000,
+    });
+    expect(timerAfterLog(null, { prospectId: 1, at: 1000 })).toBeNull();
+  });
+
+  it("posts the number dialled with the outcome", () => {
+    expect(
+      logCallRequest(
+        { outcome: "wrong_number", note: "", holdUntil: "2026-12-01" },
+        { phone: "+15126531187" },
+      ),
+    ).toEqual({ outcome: "wrong_number", phone: "+15126531187" });
+  });
+
+  it("a call row on the cadences page keeps a keyboard expand button", () => {
+    const html = renderToStaticMarkup(
+      <CallStepActions
+        expanded={false}
+        stopDisabled={false}
+        onOpenCall={() => {}}
+        onToggle={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    expect(html).toContain("Open call");
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"/);
+    expect(html).toContain('title="Stop cadence"');
   });
 });

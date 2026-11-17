@@ -123,9 +123,10 @@ export function formatDuration(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** A week from today, as the date input reads it. */
+/** A week from today, as the date input reads it: seven calendar days, not 168 hours (a clock change sits between). */
 export function defaultHoldUntil(now: Date = new Date()): string {
-  const d = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
+  const d = new Date(now);
+  d.setDate(d.getDate() + 7);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
@@ -207,7 +208,7 @@ export function dialKeyAction(e: DialKeyEvent): DialAction | { kind: "save" } | 
 /** The body Save posts: the note trimmed, the hold date only for Not now. */
 export function logCallRequest(
   state: DialState,
-  opts: { durationSec?: number | null; playName?: string | null },
+  opts: { durationSec?: number | null; playName?: string | null; phone?: string | null },
 ): LogCallRequest | null {
   if (!state.outcome) return null;
   const note = state.note.trim();
@@ -216,6 +217,25 @@ export function logCallRequest(
     ...(note ? { note } : {}),
     ...(opts.durationSec != null ? { durationSec: Math.round(opts.durationSec) } : {}),
     ...(opts.playName ? { playName: opts.playName } : {}),
+    ...(opts.phone ? { phone: opts.phone } : {}),
     ...(state.outcome === "not_now" && state.holdUntil ? { holdUntil: state.holdUntil } : {}),
   };
+}
+
+/** When Call was pressed, and for whom: the dial panel's timer. */
+export interface CallTimer {
+  prospectId: number;
+  at: number;
+}
+
+/**
+ * The timer once a save finishes: spent when it is still the one the save
+ * was submitted with. A newer one (Call pressed again while the save ran,
+ * for the same person or another) is kept.
+ */
+export function timerAfterLog(
+  timer: CallTimer | null,
+  logged: { prospectId: number; at: number | null },
+): CallTimer | null {
+  return timer && timer.prospectId === logged.prospectId && timer.at === logged.at ? null : timer;
 }

@@ -35,4 +35,21 @@ describe("config calls", () => {
     await configCalls("off");
     expect(loadConfig().calls).toMatchObject({ enabled: false, bridge });
   });
+
+  it("takes decimal digits only for the step's numbers, zero where it is allowed", async () => {
+    saveConfig({ ...loadConfig(), calls: { enabled: true } });
+    for (const bad of [
+      ["1e1"],
+      ["0x10"],
+      ["2.0"],
+      ["+3"],
+      ["3", "1e0"],
+      ["9007199254740993"],
+      ["3", "", "2"],
+    ]) {
+      await expect(configCalls("step", bad)).rejects.toThrow(/invalid/);
+    }
+    await configCalls("step", [" 4 ", "0", "1"]);
+    expect(loadConfig().calls?.cadenceStep).toEqual({ position: 4, delayDays: 0, holdDays: 1 });
+  });
 });

@@ -1,4 +1,5 @@
 import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
+import { CallStepActions } from "../components/calls/CallStepActions.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
@@ -1413,29 +1414,18 @@ function CadencesPage() {
                               // A call is placed from /calls, never sent from here.
                               if (c.nextStepChannel === "call")
                                 return (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      title="Open the call on /calls"
-                                      onClick={() =>
-                                        void navigate({
-                                          to: "/calls",
-                                          search: { prospect: c.prospectId },
-                                        })
-                                      }
-                                    >
-                                      <Phone size={12} /> Open call
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      title="Stop cadence"
-                                      disabled={stop.isPending || c.isSending}
-                                      onClick={() => openStopModal([c])}
-                                    >
-                                      <CircleStop size={12} />
-                                    </Button>
-                                  </>
+                                  <CallStepActions
+                                    expanded={expandedKeys.has(key)}
+                                    stopDisabled={stop.isPending || c.isSending}
+                                    onOpenCall={() =>
+                                      void navigate({
+                                        to: "/calls",
+                                        search: { prospect: c.prospectId },
+                                      })
+                                    }
+                                    onToggle={() => toggleExpanded(key)}
+                                    onStop={() => openStopModal([c])}
+                                  />
                                 );
                               if (c.nextStepChannel === "direct_mail")
                                 return (

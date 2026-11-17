@@ -84,8 +84,11 @@ export function DialPanel({
   /** When Call was pressed for this row (ms); null before. */
   startedAt: number | null;
   onStart: () => void;
-  /** A call was logged for this prospect: its timer is spent, so a later log never reuses it. */
-  onLogged: (prospectId: number) => void;
+  /**
+   * A call was logged for this prospect: the timer it was submitted with
+   * (`startedAt` then) is spent, so a later log never reuses it.
+   */
+  onLogged: (prospectId: number, startedAt: number | null) => void;
   onOpen: (prospectId: number | null) => void;
   /** Whether this prospect is still the open row. */
   isOpen: (prospectId: number) => boolean;
@@ -116,9 +119,10 @@ export function DialPanel({
   });
 
   const save = useMutation({
-    mutationFn: (req: LogCallRequest) => saveCall(api.logCall, row, req, next, onOpen, isOpen),
-    onSuccess: (_data, req) => {
-      onLogged(row.prospectId);
+    mutationFn: ({ req }: { req: LogCallRequest; timer: number | null }) =>
+      saveCall(api.logCall, row, req, next, onOpen, isOpen),
+    onSuccess: (_data, { req, timer }) => {
+      onLogged(row.prospectId, timer);
       void qc.invalidateQueries({ queryKey: ["calls"] });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });
@@ -129,9 +133,10 @@ export function DialPanel({
   const request = logCallRequest(state, {
     durationSec: startedAt != null ? elapsed : null,
     playName: row.playName,
+    phone: row.phone,
   });
   const submit = () => {
-    if (request && !save.isPending) save.mutate(request);
+    if (request && !save.isPending) save.mutate({ req: request, timer: startedAt });
   };
 
   // Digits pick an outcome, Enter saves. The latest submit, without re-binding.

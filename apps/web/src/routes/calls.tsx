@@ -16,7 +16,9 @@ import {
   nextRow,
   outcomeTitle,
   sectionRows,
+  timerAfterLog,
   windowHint,
+  type CallTimer,
 } from "../lib/dialler.ts";
 import { useMask } from "../lib/privacy.tsx";
 
@@ -56,7 +58,7 @@ export function CallsView({
   onOpen: (prospectId: number | null) => void;
 }) {
   // When Call was pressed, per prospect: the panel's timer reads it.
-  const [started, setStarted] = useState<{ prospectId: number; at: number } | null>(null);
+  const [started, setStarted] = useState<CallTimer | null>(null);
   const start = (prospectId: number) => setStarted({ prospectId, at: Date.now() });
   // The call window is read on this clock, so a row turns callable (or not)
   // as a boundary passes, without waiting on the next poll.
@@ -180,7 +182,7 @@ export function CallsView({
               onRefresh={refresh}
               startedAt={started?.prospectId === row.prospectId ? started.at : null}
               onStart={() => start(row.prospectId)}
-              onLogged={(id) => setStarted((s) => (s?.prospectId === id ? null : s))}
+              onLogged={(id, at) => setStarted((s) => timerAfterLog(s, { prospectId: id, at }))}
               onOpen={onOpen}
               isOpen={(id) => selectedRef.current === id}
             />

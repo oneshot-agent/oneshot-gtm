@@ -349,11 +349,16 @@ export async function configLinkedInInviteExpiry(valueArg?: string): Promise<voi
   ok(`a connection request still unsent ${days} days after it fell due ends its cadence`);
 }
 
-/** A whole-number argument, at least `min`; `fallback` when it was left out. Number(), not parseInt: "3abc" must not save as 3. */
+/**
+ * A whole-number argument, at least `min`; `fallback` when it was left out.
+ * Decimal digits only, so "3abc", "1e3", "0x10" and "2.0" are refused rather
+ * than saved as numbers, and a value past a safe integer is refused too.
+ */
 function whole(raw: string | undefined, min: number, what: string, fallback?: number): number {
   if (raw === undefined && fallback !== undefined) return fallback;
-  const n = Number(raw);
-  if (raw === undefined || raw.trim() === "" || !Number.isInteger(n) || n < min) {
+  const digits = raw?.trim() ?? "";
+  const n = Number(digits);
+  if (!/^\d+$/.test(digits) || !Number.isSafeInteger(n) || n < min) {
     throw new Error(`invalid ${what} '${raw ?? ""}' — pass a whole number, ${min} or more`);
   }
   return n;
