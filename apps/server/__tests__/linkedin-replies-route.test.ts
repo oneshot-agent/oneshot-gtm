@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const record = vi.fn();
 const getProspectById = vi.fn();
@@ -16,6 +19,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+const { getSharedDb } = await import("@oneshot-gtm/core");
 const { markLinkedInReplyRoute } = await import("../src/api/linkedin-replies.ts");
 
 describe("LinkedIn reply routes", () => {
@@ -67,6 +71,46 @@ describe("LinkedIn reply routes", () => {
     );
     expect(response.status).toBe(403);
     expect(record).not.toHaveBeenCalled();
+  });
+
+  describe("behind tailscale serve, which ends TLS in front of the http listener", () => {
+    const TAILNET = "gtm-host.tail1234.ts.net";
+    let dir: string;
+    let sharedBefore: string | undefined;
+    beforeEach(() => {
+      sharedBefore = process.env["ONESHOT_GTM_SHARED"];
+      dir = mkdtempSync(join(tmpdir(), "oneshot-gtm-linkedin-reply-"));
+      process.env["ONESHOT_GTM_SHARED"] = dir;
+    });
+    afterEach(() => {
+      if (sharedBefore === undefined) delete process.env["ONESHOT_GTM_SHARED"];
+      else process.env["ONESHOT_GTM_SHARED"] = sharedBefore;
+      // Re-point the process-wide handle before the directory under it goes.
+      getSharedDb();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    // The page is https, the request the server sees is http on the same host.
+    const fromMemberPage = () =>
+      markLinkedInReplyRoute(
+        new Request(`http://${TAILNET}:3030/api/prospects/7/linkedin-reply`, {
+          method: "POST",
+          headers: { origin: `https://${TAILNET}:3030` },
+        }),
+        { id: "7" },
+      );
+
+    it("accepts a member's page on an allowed host", async () => {
+      getSharedDb().allowHost(TAILNET);
+      expect((await fromMemberPage()).status).toBe(200);
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({ prospectId: 7, source: "manual" }),
+      );
+    });
+
+    it("refuses the same page while its host is not allowed", async () => {
+      expect((await fromMemberPage()).status).toBe(403);
+      expect(record).not.toHaveBeenCalled();
+    });
   });
 });
 
