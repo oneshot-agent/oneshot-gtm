@@ -106,7 +106,7 @@ export function contactSuppressionFor(
   email: string,
 ): { kind: string; received_at: string } | null {
   const intentClause = hasIntentColumn(db) ? " OR intent = 'unsubscribe'" : "";
-  return (
+  const replied =
     (db
       .query(
         `SELECT
@@ -117,7 +117,21 @@ export function contactSuppressionFor(
            AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause})
          ORDER BY received_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email), canonEmail(email)) as { kind: string; received_at: string }) ?? null
+      .get(canonEmail(email), canonEmail(email)) as { kind: string; received_at: string }) ?? null;
+  if (replied) return replied;
+  // Asked on a call not to be contacted again (ledger-calls.ts): an
+  // unsubscribe, though it arrived by phone. Older ledgers have no table.
+  if (!db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='calls'").get())
+    return null;
+  return (
+    (db
+      .query(
+        `SELECT 'unsubscribe' AS kind, started_at AS received_at FROM calls
+          WHERE outcome = 'do_not_contact'
+            AND prospect_id IN (SELECT id FROM prospects WHERE email = ?)
+          ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(canonEmail(email)) as { kind: string; received_at: string } | null) ?? null
   );
 }
 

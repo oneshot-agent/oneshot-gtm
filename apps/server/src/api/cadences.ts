@@ -12,6 +12,7 @@ import {
 import {
   awayNote,
   CALL_STEP_NOT_SENT,
+  PREVIEW_STEP_MOVED,
   callStepIsNext,
   cadenceDraftIsStale,
   cadenceHold,
@@ -623,7 +624,10 @@ export async function previewCadenceStepRoute(
     );
   } catch (err) {
     const msg = (err as Error).message ?? "preview failed";
-    const status = msg.startsWith("no cadence") || msg.startsWith("cadence is") ? 409 : 500;
+    const status =
+      msg.startsWith("no cadence") || msg.startsWith("cadence is") || msg === PREVIEW_STEP_MOVED
+        ? 409
+        : 500;
     return jsonResponse({ error: msg }, status, req);
   }
 }

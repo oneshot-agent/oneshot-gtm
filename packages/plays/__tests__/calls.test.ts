@@ -9,6 +9,8 @@ let ledger: Ledger;
 let cfg: Record<string, unknown> = {};
 const responses: string[] = [];
 const prompts: string[] = [];
+/** Runs while the model is "writing": a cadence that moves on meanwhile. */
+let duringComplete: (() => void) | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -26,6 +28,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     loadPrompt: (name: string) => `prompt:${name}`,
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       prompts.push(input.messages.map((m) => m.content).join("\n"));
+      duringComplete?.();
       const next = responses.shift();
       if (next === undefined) throw new Error("no more responses");
       return { content: next, provider: "t", model: "t" };
@@ -44,6 +47,7 @@ const {
   sendCadenceStep,
   sendCadenceStepBatch,
   CALL_STEP_NOT_SENT,
+  PREVIEW_STEP_MOVED,
 } = await import("../src/_cadence.ts");
 const { recordCall, listCalls, buildCallBrief, callBriefFor, parseCallBrief, callBriefFlags } =
   await import("../src/_calls.ts");
@@ -97,6 +101,7 @@ beforeEach(() => {
   };
   responses.length = 0;
   prompts.length = 0;
+  duringComplete = null;
   registerSequence({
     playName: PLAY,
     steps: [1, 2, 3].map((i) => ({
@@ -415,5 +420,124 @@ describe("the call brief", () => {
     expect(prompts).toHaveLength(1);
     await callBriefFor({ prospectId: id, regenerate: true });
     expect(prompts).toHaveLength(2);
+  });
+});
+
+describe("review fixes", () => {
+  it("a rebuild keeps a saved call's place and delay when calls are off or changed", () => {
+    callsOn(3);
+    const id = enroll();
+    const before = effectiveSequence(PLAY, id)!.steps.map((s) => [s.id, s.dayOffset]);
+    expect(before[1]).toEqual(["call", 2]);
+    // Calls changed, then off: a rebuild (a mail setting change) keeps the saved call.
+    callsOn(2, { cadenceStep: { position: 4, delayDays: 7 } });
+    applyCadencePlans(PLAY, captureCadencePlans(PLAY));
+    expect(effectiveSequence(PLAY, id)!.steps.map((s) => [s.id, s.dayOffset])).toEqual(before);
+    cfg = { ...cfg, calls: { enabled: false } };
+    applyCadencePlans(PLAY, captureCadencePlans(PLAY));
+    expect(effectiveSequence(PLAY, id)!.steps.map((s) => [s.id, s.dayOffset])).toEqual(before);
+    // A letter added before it: the call still follows the email it followed.
+    const plans = captureCadencePlans(PLAY);
+    cfg = { ...cfg, directMailMotions: { [PLAY]: { position: 2, delayDays: 3 } } };
+    applyCadencePlans(PLAY, plans);
+    expect(effectiveSequence(PLAY, id)!.steps.map((s) => s.id)).toEqual([
+      "direct_mail",
+      "base:1",
+      "call",
+      "base:2",
+      "base:3",
+    ]);
+  });
+
+  it("recordCall is one transaction: a failure part-way writes nothing", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const spy = vi.spyOn(ledger, "suppressCadencesForReply").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    expect(() => recordCall(id, { outcome: "interested" })).toThrow("disk full");
+    spy.mockRestore();
+    expect(ledger.listCallsForProspect(id)).toEqual([]);
+    expect(ledger.listChannelEventsForProspect(id)).toEqual([]);
+    expect(callEvents(id)).toEqual([]);
+    expect(cadence(id)).toMatchObject({ status: "active", current_step: 1 });
+  });
+
+  it("a changed outcome on a logged call rewrites its touch; a retry writes one", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@x.test", phone: "+15126531187" });
+    const first = recordCall(id, { outcome: "no_answer" });
+    recordCall(id, { outcome: "no_answer", callId: first.id });
+    expect(ledger.listChannelEventsForProspect(id)).toMatchObject([{ event_type: "call" }]);
+    recordCall(id, { outcome: "interested", callId: first.id });
+    const touches = ledger.listChannelEventsForProspect(id);
+    expect(touches).toHaveLength(1);
+    expect(touches[0]).toMatchObject({ event_type: "reply" });
+    expect(ledger.getCall(first.id)!.outcome).toBe("interested");
+  });
+
+  it("wrong_number keeps a replacement number found since the call", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@x.test", phone: "(512) 653-1187" });
+    const old = ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      phone: "+15126531187",
+    });
+    // A replacement number found since (a phone lookup, a hand edit).
+    (ledger as unknown as { db: { prepare(sql: string): { run(...a: unknown[]): void } } }).db
+      .prepare("UPDATE prospects SET phone = ? WHERE id = ?")
+      .run("+15126539999", id);
+    recordCall(id, { outcome: "wrong_number", callId: old });
+    expect(ledger.getProspectById(id)!.phone).toBe("+15126539999");
+    expect(ledger.phoneForCall(id).phone).toBe("+15126539999");
+    // The number that rang the wrong person, written raw, is cleared.
+    const other = ledger.upsertProspect({ name: "E", email: "e@x.test", phone: "(512) 653-1188" });
+    recordCall(other, { outcome: "wrong_number" });
+    expect(ledger.getProspectById(other)!.phone).toBeNull();
+  });
+
+  it("a preview that finishes after the cadence moved on stores nothing", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    responses.push(BRIEF_JSON);
+    duringComplete = () => recordCall(id, { outcome: "no_answer" });
+    await expect(callBriefFor({ prospectId: id, playName: PLAY })).rejects.toThrow(
+      PREVIEW_STEP_MOVED,
+    );
+    expect(ledger.getCadenceDraft({ prospectId: id, playName: PLAY })).toBeNull();
+    expect(cadence(id).current_step).toBe(2);
+  });
+
+  it("an on-demand brief is reused only for the play it was written for", async () => {
+    callsOn();
+    const id = ledger.upsertProspect({ name: "Dana Smith", email: "d@x.test" });
+    responses.push(BRIEF_JSON, BRIEF_JSON);
+    await callBriefFor({ prospectId: id });
+    await callBriefFor({ prospectId: id });
+    expect(prompts).toHaveLength(1);
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+    expect(ledger.getCallBrief(id)!.playName).toBe(PLAY);
+  });
+
+  it("the list limit counts only rows that pass the company list and have a number", () => {
+    callsOn();
+    cfg = { ...cfg, doNotContact: { domains: ["blocked.test"] } };
+    // Equal touches rank newest prospect first: the three blocked ones, made
+    // last, fill the first page and a half.
+    const open: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const blocked = i >= 3;
+      const id = ledger.upsertProspect({
+        name: `P${i}`,
+        email: `p${i}@${blocked ? "blocked" : "open"}.test`,
+        phone: `+1512653${1100 + i}`,
+      });
+      if (!blocked) open.push(id);
+    }
+    const out = listCalls(new Date(), { limit: 2, pageSize: 2 });
+    expect(out.list.map((r) => r.prospectId)).toEqual([open[2], open[1]]);
+    expect(out.list).toHaveLength(2);
   });
 });

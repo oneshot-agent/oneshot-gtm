@@ -535,6 +535,10 @@ function mailStep(dayOffset: number): SequenceStep {
 /** The id of the call step in a plan (`calls.cadenceStep`). */
 export const CALL_STEP_ID = "call";
 
+/** A preview finished after its cadence moved on; nothing was stored. */
+export const PREVIEW_STEP_MOVED =
+  "cadence changed while the preview was written; refresh and retry";
+
 /** Why Send refuses a call step: nothing is sent, the founder logs the call. */
 export const CALL_STEP_NOT_SENT = "A call step is logged from the Calls page";
 
@@ -643,19 +647,25 @@ export function effectiveSequence(
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
     : newCadenceCarriesOn(base, cfg, continuation);
-  // The founder's call, for new plans while calls are on. A cadence already
-  // enrolled keeps what its saved plan has, even on a rebuild (a mail setting
-  // change), so turning calls on never adds a call to one in flight.
+  // The founder's call, from the live settings for new plans only. A cadence
+  // already enrolled keeps what its saved plan has, even on a rebuild (a mail
+  // setting change): no call is added to one in flight, and a saved call
+  // keeps its place and delay whatever the call settings say now.
   const calls = callsOf(cfg);
-  const callPlan =
-    calls.enabled && calls.cadenceStep && (cadenceChannel ?? "email") === "email"
+  const call =
+    !enrolled && calls.enabled && calls.cadenceStep && (cadenceChannel ?? "email") === "email"
       ? calls.cadenceStep
       : null;
-  const call = enrolled
-    ? savedPlan?.some((entry) => entry.channel === "call")
-      ? callPlan
-      : null
-    : callPlan;
+  const savedCallIndex =
+    enrolled && savedPlan ? savedPlan.findIndex((e) => e.channel === "call") : -1;
+  const savedCall =
+    savedPlan && savedCallIndex >= 0
+      ? {
+          index: savedCallIndex,
+          dayOffset: savedPlan[savedCallIndex]!.dayOffset,
+          after: savedCallIndex > 0 ? savedPlan[savedCallIndex - 1]!.id : null,
+        }
+      : null;
   if (
     prospectId === undefined &&
     !mail &&
@@ -723,6 +733,19 @@ export function effectiveSequence(
       0,
       callStep(playName, call.delayDays),
     );
+  else if (savedCall) {
+    // Right after the step it followed in the saved plan, so a letter added
+    // or removed around it does not move it past an email; at its saved index
+    // when that step is gone.
+    const after = savedCall.after === null ? -1 : steps.findIndex((s) => s.id === savedCall.after);
+    const at =
+      savedCall.after === null
+        ? 0
+        : after >= 0
+          ? after + 1
+          : Math.min(savedCall.index, steps.length);
+    steps.splice(at, 0, callStep(playName, savedCall.dayOffset));
+  }
   // Last: the email steps come first, then the LinkedIn continuation.
   if (carriesOn) steps.push(...tail);
   return { playName, steps };
@@ -2446,6 +2469,14 @@ export async function previewCadenceStep(input: {
   }
   const seq = effectiveSequence(input.playName, input.prospectId);
   if (!seq) throw new Error(`no registered sequence for play '${input.playName}'`);
+  // The draft is stored only if the cadence is still on this step when the
+  // (paid, slow) completion returns.
+  const guarded = {
+    ...input,
+    ...(typeof cadence.enrolled_at === "string"
+      ? { expect: { currentStep: cadence.current_step, enrolledAt: cadence.enrolled_at } }
+      : {}),
+  };
   const nextIndex = cadence.current_step + 1;
   const stepEntryIndex = nextIndex - 1;
   if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) {
@@ -2487,7 +2518,7 @@ export async function previewCadenceStep(input: {
     // Sending this records the connection and brings the first message forward.
     const connection = knownConnection(cadence.prospect_linkedin_url);
     if (connection) {
-      return storePreview(input, cfg, seq, stepEntryIndex, step, {
+      return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
         subject: KNOWN_CONNECTION_SUBJECT,
         body: `Already connected: skipping the connection request (profile read ${knownConnectionDay(connection)}). The first message comes next.`,
         flags: [],
@@ -2566,7 +2597,7 @@ export async function previewCadenceStep(input: {
       step: nextIndex,
       reason: derived.reason,
     });
-    return storePreview(input, cfg, seq, stepEntryIndex, step, {
+    return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
       subject: "",
       body: "",
       flags: [NO_OFFER_FLAG],
@@ -2670,7 +2701,7 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
-  return storePreview(input, cfg, seq, stepEntryIndex, step, {
+  return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
     subject,
     body,
     flags,
@@ -2680,7 +2711,12 @@ export async function previewCadenceStep(input: {
 
 /** Persist a preview (`setCadenceDraft`) and return it as the route shows it. */
 function storePreview(
-  input: { prospectId: number; playName: string; rotateAngle?: boolean },
+  input: {
+    prospectId: number;
+    playName: string;
+    rotateAngle?: boolean;
+    expect?: { currentStep: number; enrolledAt: string };
+  },
   cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,
   stepEntryIndex: number,
@@ -2690,7 +2726,8 @@ function storePreview(
   const ledger = getLedger();
   // The config it was written under: a later setup change makes it stale.
   const surface = cadenceDraftSurface(preview.payload);
-  ledger.setCadenceDraft({
+  const stored = ledger.setCadenceDraft({
+    ...(input.expect ? { expect: input.expect } : {}),
     prospectId: input.prospectId,
     playName: input.playName,
     draft: {
@@ -2704,6 +2741,8 @@ function storePreview(
     // its angle (`rotate`).
     discardReason: input.rotateAngle ? "rotate" : "regenerate",
   });
+  // Strictly false: a test double that returns nothing stores as before.
+  if (stored === false) throw new Error(PREVIEW_STEP_MOVED);
   const draft = ledger.getCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -4105,17 +4144,21 @@ export function completeCallStep(input: {
   const step = seq?.steps[stepEntryIndex];
   if (!seq || step?.channel !== "call") return false;
   const stepIndex = stepEntryIndex + 1;
-  if (!ledger.hasSentSequenceEvent(input.prospectId, input.playName, stepIndex)) {
-    ledger.recordSequenceEvent({
-      prospectId: input.prospectId,
-      playName: input.playName,
-      stepIndex,
-      channel: "call",
-      status: "sent",
-      metadata: { label: step.label ?? null, ...input.metadata },
-    });
-  }
-  if (input.status !== "replied") advancePastSentStep(input, seq, stepEntryIndex, step);
+  // The event and the advance it explains land together (a savepoint inside
+  // `recordCall`'s transaction).
+  ledger.transaction(() => {
+    if (!ledger.hasSentSequenceEvent(input.prospectId, input.playName, stepIndex)) {
+      ledger.recordSequenceEvent({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        stepIndex,
+        channel: "call",
+        status: "sent",
+        metadata: { label: step.label ?? null, ...input.metadata },
+      });
+    }
+    if (input.status !== "replied") advancePastSentStep(input, seq, stepEntryIndex, step);
+  });
   return true;
 }
 

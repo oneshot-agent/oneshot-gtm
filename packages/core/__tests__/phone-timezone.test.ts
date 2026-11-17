@@ -116,3 +116,21 @@ describe("phoneLocalTime", () => {
     expect(phoneLocalTime(null, WINDOW).inWindow).toBe(true);
   });
 });
+
+describe("review fixes", () => {
+  it("reads a number written with its country code and no plus, without misreading national ones", () => {
+    expect(normalizePhone("4712345678", "NO")).toBe("+4712345678");
+    expect(normalizePhone("12345678", "NO")).toBe("+4712345678");
+    expect(normalizePhone("525512345678", "MX")).toBe("+525512345678");
+    // A ten-digit Mexican national number that starts with the code stays national.
+    expect(normalizePhone("5212345678", "MX")).toBe("+525212345678");
+    // North American numbers never take this path.
+    expect(normalizePhone("4412345678", "US")).toBe("+14412345678");
+  });
+
+  it("+213 (Algeria) maps to Europe/Paris, as libphonenumber's own data does", () => {
+    // libphonenumber map_data.txt at the pinned commit has `213|Europe/Paris`;
+    // the data is vendored as published. Both read UTC+1 in winter.
+    expect(phoneTimeZones("+213551234567")).toEqual(["Europe/Paris"]);
+  });
+});

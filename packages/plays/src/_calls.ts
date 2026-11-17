@@ -60,6 +60,10 @@ const VOICEMAIL_MAX_WORDS = 55;
 /** Most rows the Calls page's call list shows. */
 export const CALL_LIST_LIMIT = 200;
 
+/** Ranked candidates read per page while filling the call list, and at most this many pages. */
+const CALL_CANDIDATE_PAGE = 400;
+const CALL_CANDIDATE_PAGES = 5;
+
 /** Days a `not_now` holds the cadence when the founder picks no date. */
 const NOT_NOW_DEFAULT_DAYS = 14;
 
@@ -294,19 +298,22 @@ export async function callBriefFor(input: {
     if (preview.payload.kind !== "call") throw new Error("the next step is no longer a call");
     return preview.payload.brief;
   }
+  // The play the brief is written for, decided before the cache is read: a
+  // brief cached for another play (or for none) is not this one's.
+  const playName =
+    input.playName ||
+    ledger.listCadencesForProspect(input.prospectId).find((c) => c.status === "active")
+      ?.play_name ||
+    ledger.latestSentPlayForProspect(input.prospectId) ||
+    null;
   if (!input.regenerate) {
     const cached = ledger.getCallBrief(input.prospectId);
-    if (cached) return cached.brief;
+    if (cached && cached.playName === playName) return cached.brief;
   }
   const prospect = ledger.getProspectById(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
-  const playName =
-    input.playName ??
-    ledger.listCadencesForProspect(input.prospectId).find((c) => c.status === "active")
-      ?.play_name ??
-    ledger.latestSentPlayForProspect(input.prospectId);
-  const brief = await buildCallBrief({ prospect, playName: playName ?? null, cfg: loadConfig() });
-  ledger.saveCallBrief({ prospectId: input.prospectId, playName: playName ?? null, brief });
+  const brief = await buildCallBrief({ prospect, playName, cfg: loadConfig() });
+  ledger.saveCallBrief({ prospectId: input.prospectId, playName, brief });
   return brief;
 }
 
@@ -377,17 +384,43 @@ export function recordCall(
     typeof req.durationSec === "number" && Number.isFinite(req.durationSec) && req.durationSec >= 0
       ? Math.round(req.durationSec)
       : null;
+  // One transaction: the call row, its touch and what the outcome does to
+  // the cadences land together, or none of them does.
+  const { callId, stepPlay } = ledger.inTransaction(() =>
+    applyCallOutcome(prospectId, req, { outcome, note, durationSec, cfg, now }),
+  );
+  logEvent("call.logged", { prospect_id: prospectId, outcome, cadence_step: stepPlay != null });
+  return ledger.getCall(callId)!;
+}
+
+/** `recordCall`'s writes, run inside its transaction. */
+function applyCallOutcome(
+  prospectId: number,
+  req: LogCallRequest,
+  ctx: {
+    outcome: CallOutcome;
+    note: string | null;
+    durationSec: number | null;
+    cfg: OneShotConfig;
+    now: Date;
+  },
+): { callId: number; stepPlay: string | null } {
+  const ledger = getLedger();
+  const { outcome, note, durationSec, cfg, now } = ctx;
   const stepPlay = callStepPlay(prospectId, req.playName);
   const playName = stepPlay ?? req.playName ?? null;
-  const dialled = phoneForCall(prospectId, cfg);
   let callId: number;
+  let dialled: string | null;
   if (req.callId != null) {
     if (
       !ledger.setCallOutcome({ id: req.callId, prospectId, outcome, note, durationSec, playName })
     )
       throw new CallLogError("call not found", 404);
     callId = req.callId;
+    dialled = ledger.callPhone(callId);
   } else {
+    const number = phoneForCall(prospectId, cfg);
+    dialled = number.phone ?? number.raw;
     callId = ledger.insertCall({
       prospectId,
       playName,
@@ -395,7 +428,7 @@ export function recordCall(
       durationSec,
       outcome,
       note,
-      phone: dialled.phone ?? dialled.raw,
+      phone: dialled,
       provider: "tel",
     });
   }
@@ -411,7 +444,9 @@ export function recordCall(
       ...(replied ? { status: "replied" as const } : {}),
     });
   }
-  if (outcome === "wrong_number") ledger.clearProspectPhone(prospectId);
+  // Only the number that rang the wrong person: a replacement stays.
+  if (outcome === "wrong_number")
+    ledger.clearProspectPhone(prospectId, dialled, defaultPhoneCountry(cfg));
   if (outcome === "not_now") {
     const until = holdUntilIso(req.holdUntil, now);
     for (const c of ledger.listCadencesForProspect(prospectId)) {
@@ -442,8 +477,7 @@ export function recordCall(
     });
   }
   if (outcome === "do_not_contact") stopCadencesForOptOut(prospectId);
-  logEvent("call.logged", { prospect_id: prospectId, outcome, cadence_step: stepPlay != null });
-  return ledger.getCall(callId)!;
+  return { callId, stepPlay };
 }
 
 /** Why a call-list row ranks where it does. */
@@ -469,7 +503,13 @@ function tierReason(c: CallCandidate): string {
  * phone); the call list only lists people with one. Calls off: nothing is
  * read beyond the config.
  */
-export function listCalls(now: Date = new Date()): CallListResponse {
+export function listCalls(
+  now: Date = new Date(),
+  /** Tests: a smaller list and page. */
+  opts: { limit?: number; pageSize?: number } = {},
+): CallListResponse {
+  const limit = opts.limit ?? CALL_LIST_LIMIT;
+  const pageSize = opts.pageSize ?? CALL_CANDIDATE_PAGE;
   const cfg = loadConfig();
   const calls = callsOf(cfg);
   const base = {
@@ -515,25 +555,19 @@ export function listCalls(now: Date = new Date()): CallListResponse {
   }
 
   const list: CallListRow[] = [];
-  const candidates = ledger.listCallCandidates({
-    limit: CALL_LIST_LIMIT * 2,
-    excludeProspectIds: [...dueIds],
-  });
   const country = defaultPhoneCountry(cfg);
-  const wrong = ledger.wrongNumbersFor(
-    candidates.map((c) => c.prospectId),
-    country,
-  );
-  for (const c of candidates) {
-    if (list.length >= CALL_LIST_LIMIT) break;
-    if (blocked(c.prospectId, c.email)) continue;
+  const listRow = (
+    c: CallCandidate,
+    wrong: ReadonlySet<string> | undefined,
+  ): CallListRow | null => {
+    if (blocked(c.prospectId, c.email)) return null;
     const phone = pickCallPhone(
       { prospectPhone: c.prospectPhone, queuePhone: c.queuePhone, queueId: c.queueId },
-      wrong.get(c.prospectId),
+      wrong,
       country,
     );
-    if (!phone.phone) continue;
-    list.push({
+    if (!phone.phone) return null;
+    return {
       prospectId: c.prospectId,
       name: c.name,
       title: c.title,
@@ -546,7 +580,27 @@ export function listCalls(now: Date = new Date()): CallListResponse {
       reason: tierReason(c),
       lastTouchAt: c.lastTouchAt,
       lastCall: null,
+    };
+  };
+  // The limit counts rows that pass the company list and have a usable
+  // number: page through the ranked candidates, in order, until it is met
+  // or they run out (bounded; the first page is normally enough).
+  for (let page = 0; page < CALL_CANDIDATE_PAGES && list.length < limit; page++) {
+    const candidates = ledger.listCallCandidates({
+      limit: pageSize,
+      offset: page * pageSize,
+      excludeProspectIds: [...dueIds],
     });
+    const wrong = ledger.wrongNumbersFor(
+      candidates.map((c) => c.prospectId),
+      country,
+    );
+    for (const c of candidates) {
+      if (list.length >= limit) break;
+      const row = listRow(c, wrong.get(c.prospectId));
+      if (row) list.push(row);
+    }
+    if (candidates.length < pageSize) break;
   }
 
   const ids = [...due, ...list].map((r) => r.prospectId);

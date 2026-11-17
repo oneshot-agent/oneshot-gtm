@@ -298,3 +298,91 @@ describe("ledger calls", () => {
     });
   });
 });
+
+describe("ledger calls: review fixes", () => {
+  let ledger: Ledger;
+  beforeEach(() => {
+    ledger = new Ledger(":memory:");
+  });
+  afterEach(() => ledger.close());
+
+  it("the email send backstop refuses a person who said do not contact on a call", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@a.test" });
+    expect(ledger.contactSuppressionFor("d@a.test")).toBeNull();
+    ledger.insertCall({
+      prospectId: id,
+      startedAt: "2026-11-17T10:00:00.000Z",
+      outcome: "no_answer",
+    });
+    expect(ledger.contactSuppressionFor("d@a.test")).toBeNull();
+    ledger.insertCall({
+      prospectId: id,
+      startedAt: "2026-11-17T11:00:00.000Z",
+      outcome: "do_not_contact",
+    });
+    expect(ledger.contactSuppressionFor("D@A.test")).toEqual({
+      kind: "unsubscribe",
+      received_at: "2026-11-17T11:00:00.000Z",
+    });
+  });
+
+  it("reads wrong numbers in the workspace's country", () => {
+    const id = ledger.upsertProspect({ name: "G", email: "g@a.test", phone: "+442079460958" });
+    ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      outcome: "wrong_number",
+      phone: "020 7946 0958",
+    });
+    expect(ledger.phoneForCall(id, "GB").phone).toBeNull();
+  });
+
+  it("the call list takes a phone from a queue row matched by address when none is linked", () => {
+    const id = ledger.upsertProspect({ name: "Q", email: "Q@a.test" });
+    const qid = ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "q@a.test", phone: "(512) 653-1187" },
+      dedupeKey: "q",
+      source: "s",
+    })!;
+    expect(ledger.listCallCandidates({ limit: 10 })).toMatchObject([
+      { prospectId: id, queuePhone: "(512) 653-1187", queueId: qid },
+    ]);
+    // A linked row wins, even without a phone (as phoneSourcesFor reads it).
+    const linked = ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "q@a.test" },
+      dedupeKey: "q2",
+      source: "s",
+    })!;
+    ledger.setQueueProspectId(linked, id);
+    expect(ledger.listCallCandidates({ limit: 10 })).toEqual([]);
+  });
+
+  it("pages through the ranked list", () => {
+    const ids = [1, 2, 3].map((n) =>
+      ledger.upsertProspect({ name: `P${n}`, email: `p${n}@a.test`, phone: phone(n) }),
+    );
+    const all = ledger.listCallCandidates({ limit: 10 }).map((c) => c.prospectId);
+    expect(all.toSorted()).toEqual(ids.toSorted());
+    expect(ledger.listCallCandidates({ limit: 2, offset: 2 }).map((c) => c.prospectId)).toEqual([
+      all[2],
+    ]);
+  });
+
+  it("a stored preview is refused once the cadence moved on", () => {
+    const id = ledger.upsertProspect({ name: "C", email: "c@a.test" });
+    ledger.enrollCadence({ prospectId: id, playName: "p", nextDueAt: new Date().toISOString() });
+    const c = ledger.getCadence(id, "p")!;
+    const draft = { subject: "s", body: "b", flags: [], payload: { kind: "email" } };
+    const expect0 = { currentStep: c.current_step, enrolledAt: c.enrolled_at };
+    expect(ledger.setCadenceDraft({ prospectId: id, playName: "p", draft, expect: expect0 })).toBe(
+      true,
+    );
+    ledger.advanceCadence({ prospectId: id, playName: "p", newStep: 1, nextDueAt: null });
+    expect(ledger.setCadenceDraft({ prospectId: id, playName: "p", draft, expect: expect0 })).toBe(
+      false,
+    );
+    expect(ledger.getCadenceDraft({ prospectId: id, playName: "p" })).toBeNull();
+  });
+});

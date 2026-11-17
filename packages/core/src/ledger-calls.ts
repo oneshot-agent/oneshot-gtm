@@ -209,7 +209,9 @@ export function lastCallsFor(
 /**
  * The touch a logged call leaves in `channel_events` (channel `call`):
  * `reply` for an outcome in `CALL_REPLY_OUTCOMES`, else `call`. Keyed on a
- * hash of the call id, so logging the same call twice writes one row.
+ * hash of the call id, so logging the same call twice writes one row; a
+ * changed outcome (a bridged call first logged no_answer, then interested)
+ * rewrites that row's type and keeps when it happened.
  */
 export function recordCallChannelEvent(
   db: Database,
@@ -217,9 +219,10 @@ export function recordCallChannelEvent(
 ): void {
   const externalId = createHash("sha256").update(`call:${input.callId}`).digest("hex").slice(0, 32);
   db.prepare(
-    `INSERT OR IGNORE INTO channel_events
+    `INSERT INTO channel_events
        (source, external_event_id, prospect_id, channel, event_type, occurred_at)
-     VALUES ('call', ?, ?, 'call', ?, ?)`,
+     VALUES ('call', ?, ?, 'call', ?, ?)
+     ON CONFLICT(source, external_event_id) DO UPDATE SET event_type = excluded.event_type`,
   ).run(
     externalId,
     input.prospectId,
@@ -228,9 +231,34 @@ export function recordCallChannelEvent(
   );
 }
 
-/** Clear a number that rang the wrong person; the call row keeps it. */
-export function clearProspectPhone(db: Database, prospectId: number): void {
+/**
+ * Clear a number that rang the wrong person; the call row keeps it. Only
+ * when the prospect's stored number is still that one (compared as E.164):
+ * a replacement found since, or a late log of an older call, is kept. True
+ * when it cleared.
+ */
+export function clearProspectPhone(
+  db: Database,
+  prospectId: number,
+  wrongPhone: string | null,
+  defaultCountry = "US",
+): boolean {
+  const wrong = normalizePhone(wrongPhone, defaultCountry);
+  if (!wrong) return false;
+  const row = db.query("SELECT phone FROM prospects WHERE id = ?").get(prospectId) as {
+    phone: string | null;
+  } | null;
+  if (!row?.phone || normalizePhone(row.phone, defaultCountry) !== wrong) return false;
   db.prepare("UPDATE prospects SET phone = NULL WHERE id = ?").run(prospectId);
+  return true;
+}
+
+/** The number a call dialled, as stored on it; null when none. */
+export function callPhone(db: Database, callId: number): string | null {
+  const row = db.query("SELECT phone FROM calls WHERE id = ?").get(callId) as {
+    phone: string | null;
+  } | null;
+  return row?.phone ?? null;
 }
 
 /**
@@ -274,7 +302,7 @@ export function phoneForCall(
 ): { phone: string | null; raw: string | null; queueId: number | null } {
   return pickCallPhone(
     phoneSourcesFor(db, prospectId),
-    wrongNumbersFor(db, [prospectId]).get(prospectId),
+    wrongNumbersFor(db, [prospectId], defaultCountry).get(prospectId),
     defaultCountry,
   );
 }
@@ -407,7 +435,12 @@ function hasTable(db: Database, name: string): boolean {
  */
 export function listCallCandidates(
   db: Database,
-  opts: { limit: number; excludeProspectIds?: readonly number[] },
+  opts: {
+    limit: number;
+    /** Rows of the ranked list to skip: the Calls page pages through it. */
+    offset?: number;
+    excludeProspectIds?: readonly number[];
+  },
 ): CallCandidate[] {
   const meetingHeld = hasTable(db, "meetings")
     ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND m.outcome = 'held')`
@@ -436,15 +469,29 @@ export function listCallCandidates(
       : "";
   const rows = db
     .query(
-      `WITH base AS (
+      `WITH
+       -- A phone on a queue row not linked to any prospect yet, by its
+       -- address, as phoneSourcesFor reads it: target_queue's JSON is read
+       -- once here, never once per prospect.
+       mail_queue AS MATERIALIZED (
+         SELECT lower(trim(json_extract(q.payload_json, '$.email'))) AS email, MAX(q.id) AS id
+           FROM target_queue q
+          WHERE q.prospect_id IS NULL AND json_valid(q.payload_json)
+            AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''
+            AND trim(COALESCE(json_extract(q.payload_json, '$.email'), '')) <> ''
+          GROUP BY 1),
+       mail_phone AS MATERIALIZED (
+         SELECT m.email, m.id, trim(json_extract(q.payload_json, '$.phone')) AS phone
+           FROM mail_queue m JOIN target_queue q ON q.id = m.id),
+       linked AS (
          SELECT p.id AS prospect_id, p.name, p.title, p.company, p.email,
                 NULLIF(trim(COALESCE(p.phone, '')), '') AS prospect_phone,
                 (SELECT q.id FROM target_queue q WHERE q.prospect_id = p.id
-                  ORDER BY q.id DESC LIMIT 1) AS queue_id,
+                  ORDER BY q.id DESC LIMIT 1) AS linked_queue_id,
                 (SELECT trim(json_extract(q.payload_json, '$.phone')) FROM target_queue q
                   WHERE q.prospect_id = p.id AND json_valid(q.payload_json)
                     AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''
-                  ORDER BY q.id DESC LIMIT 1) AS queue_phone,
+                  ORDER BY q.id DESC LIMIT 1) AS linked_queue_phone,
                 ${positiveIntent} AS positive_intent,
                 (${noMeeting}) AS no_meeting,
                 (${linkedInConnected}) AS linkedin_connected,
@@ -462,13 +509,23 @@ export function listCallCandidates(
           WHERE (NULLIF(trim(COALESCE(p.phone, '')), '') IS NOT NULL OR p.id IN (
                   SELECT q.prospect_id FROM target_queue q
                    WHERE q.prospect_id IS NOT NULL AND json_valid(q.payload_json)
-                     AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''))
+                     AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> '')
+                 OR lower(trim(p.email)) IN (SELECT email FROM mail_phone))
             AND ${contactAllowedSetClause(db)}
             AND COALESCE(p.icp_verdict, '') <> 'reject'
             AND NOT (${meetingHeld})
             AND NOT EXISTS (SELECT 1 FROM cadence_state dnc WHERE dnc.prospect_id = p.id
                              AND dnc.status = 'stopped' AND dnc.stop_reason = 'do_not_contact')
             ${excludeSql}
+       ),
+       base AS (
+         -- A queue row linked to the prospect wins; the address match only
+         -- stands in when there is none (phoneSourcesFor's order).
+         SELECT l.*,
+                COALESCE(l.linked_queue_id, mp.id) AS queue_id,
+                CASE WHEN l.linked_queue_id IS NOT NULL THEN l.linked_queue_phone
+                     ELSE mp.phone END AS queue_phone
+           FROM linked l LEFT JOIN mail_phone mp ON mp.email = lower(trim(l.email))
        )
        SELECT *,
               CASE WHEN positive_intent IS NOT NULL AND no_meeting THEN 1
@@ -478,9 +535,9 @@ export function listCallCandidates(
          FROM base
         WHERE prospect_phone IS NOT NULL OR queue_phone IS NOT NULL
         ORDER BY tier ASC, COALESCE(priority, -1) DESC, last_touch IS NULL, last_touch DESC, prospect_id DESC
-        LIMIT ?`,
+        LIMIT ? OFFSET ?`,
     )
-    .all(opts.limit) as Array<{
+    .all(opts.limit, Math.max(0, Math.trunc(opts.offset ?? 0))) as Array<{
     prospect_id: number;
     name: string | null;
     title: string | null;

@@ -99,31 +99,36 @@ const NANP = new Set([
   "JM",
   "DO",
 ]);
-const CALLING_CODES: Record<string, { code: string; trunk: string | null }> = {
+/**
+ * `national`: the fixed length of a national number, for the countries with
+ * no trunk prefix whose numbers have one. It tells a number written with its
+ * country code but no "+" ("4712345678") from a national one.
+ */
+const CALLING_CODES: Record<string, { code: string; trunk: string | null; national?: number }> = {
   GB: { code: "44", trunk: "0" },
   IE: { code: "353", trunk: "0" },
   FR: { code: "33", trunk: "0" },
   DE: { code: "49", trunk: "0" },
-  ES: { code: "34", trunk: null },
+  ES: { code: "34", trunk: null, national: 9 },
   IT: { code: "39", trunk: null },
-  PT: { code: "351", trunk: null },
+  PT: { code: "351", trunk: null, national: 9 },
   NL: { code: "31", trunk: "0" },
   BE: { code: "32", trunk: "0" },
   LU: { code: "352", trunk: null },
   CH: { code: "41", trunk: "0" },
   AT: { code: "43", trunk: "0" },
   SE: { code: "46", trunk: "0" },
-  NO: { code: "47", trunk: null },
-  DK: { code: "45", trunk: null },
+  NO: { code: "47", trunk: null, national: 8 },
+  DK: { code: "45", trunk: null, national: 8 },
   FI: { code: "358", trunk: "0" },
-  PL: { code: "48", trunk: null },
-  CZ: { code: "420", trunk: null },
-  GR: { code: "30", trunk: null },
+  PL: { code: "48", trunk: null, national: 9 },
+  CZ: { code: "420", trunk: null, national: 9 },
+  GR: { code: "30", trunk: null, national: 10 },
   IL: { code: "972", trunk: "0" },
   AE: { code: "971", trunk: "0" },
   IN: { code: "91", trunk: "0" },
-  SG: { code: "65", trunk: null },
-  HK: { code: "852", trunk: null },
+  SG: { code: "65", trunk: null, national: 8 },
+  HK: { code: "852", trunk: null, national: 8 },
   JP: { code: "81", trunk: "0" },
   KR: { code: "82", trunk: "0" },
   AU: { code: "61", trunk: "0" },
@@ -132,10 +137,10 @@ const CALLING_CODES: Record<string, { code: string; trunk: string | null }> = {
   NG: { code: "234", trunk: "0" },
   KE: { code: "254", trunk: "0" },
   BR: { code: "55", trunk: "0" },
-  MX: { code: "52", trunk: null },
+  MX: { code: "52", trunk: null, national: 10 },
   AR: { code: "54", trunk: "0" },
-  CO: { code: "57", trunk: null },
-  CL: { code: "56", trunk: null },
+  CO: { code: "57", trunk: null, national: 10 },
+  CL: { code: "56", trunk: null, national: 9 },
 };
 
 /** A North American number's ten digits are valid: area code and exchange both start 2–9. */
@@ -193,8 +198,20 @@ export function normalizePhone(
     return null;
   }
   const national = plan.trunk && s.startsWith(plan.trunk) ? s.slice(plan.trunk.length) : s;
-  // Written with the country code but without "+": keep it when it fits.
-  if (!plan.trunk && s.startsWith(plan.code) && s.length > plan.code.length + 8) return e164(s);
+  // Written with the country code but without "+". With a fixed national
+  // length, exactly the code plus that many digits (a national number is
+  // shorter, so it is never misread); without one (Italy, Luxembourg, whose
+  // national numbers run 6–11 digits), the code plus at least eight, and
+  // longer than any national number starting with those digits could be.
+  // North American numbers never reach here: they are read above.
+  if (
+    !plan.trunk &&
+    s.startsWith(plan.code) &&
+    (plan.national
+      ? s.length === plan.code.length + plan.national
+      : s.length >= plan.code.length + 8 && s.length > 11)
+  )
+    return e164(s);
   return national.length >= 6 ? e164(`${plan.code}${national}`) : null;
 }
 

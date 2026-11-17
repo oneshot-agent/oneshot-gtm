@@ -909,63 +909,92 @@ export function setCadenceDraft(
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
+    /**
+     * The step and enrolment the preview was written for. A preview takes a
+     * paid completion of several seconds, and the cadence may move on in that
+     * time (a send, a logged call, a stop and re-enrol): then nothing is
+     * stored, so a draft never lands on the step after the one it was for.
+     */
+    expect?: { currentStep: number; enrolledAt: string };
   },
-): void {
+): boolean {
   const draftedAtIso = new Date().toISOString();
   const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-  db.transaction(() => {
-    // Seed from the preview this write replaces (a draft that predates
-    // versioning) before the UPDATE erases it.
-    const key = seedCadenceDraftVersion(db, drafts, input.prospectId, input.playName);
-    db.prepare(
-      `UPDATE cadence_state
+  return db
+    .transaction(() => {
+      if (input.expect) {
+        const now = db
+          .query(
+            `SELECT current_step, enrolled_at, status FROM cadence_state
+            WHERE prospect_id = ? AND play_name = ?`,
+          )
+          .get(input.prospectId, input.playName) as {
+          current_step: number;
+          enrolled_at: string;
+          status: string;
+        } | null;
+        if (
+          !now ||
+          now.status !== "active" ||
+          now.current_step !== input.expect.currentStep ||
+          now.enrolled_at !== input.expect.enrolledAt
+        )
+          return false;
+      }
+      // Seed from the preview this write replaces (a draft that predates
+      // versioning) before the UPDATE erases it.
+      const key = seedCadenceDraftVersion(db, drafts, input.prospectId, input.playName);
+      db.prepare(
+        `UPDATE cadence_state
        SET next_step_draft_json = ?, next_step_drafted_at = ?
        WHERE prospect_id = ? AND play_name = ?`,
-    ).run(json, draftedAtIso, input.prospectId, input.playName);
-    if (!key) return;
-    const payload = input.draft.payload as {
-      kind?: unknown;
-      angle?: unknown;
-      voiceKey?: unknown;
-      learningKey?: unknown;
-      writer?: unknown;
-    } | null;
-    const voiceKey =
-      payload && typeof payload === "object" && typeof payload.voiceKey === "string"
-        ? payload.voiceKey
-        : null;
-    const learningKey =
-      payload && typeof payload === "object" && typeof payload.learningKey === "string"
-        ? payload.learningKey
-        : null;
-    // A LinkedIn message, connection request or known-connection skip is a
-    // previewed non-email cadence draft; its version must not read as an email draft.
-    // A call brief is the founder's notes for a call, not an email draft either.
-    const channel =
-      payload &&
-      typeof payload === "object" &&
-      (payload.kind === "linkedin_message" ||
-        payload.kind === "linkedin_invite" ||
-        payload.kind === "linkedin_connected")
-        ? "linkedin"
-        : payload && typeof payload === "object" && payload.kind === "call"
-          ? "call"
-          : undefined;
-    drafts.open({
-      ...key,
-      subject: input.draft.subject,
-      body: input.draft.body,
-      flags: input.draft.flags,
-      angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
-      voiceKey,
-      learningKey,
-      // A templated LinkedIn step says so: its text is the workspace's copy, not founder style.
-      writer: draftWriterOf(payload && typeof payload === "object" ? payload.writer : null),
-      ...(channel ? { channel } : {}),
-      ...(input.discardReason ? { discardReason: input.discardReason } : {}),
-    });
-    // IMMEDIATE: the seed reads the stored preview before the UPDATE.
-  }).immediate();
+      ).run(json, draftedAtIso, input.prospectId, input.playName);
+      if (!key) return true;
+      const payload = input.draft.payload as {
+        kind?: unknown;
+        angle?: unknown;
+        voiceKey?: unknown;
+        learningKey?: unknown;
+        writer?: unknown;
+      } | null;
+      const voiceKey =
+        payload && typeof payload === "object" && typeof payload.voiceKey === "string"
+          ? payload.voiceKey
+          : null;
+      const learningKey =
+        payload && typeof payload === "object" && typeof payload.learningKey === "string"
+          ? payload.learningKey
+          : null;
+      // A LinkedIn message, connection request or known-connection skip is a
+      // previewed non-email cadence draft; its version must not read as an email draft.
+      // A call brief is the founder's notes for a call, not an email draft either.
+      const channel =
+        payload &&
+        typeof payload === "object" &&
+        (payload.kind === "linkedin_message" ||
+          payload.kind === "linkedin_invite" ||
+          payload.kind === "linkedin_connected")
+          ? "linkedin"
+          : payload && typeof payload === "object" && payload.kind === "call"
+            ? "call"
+            : undefined;
+      drafts.open({
+        ...key,
+        subject: input.draft.subject,
+        body: input.draft.body,
+        flags: input.draft.flags,
+        angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
+        voiceKey,
+        learningKey,
+        // A templated LinkedIn step says so: its text is the workspace's copy, not founder style.
+        writer: draftWriterOf(payload && typeof payload === "object" ? payload.writer : null),
+        ...(channel ? { channel } : {}),
+        ...(input.discardReason ? { discardReason: input.discardReason } : {}),
+      });
+      return true;
+      // IMMEDIATE: the seed reads the stored preview before the UPDATE.
+    })
+    .immediate();
 }
 
 export function getCadenceDraft(

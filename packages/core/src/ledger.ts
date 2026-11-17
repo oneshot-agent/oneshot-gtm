@@ -152,6 +152,7 @@ import {
   callAllowed as callsCallAllowed,
   callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
+  callPhone as callsCallPhone,
   getCall as callsGetCall,
   getCallBrief as callsGetCallBrief,
   insertCall as callsInsertCall,
@@ -838,8 +839,10 @@ export class Ledger {
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
-  }): void {
-    cadSetCadenceDraft(this.db, this.drafts, input);
+    /** Store only while the cadence is still on this step of this enrolment (ledger-cadence.ts). */
+    expect?: { currentStep: number; enrolledAt: string };
+  }): boolean {
+    return cadSetCadenceDraft(this.db, this.drafts, input);
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {
@@ -1918,8 +1921,17 @@ export class Ledger {
   }
 
   /** @see ledger-calls.ts#clearProspectPhone */
-  clearProspectPhone(prospectId: number): void {
-    callsClearProspectPhone(this.db, prospectId);
+  clearProspectPhone(
+    prospectId: number,
+    wrongPhone: string | null,
+    defaultCountry?: string,
+  ): boolean {
+    return callsClearProspectPhone(this.db, prospectId, wrongPhone, defaultCountry);
+  }
+
+  /** @see ledger-calls.ts#callPhone */
+  callPhone(callId: number): string | null {
+    return callsCallPhone(this.db, callId);
   }
 
   /** @see ledger-calls.ts#wrongNumbersFor */

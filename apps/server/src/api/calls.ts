@@ -10,7 +10,13 @@
  *  - GET /api/prospects/:id/calls: the prospect's calls, newest first.
  */
 import { callsOf, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { CallLogError, callBriefFor, listCalls, recordCall } from "@oneshot-gtm/plays";
+import {
+  CallLogError,
+  PREVIEW_STEP_MOVED,
+  callBriefFor,
+  listCalls,
+  recordCall,
+} from "@oneshot-gtm/plays";
 import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -65,7 +71,9 @@ export async function callBriefRoute(req: Request): Promise<Response> {
     });
     return jsonResponse({ brief }, 200, req);
   } catch (err) {
-    return jsonResponse({ error: (err as Error).message ?? "brief failed" }, 502, req);
+    const message = (err as Error).message ?? "brief failed";
+    // The cadence moved on while the brief was written: nothing was stored.
+    return jsonResponse({ error: message }, message === PREVIEW_STEP_MOVED ? 409 : 502, req);
   }
 }
 
