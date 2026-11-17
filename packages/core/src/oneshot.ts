@@ -1504,10 +1504,15 @@ function linkedinSlugOf(value: unknown): string | null {
   return key ? key.slice("linkedin.com/in/".length) : null;
 }
 
-/** A slug's generated id: its last hyphen part, when it is long and carries a digit. */
+/**
+ * A slug's generated id: its last hyphen part, when it has LinkedIn's shape
+ * (a63674108, 767758198, 2b96a646): 6 to 12 hex characters with a digit, at
+ * most one other letter in front. A suffix someone chose (founder2024) is
+ * not one, and the names decide.
+ */
 function slugIdOf(slug: string): string | null {
   const last = slug.slice(slug.lastIndexOf("-") + 1);
-  return last.length >= 6 && /\d/.test(last) ? last : null;
+  return /^[a-z]?[0-9a-f]{5,11}$/.test(last) && /\d/.test(last) ? last : null;
 }
 
 /** Credentials and suffixes that trail a name ("Pat Lee DDS", "Pat Lee Jr"). */
@@ -1540,7 +1545,8 @@ const NAME_PREFIXES = new Set(["dr", "mr", "mrs", "ms", "mx", "prof"]);
 /**
  * A person's name as comparable tokens: accents folded, lowercased, anything
  * after a comma (credentials) dropped, initials, leading titles and trailing
- * credentials left out. "Noel A. Komatz" and "noel komatz" agree.
+ * credentials left out. "Noel A. Komatz" and "noel komatz" agree. Letters of
+ * any script count, so "Pat 王" and "Pat 李" stay two different names.
  */
 function personNameTokens(value: string): string[] {
   const tokens = (value.split(",")[0] ?? "")
@@ -1548,8 +1554,9 @@ function personNameTokens(value: string): string[] {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/['\u2019]/g, "")
-    .split(/[^a-z]+/)
-    .filter((t) => t.length > 1);
+    .split(/[^\p{L}\p{M}]+/u)
+    // A lone Latin letter is an initial; a one-character surname (王) is not.
+    .filter((t) => t.length > 0 && !/^[a-z]$/.test(t));
   while (tokens.length > 1 && NAME_PREFIXES.has(tokens[0]!)) tokens.shift();
   while (tokens.length > 1 && NAME_SUFFIXES.has(tokens[tokens.length - 1]!)) tokens.pop();
   return tokens;

@@ -114,6 +114,21 @@ describe("phoneOwnerMatches", () => {
       { linkedinUrl: li("pat-lee-1a2b3c4d"), name: "Pat Lee" },
       { linkedin_url: li("sam-ray-9z8y7x6w") },
     ],
+    [
+      "a chosen suffix that only looks like an id",
+      { linkedinUrl: li("alice-smith-founder2024"), name: "Alice Smith" },
+      { linkedin_url: li("bob-jones-founder2024"), full_name: "Bob Jones" },
+    ],
+    [
+      "a shared given name with a different non-Latin surname",
+      { linkedinUrl: li("pat-wang-1a2b3c4d"), name: "Pat 王" },
+      { linkedin_url: li("pat-li-5e6f7a8b"), full_name: "Pat 李" },
+    ],
+    [
+      "a different name in a non-Latin script",
+      { linkedinUrl: li("wang-xiaoming-1a2b3c4d"), name: "王小明" },
+      { linkedin_url: li("li-xiaoming-5e6f7a8b"), full_name: "李小明" },
+    ],
   ])("rejects %s", (_label, input, profile) => {
     expect(phoneOwnerMatches(input, profile)).toBe(false);
   });
@@ -178,8 +193,35 @@ describe("phoneOwnerMatches", () => {
       { phone: "+15550100" },
     ],
     ["no profile at all", { linkedinUrl: li("pat-lee-1a2b3c4d") }, undefined],
+    [
+      "the same non-Latin name",
+      { linkedinUrl: li("wang-xiaoming-1a2b3c4d"), name: "Pat 王" },
+      { linkedin_url: li("pat-wang-5e6f7a8b"), full_name: "Pat 王" },
+    ],
+    [
+      "the same name written without spaces in a non-Latin script",
+      { linkedinUrl: li("wang-xiaoming-1a2b3c4d"), name: "王小明" },
+      { linkedin_url: li("xiaoming-5e6f7a8b"), full_name: "王小明" },
+    ],
   ])("accepts %s", (_label, input, profile) => {
     expect(phoneOwnerMatches(input, profile)).toBe(true);
+  });
+
+  it("takes only LinkedIn's generated shape as an id", () => {
+    // Same suffix, no names: an id would match, a chosen suffix cannot.
+    expect(
+      phoneOwnerMatches(
+        { linkedinUrl: li("alice-smith-founder2024") },
+        { linkedin_url: li("bob-jones-founder2024") },
+      ),
+    ).toBe(false);
+    for (const id of ["a63674108", "767758198", "2b96a646", "1a98b237", "306838195"])
+      expect(
+        phoneOwnerMatches(
+          { linkedinUrl: li(`pat-lee-${id}`) },
+          { linkedin_url: li(`sam-ray-${id}`) },
+        ),
+      ).toBe(true);
   });
 
   it("does not take a short or digitless last part as an id", () => {
