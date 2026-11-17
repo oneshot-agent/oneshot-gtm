@@ -46,6 +46,18 @@ vi.mock("@oneshot-gtm/find", async () => {
   };
 });
 
+// A phone lookup on approval goes the same way (queue-phone.ts decides whether it runs).
+const phoneScheduled: number[][] = [];
+vi.mock("../src/api/queue-phone.ts", async () => ({
+  ...(await vi.importActual<typeof import("../src/api/queue-phone.ts")>(
+    "../src/api/queue-phone.ts",
+  )),
+  schedulePhoneOnApproval: (ids: number[]) => {
+    order.push("phone");
+    phoneScheduled.push([...ids]);
+  },
+}));
+
 const { approveQueueRoute, approveAllRoute } = await import("../src/api/queue.ts");
 
 function row(id: number, status: string, play = "show-hn"): Record<string, unknown> {
@@ -67,6 +79,7 @@ beforeEach(() => {
   queueRows.clear();
   order.length = 0;
   scheduled.length = 0;
+  phoneScheduled.length = 0;
   bulkApproved = 0;
 });
 
@@ -78,8 +91,9 @@ describe("approve schedules the newsfeed capture", () => {
       { id: "5" },
     );
     expect(res.status).toBe(200);
-    expect(order).toEqual(["status:5", "newsfeed"]);
+    expect(order).toEqual(["status:5", "newsfeed", "phone"]);
     expect(scheduled).toEqual([[5]]);
+    expect(phoneScheduled).toEqual([[5]]);
   });
 
   it("a refused approval schedules nothing", async () => {
@@ -90,6 +104,7 @@ describe("approve schedules the newsfeed capture", () => {
     );
     expect(res.status).toBe(409);
     expect(scheduled).toEqual([]);
+    expect(phoneScheduled).toEqual([]);
   });
 
   it("bulk approve: the pending ids taken before the update, scoped to the play", async () => {
@@ -105,8 +120,9 @@ describe("approve schedules the newsfeed capture", () => {
       }),
     );
     expect(await res.json()).toEqual({ approved: 2 });
-    expect(order).toEqual(["bulk", "newsfeed"]);
+    expect(order).toEqual(["bulk", "newsfeed", "phone"]);
     expect(scheduled).toEqual([[1, 3]]);
+    expect(phoneScheduled).toEqual([[1, 3]]);
     // An id-only read (#929): the ids are all the bulk path uses. Rows with
     // no strong offer stay pending, so they are not read either.
     expect(listQueueArgs.at(-1)).toEqual({

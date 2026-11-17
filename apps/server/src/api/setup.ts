@@ -735,6 +735,15 @@ export function mergeSetupConfig(
         ? body.queueReviewOrder
         : current.queueReviewOrder,
     // Optional field: absent on both sides stays absent.
+    ...(typeof body.phoneOnApprove === "boolean" || current.phoneOnApprove !== undefined
+      ? {
+          phoneOnApprove:
+            typeof body.phoneOnApprove === "boolean"
+              ? body.phoneOnApprove
+              : current.phoneOnApprove === true,
+        }
+      : {}),
+    // Optional field: absent on both sides stays absent.
     ...(body.replyClassifier !== undefined || current.replyClassifier !== undefined
       ? {
           replyClassifier:

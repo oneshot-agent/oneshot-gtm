@@ -689,6 +689,14 @@ export interface OneShotConfig {
    */
   volumeGoalPerDay?: number | null;
   /**
+   * Look up a direct phone number for each row a human approves, in the
+   * background. Each lookup is a paid call and a number is never guaranteed;
+   * rows with no LinkedIn URL, rows that already have a number, and a day
+   * past `dailySpendCeilingUsd` are skipped. Unset means off. Read through
+   * `phoneOnApproveOf`.
+   */
+  phoneOnApprove?: boolean;
+  /**
    * The Gmail identity (pool `id`, e.g. `gmail:you@yourcompany.com`) whose
    * calendar the scheduler polls for past meetings needing an outcome
    * (issue #577). Null = feature off, entirely inert: no poll, no logging,
@@ -864,6 +872,22 @@ export interface QualifiedOutcomeExample {
   candidate: unknown;
   outcome: "meeting_booked" | "sql_qualified" | "deal_won";
   recordedAt: string;
+}
+
+/**
+ * A queue row's phone lookup, kept on its payload as `phoneLookup` (the number
+ * itself is `payload.phone`). `running` until the job ends; then `done` (a
+ * number), `none` (no provider had one), `unavailable` (the provider did not
+ * answer; worth asking again) or `error`.
+ */
+export interface QueuePhoneLookup {
+  status: "running" | "done" | "none" | "unavailable" | "error";
+  /** When the lookup started (`running`) or ended. */
+  at: string;
+  /** What went wrong, for `error`; short. */
+  message?: string;
+  /** What this lookup was billed; 0 when the cache answered. */
+  costUsd?: number;
 }
 
 export interface QueueRow {

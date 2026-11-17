@@ -17,6 +17,7 @@ import type {
   ProspectPriority,
   QueueListFilters,
   QueueOfferSkipFilter,
+  QueuePhoneLookup,
   QueueRow,
   QueueSearchOpts,
   QueueShowFilter,
@@ -1683,6 +1684,39 @@ export class QueueStore {
     this.db
       .prepare(`UPDATE target_queue SET payload_json = ? WHERE id = ?`)
       .run(JSON.stringify(input.payload), input.id);
+  }
+
+  /**
+   * Record a phone lookup on an approved or sent row: `$.phoneLookup`
+   * always, `$.phone` only when a number was found. One `json_set`, so
+   * nothing else in the payload is touched. A row a send or a live drain
+   * lease holds is refused (`busy`): the drain sends from the payload it
+   * claimed. A refused result is free to ask for again, since the paid cache
+   * keeps every answer. A sent row's status no longer moves, so its lease
+   * does not matter.
+   */
+  setQueuePhoneLookup(
+    id: number,
+    input: { phone?: string | null; lookup: QueuePhoneLookup },
+  ): "written" | "busy" | "gone" {
+    const cutoff = new Date(Date.now() - DRAIN_LEASE_SECONDS * 1000).toISOString();
+    const phone = input.phone?.trim();
+    const changed = this.db
+      .prepare(
+        `UPDATE target_queue
+            SET payload_json = json_set(payload_json, '$.phoneLookup', json(?)${phone ? ", '$.phone', ?" : ""})
+          WHERE id = ?
+            AND status IN ('approved', 'sent')
+            AND send_started_at IS NULL
+            AND (status = 'sent' OR drain_claimed_at IS NULL OR drain_claimed_at < ?)
+            AND json_valid(payload_json)`,
+      )
+      .run(JSON.stringify(input.lookup), ...(phone ? [phone] : []), id, cutoff).changes;
+    if (changed === 1) return "written";
+    const row = this.db.query(`SELECT status FROM target_queue WHERE id = ?`).get(id) as {
+      status: string;
+    } | null;
+    return row && (row.status === "approved" || row.status === "sent") ? "busy" : "gone";
   }
 
   /**
