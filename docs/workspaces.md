@@ -23,7 +23,7 @@ One database, `~/.oneshot-gtm-shared/shared.sqlite` (`ONESHOT_GTM_SHARED` moves 
 | People                    | one identity per person, by email or LinkedIn profile; a name alone never merges |
 | Paid lookups              | a person researched for one product is not bought again for another              |
 | Contact touches           | no first touch to someone another workspace emailed in the last 7 days           |
-| The LinkedIn account      | one connection; an optional daily invite share per workspace                     |
+| LinkedIn accounts         | shared connections; each workspace selects its sender with `linkedin.accountKey` |
 | LinkedIn suppression list | a profile one workspace invited is never invited by another                      |
 | Members and allowed hosts | every dashboard lets the same people in; see [members](./members.md)             |
 

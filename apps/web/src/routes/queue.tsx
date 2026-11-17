@@ -153,6 +153,7 @@ import {
 import { useRowActivity } from "../lib/rowActivity.ts";
 import { liveReadMissing, READING_LINKEDIN } from "../lib/liveRead.ts";
 import { ReadOnOpen } from "../components/queue/ReadOnOpen.tsx";
+import { FindPhone, FindPhonesButton } from "../components/queue/FindPhone.tsx";
 import { runSummaryDetail, summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
@@ -815,6 +816,7 @@ function QueuePage() {
               : "Loading…"}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            {statusFilter === "approved" && <FindPhonesButton />}
             <Button
               variant="secondary"
               size="sm"
@@ -1543,6 +1545,7 @@ export function QueueRow({
                   <CaseList rows={sheetRows} />
                 </>
               )}
+              <FindPhone row={row} />
               <PersonDossier rowId={row.id} />
               <ProductResearch payload={row.payload} />
               {profileHistory.length > 0 && (

@@ -735,6 +735,15 @@ export function mergeSetupConfig(
         ? body.queueReviewOrder
         : current.queueReviewOrder,
     // Optional field: absent on both sides stays absent.
+    ...(typeof body.phoneOnApprove === "boolean" || current.phoneOnApprove !== undefined
+      ? {
+          phoneOnApprove:
+            typeof body.phoneOnApprove === "boolean"
+              ? body.phoneOnApprove
+              : current.phoneOnApprove === true,
+        }
+      : {}),
+    // Optional field: absent on both sides stays absent.
     ...(body.replyClassifier !== undefined || current.replyClassifier !== undefined
       ? {
           replyClassifier:
@@ -879,8 +888,17 @@ export function mergeLinkedIn(
 ): OneShotConfig["linkedin"] {
   if (incoming === undefined) return current;
   if (incoming === null || typeof incoming !== "object" || Array.isArray(incoming))
-    throw new SetupValidationError("linkedin must be an object with templates and/or writer");
+    throw new SetupValidationError(
+      "linkedin must be an object with accountKey, templates and/or writer",
+    );
   const { writer: currentWriter, templates: currentTemplates, ...rest } = current ?? {};
+  if (incoming.accountKey !== undefined) {
+    if (incoming.accountKey !== null && typeof incoming.accountKey !== "string")
+      throw new SetupValidationError("linkedin.accountKey must be a string or null");
+    const key = incoming.accountKey?.trim();
+    if (key) rest.accountKey = key;
+    else delete rest.accountKey;
+  }
   const writer = mergeLinkedInWriter(incoming.writer, currentWriter);
   const templates = mergeLinkedInTemplates(incoming.templates, currentTemplates);
   const next: LinkedInSettings = {

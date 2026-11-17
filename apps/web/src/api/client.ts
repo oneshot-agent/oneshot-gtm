@@ -8,6 +8,7 @@ import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
 import type { CodeAnswer, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
 import type { LinkedInReadsView, ReadProfileResult } from "@oneshot-gtm/shared-types";
+import type { FindPhonesPreview } from "@oneshot-gtm/shared-types";
 import type {
   LinkedInFriendDraftView,
   LinkedInFriendSendView,
@@ -429,6 +430,7 @@ export const api = {
         // Optional: older servers / the demo fixture may omit them; the
         // server has always returned them (publicCfg spreads the whole cfg).
         queueReviewOrder?: "ranked" | "newest";
+        phoneOnApprove?: boolean;
         replyClassifier?: {
           engine: "llm" | "decisions";
           model?: string;
@@ -454,6 +456,7 @@ export const api = {
         linkedinSessionInvalidAt?: string | null;
         linkedinReadsPerDay?: number;
         linkedin?: {
+          accountKey?: string;
           invitesPerDay?: number;
           writer?: "template" | "model";
           templates?: Partial<Record<LinkedInTemplateStep, string>>;
@@ -623,6 +626,24 @@ export const api = {
       : postJson<ReadProfileResult>(`/queue/${id}/read-profile`, {}),
   resolveQueueContact: (id: number) =>
     postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
+  // A paid lookup that runs in the background: the row's `phoneLookup` says
+  // when it ends. `force` looks again over a stored number.
+  findQueuePhone: (id: number, opts: { force?: boolean } = {}) =>
+    postJson<{ ok: boolean; status: "running"; at: string }>(
+      `/queue/${id}/find-phone`,
+      opts.force ? { force: true } : {},
+    ),
+  // How many approved rows the bulk lookup would take, and why the rest would not.
+  findQueuePhonesPreview: (): Promise<FindPhonesPreview> =>
+    IS_DEMO
+      ? Promise.resolve({ eligible: 0, ids: [], skipped: {} })
+      : getJson("/queue/find-phones"),
+  // The ids the founder confirmed (from the preview); no ids: every approved row without a number.
+  findQueuePhones: (ids?: number[]) =>
+    postJson<{ started: number; skipped: FindPhonesPreview["skipped"] }>(
+      "/queue/find-phones",
+      ids ? { ids } : {},
+    ),
   // `reason` is the structured fit judgment (#813): `fit` on a deliberate
   // single-row approve; absent on a bulk pass, which judges nothing.
   approveQueue: (id: number, reason?: DecisionReason) =>
