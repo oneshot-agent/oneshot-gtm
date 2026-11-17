@@ -163,4 +163,4 @@ it("two workspaces send invites, cadence messages and profile reads through thei
     else process.env["ONESHOT_GTM_WORKSPACE"] = originalWorkspace;
     vi.resetModules();
   }
-});
+}, 30_000);

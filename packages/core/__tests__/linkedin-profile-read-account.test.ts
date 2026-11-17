@@ -5,6 +5,7 @@ import {
   linkedInProfileReadAccount,
   linkedInOutreachAccount,
   linkedInAccountSelectionBlocker,
+  linkedInConversationFor,
   linkedInProfileReadBlocker,
 } from "../src/linkedin-inbox.ts";
 
@@ -35,7 +36,7 @@ function save(
 }
 
 beforeEach(() => {
-  store.db.exec("DELETE FROM accounts");
+  store.db.exec("DELETE FROM accounts; DELETE FROM conversations;");
   saveConfig({ ...loadConfig(), linkedin: undefined });
 });
 
@@ -105,4 +106,23 @@ it("never falls back when the selected account is disconnected, removed, or abse
   expect(linkedInAccountSelectionBlocker()).toBe("missing");
   expect(linkedInOutreachAccount()).toBeNull();
   expect(linkedInProfileReadAccount()).toBeNull();
+});
+
+it("only returns a cadence conversation belonging to the selected account", () => {
+  for (const owner of ["alpha", "beta"]) {
+    save(owner, owner, "connected", ["invite", "reply"]);
+    const accountKey = `wallet-${owner}:${owner}`;
+    store.saveConversation(accountKey, { id: owner, attendees: [] } as never, []);
+    store.assign(`linkedin:${accountKey}:${owner}`, { workspace: "alpha", prospectId: 1 });
+  }
+  const person = { workspace: "alpha", prospectId: 1, linkedinUrl: null };
+  expect(linkedInConversationFor(person)).toBeNull();
+  saveConfig({ ...loadConfig(), linkedin: { accountKey: "wallet-beta:beta" } });
+  expect(linkedInConversationFor(person)).toEqual({
+    conversationId: "beta",
+    accountId: "beta",
+    workspace: "beta",
+  });
+  save("beta", "beta", "disconnected", ["reply"]);
+  expect(linkedInConversationFor(person)).toBeNull();
 });
