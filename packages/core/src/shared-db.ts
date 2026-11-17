@@ -125,6 +125,47 @@ export interface PaymentHold {
   created_at: string;
 }
 
+/** `owner` or `member`. Both see every workspace; the role says who runs the install. */
+export type MemberRole = "owner" | "member";
+
+/** One person allowed to use this install (`members` in the shared database). */
+export interface Member {
+  id: number;
+  /** Lowercased. The sign-in name the request gate matches, e.g. the Tailscale login. */
+  email: string;
+  name: string | null;
+  role: MemberRole;
+  added_at: string;
+  /** Set by `members remove`. A removed member is refused until added again. */
+  removed_at: string | null;
+}
+
+/** The stored form of a member email: trimmed and lowercased. Null when it cannot be one. */
+export function normalizeMemberEmail(input: string): string | null {
+  const email = input.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
+}
+
+/**
+ * The stored form of an allowed host: the hostname a browser sends in `Host`,
+ * lowercased, without scheme, port, path or trailing dot. Null when the input
+ * is not a hostname, or is a loopback name: the dashboards always answer on
+ * those, and only for requests made on the host machine itself.
+ */
+export function normalizeAllowedHost(input: string): string | null {
+  const host = input
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/[/?#].*$/, "")
+    .replace(/:\d+$/, "")
+    .replace(/\.$/, "");
+  if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(host)) {
+    return null;
+  }
+  return host === "localhost" || host === "127.0.0.1" ? null : host;
+}
+
 export class SharedDb {
   private db: Database;
   private importedFrom = new Set<string>();
@@ -308,6 +349,21 @@ export class SharedDb {
         purchases  INTEGER NOT NULL DEFAULT 0,
         spent_usd  REAL NOT NULL DEFAULT 0,
         PRIMARY KEY (day, call_type)
+      );
+      -- The people allowed to use this install from another machine. Every
+      -- workspace's server reads this file, so they agree on who is in.
+      CREATE TABLE IF NOT EXISTS members (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        email      TEXT NOT NULL UNIQUE,
+        name       TEXT,
+        role       TEXT NOT NULL DEFAULT 'member',
+        added_at   TEXT NOT NULL,
+        removed_at TEXT
+      );
+      -- Hostnames, besides loopback, the dashboards answer on (a tailnet name).
+      CREATE TABLE IF NOT EXISTS allowed_hosts (
+        host     TEXT PRIMARY KEY,
+        added_at TEXT NOT NULL
       );
     `);
     // Shared files created before reservations existed. Every workspace's
@@ -1292,6 +1348,136 @@ export class SharedDb {
         linkedin_rows: copied.linkedin,
       });
     }
+  }
+
+  /**
+   * Add a member, or bring a removed one back. An active member keeps their row:
+   * the role is set to what was asked, and the name only when one is given.
+   */
+  addMember(input: { email: string; name?: string | null; role: MemberRole }): {
+    member: Member;
+    outcome: "added" | "restored" | "updated";
+  } {
+    const email = normalizeMemberEmail(input.email);
+    if (!email) throw new Error(`Not an email address: ${input.email}`);
+    const name = input.name?.trim() || null;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.db
+        .query<Member, [string]>("SELECT * FROM members WHERE email = ?")
+        .get(email);
+      let outcome: "added" | "restored" | "updated";
+      if (!existing) {
+        this.db.run("INSERT INTO members(email, name, role, added_at) VALUES(?, ?, ?, ?)", [
+          email,
+          name,
+          input.role,
+          new Date().toISOString(),
+        ]);
+        outcome = "added";
+      } else if (existing.removed_at) {
+        this.db.run(
+          "UPDATE members SET name = ?, role = ?, added_at = ?, removed_at = NULL WHERE id = ?",
+          [name ?? existing.name, input.role, new Date().toISOString(), existing.id],
+        );
+        outcome = "restored";
+      } else {
+        this.db.run("UPDATE members SET name = ?, role = ? WHERE id = ?", [
+          name ?? existing.name,
+          input.role,
+          existing.id,
+        ]);
+        outcome = "updated";
+      }
+      const member = this.db
+        .query<Member, [string]>("SELECT * FROM members WHERE email = ?")
+        .get(email)!;
+      this.db.exec("COMMIT");
+      return { member, outcome };
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** Mark an active member removed. False when no active member has the email. */
+  removeMember(email: string): boolean {
+    const normalized = normalizeMemberEmail(email);
+    if (!normalized) return false;
+    return (
+      this.db.run("UPDATE members SET removed_at = ? WHERE email = ? AND removed_at IS NULL", [
+        new Date().toISOString(),
+        normalized,
+      ]).changes === 1
+    );
+  }
+
+  /** Members in the order they were first added. Removed ones only on request. */
+  listMembers(opts: { includeRemoved?: boolean } = {}): Member[] {
+    return this.db
+      .query<Member, []>(
+        `SELECT * FROM members ${opts.includeRemoved ? "" : "WHERE removed_at IS NULL"} ORDER BY id`,
+      )
+      .all();
+  }
+
+  /** The active member with this email, or null: unknown and removed both read as null. */
+  activeMember(email: string): Member | null {
+    const normalized = normalizeMemberEmail(email);
+    if (!normalized) return null;
+    return (
+      this.db
+        .query<Member, [string]>("SELECT * FROM members WHERE email = ? AND removed_at IS NULL")
+        .get(normalized) ?? null
+    );
+  }
+
+  /** The active owner added first, or null when no active member is an owner. */
+  ownerMember(): Member | null {
+    return (
+      this.db
+        .query<Member, []>(
+          "SELECT * FROM members WHERE role = 'owner' AND removed_at IS NULL ORDER BY id LIMIT 1",
+        )
+        .get() ?? null
+    );
+  }
+
+  /** Put a host on the allowed list. False when it was already there. */
+  allowHost(host: string): boolean {
+    const normalized = normalizeAllowedHost(host);
+    if (!normalized) throw new Error(`Not a hostname the dashboards can be allowed on: ${host}`);
+    return (
+      this.db.run("INSERT OR IGNORE INTO allowed_hosts(host, added_at) VALUES(?, ?)", [
+        normalized,
+        new Date().toISOString(),
+      ]).changes === 1
+    );
+  }
+
+  /** Take a host off the allowed list. False when it was not on it. */
+  disallowHost(host: string): boolean {
+    const normalized = normalizeAllowedHost(host);
+    if (!normalized) return false;
+    return this.db.run("DELETE FROM allowed_hosts WHERE host = ?", [normalized]).changes === 1;
+  }
+
+  allowedHosts(): string[] {
+    return this.db
+      .query<{ host: string }, []>("SELECT host FROM allowed_hosts ORDER BY host")
+      .all()
+      .map((r) => r.host);
+  }
+
+  /** Takes a hostname without a port, as a `Host` header carries it. */
+  isAllowedHost(hostname: string): boolean {
+    const normalized = normalizeAllowedHost(hostname);
+    if (!normalized) return false;
+    return (
+      this.db
+        .query<{ host: string }, [string]>("SELECT host FROM allowed_hosts WHERE host = ?")
+        .get(normalized) != null
+    );
   }
 
   close(): void {
