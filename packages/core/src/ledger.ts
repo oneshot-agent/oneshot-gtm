@@ -2612,31 +2612,37 @@ export class Ledger {
 
   /**
    * @see ledger-queue.ts#QueueStore.setQueuePhoneLookup. A number found for
-   * a sent row also fills its prospect's phone when that is empty.
+   * a sent row also fills its prospect's phone when that is empty. One
+   * transaction: the prospect is the one the row names at the write.
    */
   setQueuePhoneLookup(
     id: number,
     input: { phone?: string | null; lookup: QueuePhoneLookup | null; linkedinUrl?: string },
   ): "written" | "busy" | "gone" | "moved" {
-    const out = this.queue.setQueuePhoneLookup(id, input);
-    const phone = input.phone?.trim();
-    if (out !== "written" || !phone) return out;
-    const row = this.queue.getQueueRow(id);
-    if (row?.status !== "sent") return out;
-    let prospectId = row.prospect_id;
-    if (prospectId == null) {
-      try {
-        const payload = JSON.parse(row.payload_json) as { email?: unknown; founderEmail?: unknown };
-        const email = [payload.email, payload.founderEmail].find(
-          (e): e is string => typeof e === "string" && e.trim() !== "",
-        );
-        prospectId = email ? (this.findProspectByEmail(email)?.id ?? null) : null;
-      } catch {
-        prospectId = null;
+    return this.inTransaction(() => {
+      const out = this.queue.setQueuePhoneLookup(id, input);
+      const phone = input.phone?.trim();
+      if (out !== "written" || !phone) return out;
+      const row = this.queue.getQueueRow(id);
+      if (row?.status !== "sent") return out;
+      let prospectId = row.prospect_id;
+      if (prospectId == null) {
+        try {
+          const payload = JSON.parse(row.payload_json) as {
+            email?: unknown;
+            founderEmail?: unknown;
+          };
+          const email = [payload.email, payload.founderEmail].find(
+            (e): e is string => typeof e === "string" && e.trim() !== "",
+          );
+          prospectId = email ? (this.findProspectByEmail(email)?.id ?? null) : null;
+        } catch {
+          prospectId = null;
+        }
       }
-    }
-    if (prospectId != null) this.updateProspectIdentity(prospectId, { phone });
-    return out;
+      if (prospectId != null) this.updateProspectIdentity(prospectId, { phone });
+      return out;
+    });
   }
 
   /**

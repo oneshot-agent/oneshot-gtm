@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,5 +120,30 @@ describe("Ledger.setQueuePhoneLookup", () => {
     expect(ledger.setQueuePhoneLookup(id, { phone: "+15550100", lookup: done })).toBe("written");
     expect(payloadOf(id)["phone"]).toBe("+15550100");
     expect(ledger.getProspectById(prospectId)?.phone).toBe("+15550100");
+  });
+
+  it("finds a sent row's prospect by the payload email when the row has no link", () => {
+    const id = enqueue({ name: "Pat", email: "Pat@Acme.example" });
+    const prospectId = ledger.upsertProspect({ email: "pat@acme.example", name: "Pat" });
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(ledger.getQueueRow(id)!.prospect_id).toBeNull();
+    expect(ledger.setQueuePhoneLookup(id, { phone: "+15550100", lookup: done })).toBe("written");
+    expect(ledger.getProspectById(prospectId)?.phone).toBe("+15550100");
+  });
+
+  it("writes the row and its prospect together, or neither", () => {
+    const id = enqueue({ name: "Pat", email: "pat@acme.example" });
+    const prospectId = ledger.upsertProspect({ email: "pat@acme.example", name: "Pat" });
+    ledger.setQueueProspectId(id, prospectId);
+    ledger.setQueueStatus({ id, status: "sent" });
+    const spy = vi.spyOn(ledger, "updateProspectIdentity").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+    expect(() => ledger.setQueuePhoneLookup(id, { phone: "+15550100", lookup: done })).toThrow(
+      "disk full",
+    );
+    spy.mockRestore();
+    expect(payloadOf(id)["phone"]).toBeUndefined();
+    expect(payloadOf(id)["phoneLookup"]).toBeUndefined();
   });
 });
