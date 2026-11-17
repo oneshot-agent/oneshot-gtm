@@ -124,6 +124,15 @@ describe("phoneLocalTime", () => {
     expect(phoneLocalTime("+12085550100", WINDOW, later).inWindow).toBe(false);
   });
 
+  it("checks every zone at the next opening, not one per clock shared now", () => {
+    // 1928283 spans Denver and Phoenix, both UTC-7 on Friday 2026-03-06. Denver
+    // moves to summer time on Sunday; Phoenix does not. Monday 09:00 Denver
+    // (15:00Z) is 08:00 in Phoenix: the shared window opens at 16:00Z.
+    expect(phoneTimeZones("+19282831234")).toEqual(["America/Denver", "America/Phoenix"]);
+    const friday = new Date("2026-03-07T01:00:00Z");
+    expect(phoneLocalTime("+19282831234", WINDOW, friday).opensAt).toBe("2026-03-09T16:00:00.000Z");
+  });
+
   it("an unknown number reads as in the window with no zone", () => {
     expect(phoneLocalTime("+999123456789", WINDOW)).toEqual({
       zones: [],
@@ -144,6 +153,42 @@ describe("review fixes", () => {
     expect(normalizePhone("5212345678", "MX")).toBe("+525212345678");
     // North American numbers never take this path.
     expect(normalizePhone("4412345678", "US")).toBe("+14412345678");
+  });
+
+  it("reads a trunk-prefix country's number with its code and no plus at the fixed national length", () => {
+    // Australia: "61" plus nine national digits is eleven digits, no longer than a national number.
+    expect(normalizePhone("61255504321", "AU")).toBe("+61255504321");
+    expect(normalizePhone("0255504321", "AU")).toBe("+61255504321");
+    expect(normalizePhone("+61255504321", "AU")).toBe("+61255504321");
+    expect(normalizePhone("255504321", "AU")).toBe("+61255504321");
+    expect(normalizePhone("33123456789", "FR")).toBe("+33123456789");
+    expect(normalizePhone("0123456789", "FR")).toBe("+33123456789");
+    // A country whose national numbers vary in length keeps the longer-than-eleven reading.
+    expect(normalizePhone("4912345678", "DE")).toBe("+494912345678");
+  });
+
+  it("drops the bracketed trunk zero after a 00 international prefix too", () => {
+    expect(normalizePhone("0044 (0)20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("0061 (0)2 5550 4321")).toBe("+61255504321");
+    // Italy's leading zero is part of the number.
+    expect(normalizePhone("0039 (0)6 1234 5678")).toBe("+390612345678");
+  });
+
+  it("drops an extension in any of its written forms", () => {
+    expect(normalizePhone("+1 512 653 1187 x22")).toBe("+15126531187");
+    expect(normalizePhone("+1 512 653 1187 extension 22")).toBe("+15126531187");
+    expect(normalizePhone("+1 512 653 1187;ext=22")).toBe("+15126531187");
+    expect(normalizePhone("+1 512 653 1187 ; ext=22")).toBe("+15126531187");
+    expect(normalizePhone("+1 512 653 1187 #22")).toBe("+15126531187");
+    expect(normalizePhone("+1 512 653 1187 ext=22")).toBeNull();
+  });
+
+  it("stays fast on input stuffed with spaces and tabs (ReDoS guard)", () => {
+    const started = performance.now();
+    normalizePhone(`1${" ".repeat(50_000)}x`);
+    normalizePhone(`+1${"\t".repeat(50_000)}#1`);
+    normalizePhone(`x${" x".repeat(25_000)}`);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("+213 (Algeria) maps to Europe/Paris, as libphonenumber's own data does", () => {

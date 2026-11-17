@@ -123,22 +123,23 @@ const NANP = new Set([
   "DO",
 ]);
 /**
- * `national`: the fixed length of a national number, for the countries with
- * no trunk prefix whose numbers have one. It tells a number written with its
- * country code but no "+" ("4712345678") from a national one.
+ * `national`: the fixed length of a national number (without its trunk
+ * prefix), for the countries whose numbers have one. It tells a number
+ * written with its country code but no "+" ("4712345678", "61255504321")
+ * from a national one.
  */
 const CALLING_CODES: Record<string, { code: string; trunk: string | null; national?: number }> = {
-  GB: { code: "44", trunk: "0" },
+  GB: { code: "44", trunk: "0", national: 10 },
   IE: { code: "353", trunk: "0" },
-  FR: { code: "33", trunk: "0" },
+  FR: { code: "33", trunk: "0", national: 9 },
   DE: { code: "49", trunk: "0" },
   ES: { code: "34", trunk: null, national: 9 },
   IT: { code: "39", trunk: null },
   PT: { code: "351", trunk: null, national: 9 },
-  NL: { code: "31", trunk: "0" },
+  NL: { code: "31", trunk: "0", national: 9 },
   BE: { code: "32", trunk: "0" },
   LU: { code: "352", trunk: null },
-  CH: { code: "41", trunk: "0" },
+  CH: { code: "41", trunk: "0", national: 9 },
   AT: { code: "43", trunk: "0" },
   SE: { code: "46", trunk: "0" },
   NO: { code: "47", trunk: null, national: 8 },
@@ -149,16 +150,16 @@ const CALLING_CODES: Record<string, { code: string; trunk: string | null; nation
   GR: { code: "30", trunk: null, national: 10 },
   IL: { code: "972", trunk: "0" },
   AE: { code: "971", trunk: "0" },
-  IN: { code: "91", trunk: "0" },
+  IN: { code: "91", trunk: "0", national: 10 },
   SG: { code: "65", trunk: null, national: 8 },
   HK: { code: "852", trunk: null, national: 8 },
   JP: { code: "81", trunk: "0" },
   KR: { code: "82", trunk: "0" },
-  AU: { code: "61", trunk: "0" },
+  AU: { code: "61", trunk: "0", national: 9 },
   NZ: { code: "64", trunk: "0" },
-  ZA: { code: "27", trunk: "0" },
+  ZA: { code: "27", trunk: "0", national: 9 },
   NG: { code: "234", trunk: "0" },
-  KE: { code: "254", trunk: "0" },
+  KE: { code: "254", trunk: "0", national: 9 },
   BR: { code: "55", trunk: "0" },
   MX: { code: "52", trunk: null, national: 10 },
   AR: { code: "54", trunk: "0" },
@@ -177,6 +178,38 @@ function knownPrefix(digits: string): boolean {
     if (PREFIXES[digits.slice(0, length)]) return true;
   }
   return false;
+}
+
+/** Extension markers, longest first, as they are written before the digits. */
+const EXTENSION_MARKERS = ["extension", "ext=", "ext.", "ext", "x", "#"];
+
+const isDigit = (c: string | undefined) => c !== undefined && c >= "0" && c <= "9";
+const isBlank = (c: string | undefined) => c !== undefined && /\s/.test(c);
+
+/**
+ * The number without a trailing extension ("x12", "ext. 12", ";ext=12",
+ * "#12"), trimmed. A scan from the end, not a regex: the input is whatever a
+ * lookup returned (CodeQL: polynomial backtracking).
+ */
+function withoutExtension(s: string): string {
+  let i = s.length;
+  while (isBlank(s[i - 1])) i--;
+  const digitsEnd = i;
+  while (isDigit(s[i - 1])) i--;
+  const digits = digitsEnd - i;
+  if (digits < 1 || digits > 6) return s;
+  while (isBlank(s[i - 1])) i--;
+  const head = s.slice(0, i).toLowerCase();
+  const marker = EXTENSION_MARKERS.find((m) => head.endsWith(m));
+  if (!marker) return s;
+  i -= marker.length;
+  while (isBlank(s[i - 1])) i--;
+  // ";ext=": the RFC 3966 form keeps its semicolon.
+  if (marker === "ext=") {
+    if (s[i - 1] !== ";") return s;
+    i--;
+  }
+  return s.slice(0, i).trim();
 }
 
 /** Check E.164 digits (no "+") and return the "+…" form, or null. */
@@ -200,25 +233,23 @@ export function normalizePhone(
   defaultCountry: string | null = "US",
 ): string | null {
   if (typeof raw !== "string") return null;
-  let s = raw
-    .trim()
-    .replace(/^tel:/i, "")
-    .replace(/\s*(?:;\s*ext=|ext\.?|extension|x|#)\s*\d{1,6}\s*$/i, "")
-    .trim();
+  let s = withoutExtension(raw.trim().replace(/^tel:/i, "").trim());
   if (!s) return null;
   // Separators people and providers write; anything else (letters, a second
   // number) is not one number.
   if (!/^\+?[\d\s\-()./]+$/.test(s)) return null;
   const plus = s.startsWith("+");
-  // "+44 (0)20 …": the bracketed trunk zero is a national habit, not part of
-  // the number, where the country's plan has a trunk "0" (Italy keeps it).
-  const trunkZero = plus && /^\+\d{1,3}\s*\(0\)/.test(s);
+  // "+44 (0)20 …" or "0044 (0)20 …": the bracketed trunk zero is a national
+  // habit, not part of the number, where the country's plan has a trunk "0"
+  // (Italy keeps it).
+  const trunkZero = /^(?:\+|00)\d{1,3}\s*\(0\)/.test(s);
   s = s.replace(/\D/g, "");
   if (trunkZero) {
+    const intl = plus ? "" : "00";
     const plan = Object.values(CALLING_CODES).find(
-      (p) => p.trunk === "0" && s.startsWith(`${p.code}0`),
+      (p) => p.trunk === "0" && s.startsWith(`${intl}${p.code}0`),
     );
-    if (plan) s = `${plan.code}${s.slice(plan.code.length + 1)}`;
+    if (plan) s = `${intl}${plan.code}${s.slice(intl.length + plan.code.length + 1)}`;
   }
   if (plus) return e164(s);
   if (s.startsWith("00")) return e164(s.slice(2));
@@ -230,19 +261,18 @@ export function normalizePhone(
     return null;
   }
   const national = plan.trunk && s.startsWith(plan.trunk) ? s.slice(plan.trunk.length) : s;
-  // Written with the country code but without "+". With a fixed national
-  // length, exactly the code plus that many digits (a national number is
-  // shorter, so it is never misread); without one (Italy, Luxembourg, whose
-  // national numbers run 6–11 digits), the code plus at least eight, and
-  // longer than any national number starting with those digits could be.
+  // Written with the country code but without "+": exactly the code plus
+  // the fixed national length, where the plan has one (a national number is
+  // shorter, so it is never misread); or the code plus at least eight, and
+  // longer than any national number starting with those digits could be
+  // (Italy, Germany, whose national numbers vary in length).
   // North American numbers never reach here: they are read above.
   // A trunk-prefix country's national form starts with its trunk "0", which
   // no calling code does, so the same reading holds there.
   if (
     s.startsWith(plan.code) &&
-    (plan.national
-      ? s.length === plan.code.length + plan.national
-      : s.length >= plan.code.length + 8 && s.length > 11)
+    ((plan.national != null && s.length === plan.code.length + plan.national) ||
+      (s.length >= plan.code.length + 8 && s.length > 11))
   )
     return e164(s);
   return national.length >= 6 ? e164(`${plan.code}${national}`) : null;
@@ -366,21 +396,31 @@ export function phoneLocalTime(
   if (!phone) return unknown;
   const zones = phoneTimeZones(phone);
   if (zones.length === 0) return unknown;
-  // Zones on the same clock now behave alike; check one of each.
-  const byOffset = new Map<number, string>();
-  for (const zone of zones) {
-    const offset = wallClock(zone, now).offset;
-    if (!byOffset.has(offset)) byOffset.set(offset, zone);
-  }
-  const distinct = [...byOffset.values()];
-  const all = (at: Date) => distinct.every((zone) => inWindowAt(zone, at, window));
+  // Every zone, at every instant checked: two zones on the same clock now
+  // (Denver and Phoenix in winter) part when one of them changes for summer.
+  // The zone that last refused is asked first.
+  let blocker = zones[0]!;
+  const all = (at: Date) => {
+    if (!inWindowAt(blocker, at, window)) return false;
+    const refuses = zones.find((zone) => zone !== blocker && !inWindowAt(zone, at, window));
+    if (refuses) blocker = refuses;
+    return !refuses;
+  };
   const localTime = wallClock(zones[0]!, now).hhmm;
   if (all(now)) return { zones, localTime, inWindow: true, opensAt: null };
   // The shared window opens when the last zone's opens: one of the zones'
-  // own opening times.
+  // own opening times. Zones on the same clock now and at the horizon give
+  // the same times, so one of each is enough to list them; every zone is
+  // still checked at each.
   const start = minutesOf(window.start);
-  const candidates: number[] = [];
-  for (const zone of distinct) {
+  const horizon = new Date(now.getTime() + (OPENS_HORIZON_DAYS + 1) * 24 * 3600 * 1000);
+  const byClock = new Map<string, string>();
+  for (const zone of zones) {
+    const key = `${wallClock(zone, now).offset}/${wallClock(zone, horizon).offset}`;
+    if (!byClock.has(key)) byClock.set(key, zone);
+  }
+  const candidates = new Set<number>();
+  for (const zone of byClock.values()) {
     const today = wallClock(zone, now);
     for (let i = 0; i <= OPENS_HORIZON_DAYS; i++) {
       const day = new Date(Date.UTC(today.y, today.m - 1, today.d + i));
@@ -391,10 +431,10 @@ export function phoneLocalTime(
         day.getUTCDate(),
         start,
       );
-      if (t > now.getTime()) candidates.push(t);
+      if (t > now.getTime()) candidates.add(t);
     }
   }
-  const opens = candidates.toSorted((a, b) => a - b).find((t) => all(new Date(t)));
+  const opens = [...candidates].toSorted((a, b) => a - b).find((t) => all(new Date(t)));
   if (opens === undefined) return unknown;
   return { zones, localTime, inWindow: false, opensAt: new Date(opens).toISOString() };
 }
