@@ -639,6 +639,8 @@ describe("lintEmail — slogan-line", () => {
     // About their firm.
     "A demo answers questions, but Carpe's board wants a number.",
     "We agree the target first, but your team decides when it is done.",
+    // A firm named first, not a generic plural.
+    "Atlas is measured on booked visits, but a demo answers questions.",
   ])("passes a plain sentence: %s", (line) => {
     expect(sloganSentences(line)).toEqual([]);
   });

@@ -68,9 +68,14 @@ function clipText(text: string, max: number): string {
 const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
 const NAME_TOKEN = /^[A-Z][\w.-]*/;
 const MORE_NAME = /^\s[A-Z][\w.-]*/;
-/** What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…". */
+/**
+ * What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…".
+ * The verbs are a list, not "any word ending in s": "Automate workflows for
+ * clinics" opens on an instruction. A one-liner none of them fits names no
+ * product, and no check runs.
+ */
 const NAME_FOLLOWER =
-  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets)\b|\s+[a-z]*[^\Ws]s\b)/;
+  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets|helps|makes|turns|gives|brings|finds|runs|works|keeps|books|sends|takes|gets|handles|automates|connects|tracks|builds|does|puts|answers|follows|writes|reads|checks|carries|clears|recovers|collects|stops|saves|cuts|moves|pays|ships|monitors|manages|schedules|routes|matches|catches|fixes|replaces|sees|shows|tells|turns|wins|chases|calls|emails|executes|delivers|powers|enables|protects|verifies|finishes|closes)\b)/;
 
 /**
  * The product's name as the founder's one-liner opens with it ("OneShot is the

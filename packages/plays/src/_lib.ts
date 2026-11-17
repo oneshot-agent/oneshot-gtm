@@ -451,8 +451,9 @@ const RULE_OF_THREE = /(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/;
 const PERSON_WORD =
   /\b(?:i|i'd|i'm|i'll|me|my|we|we're|we'd|we'll|us|our|you|you're|you'd|your|yours)\b/i;
 const CONTRAST = /,\s*but\s+|;\s+|,\s*while\s+/i;
+// The bare plural takes plural verbs only: "Atlas is…" is a firm, not a plural.
 const GENERIC_SUBJECT =
-  /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b|(?:[a-z]+\s+)?[a-z]{3,}s\s+(?:are|is|do|don't|can|can't|will|won't|need|get|make|move|win|lose|buy|answer|have|were)\b)/i;
+  /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b|(?:[a-z]+\s+)?[a-z]{3,}s\s+(?:are|do|don't|can|can't|will|won't|need|get|make|move|win|lose|buy|answer|have|were)\b)/i;
 
 /**
  * Sentences that are a general saying rather than something about this
