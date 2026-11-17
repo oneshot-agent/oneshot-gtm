@@ -204,6 +204,8 @@ export function ProspectOffer({
       }
     },
     onSuccess: (result) => {
+      // A call brief restates the offer too (the server writes a new one on its next read).
+      void qc.invalidateQueries({ queryKey: ["call-brief"] });
       void qc.invalidateQueries({ queryKey: ["queue"] });
       if (result.redrafted) toast.success("offer saved · draft rewritten around it, not sent");
       else

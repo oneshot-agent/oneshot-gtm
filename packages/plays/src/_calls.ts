@@ -10,6 +10,7 @@
  *
  * Off unless `calls.enabled`. Nothing here dials: phase 1 is a `tel:` link.
  */
+import { createHash } from "node:crypto";
 import {
   CALL_OUTCOMES,
   type CallBrief,
@@ -76,6 +77,15 @@ function trimEndDots(text: string): string {
   let end = text.length;
   while (end > 0 && (text[end - 1] === "." || /\s/.test(text[end - 1]!))) end--;
   return text.slice(0, end);
+}
+
+/** A short fingerprint of the offer a brief restates; null for none. */
+function offerKeyOf(offer: SequenceOfferValue | null): string | null {
+  if (!offer?.offer) return null;
+  return createHash("sha256")
+    .update(`${offer.offer}\n${offer.steps ?? ""}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 /** The brief as one block of text: the stored preview's body, and what the lint reads. */
@@ -327,14 +337,23 @@ export async function callBriefFor(input: {
       ?.play_name ||
     ledger.latestSentPlayForProspect(input.prospectId) ||
     null;
-  if (!input.regenerate) {
-    const cached = ledger.getCallBrief(input.prospectId);
-    if (cached && cached.playName === playName) return cached.brief;
-  }
   const prospect = ledger.getProspectById(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
-  const brief = await buildCallBrief({ prospect, playName, cfg: loadConfig() });
-  ledger.saveCallBrief({ prospectId: input.prospectId, playName, brief });
+  // The offer it restates, read as the brief reads it: an offer changed on
+  // the cadence or its queue row since makes the cached brief stale.
+  const offer = playName ? sequenceOffer(prospect, playName) : null;
+  const offerKey = offerKeyOf(offer);
+  if (!input.regenerate) {
+    const cached = ledger.getCallBrief(input.prospectId);
+    if (cached && cached.playName === playName && cached.offerKey === offerKey) return cached.brief;
+  }
+  const brief = await buildCallBrief({
+    prospect,
+    playName,
+    cfg: loadConfig(),
+    sequenceOffer: offer,
+  });
+  ledger.saveCallBrief({ prospectId: input.prospectId, playName, brief, offerKey });
   return brief;
 }
 

@@ -273,10 +273,18 @@ export function callPhone(db: Database, callId: number): string | null {
 }
 
 /**
+ * A queue row's address (alias `q`), lowercased: its `email`, else the
+ * `founderEmail` a founder-targeting play (show-hn) writes instead.
+ */
+const QUEUE_ADDRESS = `lower(trim(COALESCE(NULLIF(trim(json_extract(q.payload_json, '$.email')), ''),
+                                      json_extract(q.payload_json, '$.founderEmail'))))`;
+
+/**
  * Every number stored for a prospect, as written: their own `phone`, then the
  * newest queue row's `payload.phone` (where a phone lookup writes it), matched
  * by prospect, else by the prospect's email. Also the newest queue row, for
- * the Find phone button. `phoneForCall` (plays) normalises these.
+ * the Find phone button. `phoneForCall` (plays) normalises these. The
+ * address is the payload's `email`, else its `founderEmail` (`QUEUE_ADDRESS`).
  */
 export function phoneSourcesFor(
   db: Database,
@@ -293,7 +301,7 @@ export function phoneSourcesFor(
       ? byProspect
       : queuePhoneRow(
           db,
-          "q.prospect_id IS NULL AND json_valid(q.payload_json) AND lower(trim(json_extract(q.payload_json, '$.email'))) = lower(?)",
+          `q.prospect_id IS NULL AND json_valid(q.payload_json) AND ${QUEUE_ADDRESS} = lower(?)`,
           p.email.trim(),
         );
   return { prospectPhone: p.phone?.trim() || null, ...row };
@@ -379,27 +387,48 @@ function queuePhoneRow(
   };
 }
 
-/** The brief cached for a prospect outside a cadence, or null. */
+/**
+ * The brief cached for a prospect outside a cadence, or null. `offerKey`
+ * names the offer it was written under (stored with the brief; null for
+ * none, or a brief stored before it was kept): the caller writes a new one
+ * when the offer changed since.
+ */
 export function getCallBrief(
   db: Database,
   prospectId: number,
-): { brief: CallBrief; playName: string | null; briefAt: string } | null {
+): { brief: CallBrief; playName: string | null; briefAt: string; offerKey: string | null } | null {
   const row = db
     .query("SELECT brief_json, play_name, brief_at FROM call_briefs WHERE prospect_id = ?")
     .get(prospectId) as { brief_json: string; play_name: string | null; brief_at: string } | null;
-  const brief = row ? parseJson<CallBrief>(row.brief_json) : null;
-  return row && brief ? { brief, playName: row.play_name, briefAt: row.brief_at } : null;
+  const stored = row ? parseJson<CallBrief & { offerKey?: unknown }>(row.brief_json) : null;
+  if (!row || !stored) return null;
+  const { offerKey, ...brief } = stored;
+  return {
+    brief,
+    playName: row.play_name,
+    briefAt: row.brief_at,
+    offerKey: typeof offerKey === "string" ? offerKey : null,
+  };
 }
 
 export function saveCallBrief(
   db: Database,
-  input: { prospectId: number; playName: string | null; brief: CallBrief },
+  input: {
+    prospectId: number;
+    playName: string | null;
+    brief: CallBrief;
+    /** The offer it was written under (`getCallBrief`). */
+    offerKey?: string | null;
+  },
 ): void {
+  const json = JSON.stringify(
+    input.offerKey ? { ...input.brief, offerKey: input.offerKey } : input.brief,
+  );
   db.prepare(
     `INSERT INTO call_briefs (prospect_id, play_name, brief_json, brief_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(prospect_id) DO UPDATE SET play_name = excluded.play_name,
        brief_json = excluded.brief_json, brief_at = excluded.brief_at`,
-  ).run(input.prospectId, input.playName, JSON.stringify(input.brief), new Date().toISOString());
+  ).run(input.prospectId, input.playName, json, new Date().toISOString());
 }
 
 /** Why a Calls-page row ranks where it does: 1 replied positively, 2 connected on LinkedIn, 3 in a live cadence, 4 the rest. */
@@ -474,7 +503,11 @@ export function listCallCandidates(
   },
 ): CallCandidate[] {
   const meetingAny = hasTable(db, "meetings")
-    ? `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id AND COALESCE(m.outcome, '') NOT IN ('cancelled', 'no_show'))`
+    ? // A meeting booked: neither cancelled on the calendar (the event
+      // status) nor logged cancelled or a no-show.
+      `EXISTS (SELECT 1 FROM meetings m WHERE m.prospect_id = p.id
+                 AND COALESCE(m.status, '') <> 'cancelled'
+                 AND COALESCE(m.outcome, '') NOT IN ('cancelled', 'no_show'))`
     : "0";
   // The person's latest positive or negative answer, by email or on a call,
   // when it is positive: "not interested" after "interested" drops them out
@@ -507,11 +540,11 @@ export function listCallCandidates(
        -- address, as phoneSourcesFor reads it: target_queue's JSON is read
        -- once here, never once per prospect.
        mail_queue AS MATERIALIZED (
-         SELECT lower(trim(json_extract(q.payload_json, '$.email'))) AS email, MAX(q.id) AS id
+         SELECT ${QUEUE_ADDRESS} AS email, MAX(q.id) AS id
            FROM target_queue q
           WHERE q.prospect_id IS NULL AND json_valid(q.payload_json)
             AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''
-            AND trim(COALESCE(json_extract(q.payload_json, '$.email'), '')) <> ''
+            AND COALESCE(${QUEUE_ADDRESS}, '') <> ''
           GROUP BY 1),
        mail_phone AS MATERIALIZED (
          SELECT m.email, m.id, trim(json_extract(q.payload_json, '$.phone')) AS phone

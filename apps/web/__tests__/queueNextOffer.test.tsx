@@ -142,12 +142,14 @@ describe("queue Next offer", () => {
     for (let index = 0; index < candidates.length; index++) {
       offerBlock({ offer: candidates[index], offerCandidates: candidates });
       click(NEXT);
-      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(index + 1));
+      // Two refreshes per change: the call briefs, then the row.
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes((index + 1) * 2));
       expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: (index + 1) % 5 });
     }
     expect(calls).toEqual(Array.from({ length: 5 }, () => ["select", "redraft"]).flat());
     expect(api.regenerateDraft).toHaveBeenLastCalledWith(5);
     expect(JSON.stringify(candidates)).toBe(original);
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["call-brief"] });
     expect(refresh).toHaveBeenLastCalledWith({ queryKey: ["queue"] });
     expect(toast.success).toHaveBeenCalledWith("offer saved · draft rewritten around it, not sent");
   });
@@ -183,12 +185,12 @@ describe("queue Next offer", () => {
     }));
     offerBlock({ offer: labelled[0], offerCandidates: labelled });
     click(NEXT);
-    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
     expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: 3 });
     const allWeak = candidates.map((c) => ({ ...c, relevance: "weak" as const }));
     offerBlock({ offer: allWeak[0], offerCandidates: allWeak });
     click(NEXT);
-    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(4));
     expect(api.setQueueOffer).toHaveBeenLastCalledWith(5, { select: 1 });
   });
 

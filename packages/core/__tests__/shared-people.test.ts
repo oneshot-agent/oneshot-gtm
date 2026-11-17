@@ -180,6 +180,52 @@ describe("shared person identity with workspace memberships", () => {
       shared.close();
     }
   });
+  it("a do-not-contact call or an unsubscribe reply holds every verified address of the person", () => {
+    beta.upsertProspect({
+      email: "old@example.test",
+      linkedin_url: "https://linkedin.com/in/opted-out",
+    });
+    const alphaId = alpha.upsertProspect({
+      email: "new@example.test",
+      linkedin_url: "https://linkedin.com/in/opted-out",
+    });
+    expect(alpha.contactSuppressionFor("old@example.test")).toBeNull();
+    alpha.insertCall({
+      prospectId: alphaId,
+      startedAt: "2026-11-17T10:00:00.000Z",
+      outcome: "do_not_contact",
+    });
+    expect(alpha.contactSuppressionFor("old@example.test")).toEqual({
+      kind: "unsubscribe",
+      received_at: "2026-11-17T10:00:00.000Z",
+    });
+    // A reply recorded against the person, from their other address.
+    const other = beta.upsertProspect({
+      email: "b-new@example.test",
+      linkedin_url: "https://linkedin.com/in/replied-out",
+    });
+    const replied = alpha.upsertProspect({
+      email: "b-old@example.test",
+      linkedin_url: "https://linkedin.com/in/replied-out",
+    });
+    expect(beta.getProspectById(other)?.shared_person_id).toBe(
+      alpha.getProspectById(replied)?.shared_person_id,
+    );
+    alpha.recordInboxReply({
+      id: "u1",
+      threadKey: "t",
+      prospectId: replied,
+      fromEmail: "b-old@example.test",
+      body: "remove me",
+      receivedAt: "2026-11-16T10:00:00.000Z",
+      kind: "unsubscribe",
+    });
+    expect(alpha.contactSuppressionFor("b-new@example.test")).toMatchObject({
+      kind: "unsubscribe",
+    });
+    // An address nobody knows is not held.
+    expect(alpha.contactSuppressionFor("stranger@example.test")).toBeNull();
+  });
   it("keeps each workspace's original finder profile provenance", () => {
     const a = beta.upsertProspect({
       email: "same@example.test",

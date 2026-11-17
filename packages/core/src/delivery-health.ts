@@ -104,6 +104,12 @@ function hasIntentColumn(db: Database): boolean {
 export function contactSuppressionFor(
   db: Database,
   email: string,
+  /**
+   * The prospect the address resolves to through its verified aliases
+   * (`Ledger.findProspectByEmail`): an opt-out recorded against them counts
+   * when the send goes to another of their addresses. Null when unknown.
+   */
+  prospectId: number | null = null,
 ): { kind: string; received_at: string } | null {
   const intentClause = hasIntentColumn(db) ? " OR intent = 'unsubscribe'" : "";
   const replied =
@@ -113,11 +119,15 @@ export function contactSuppressionFor(
            CASE WHEN kind IN ('unsubscribe', 'auto_permanent') THEN kind ELSE 'unsubscribe' END AS kind,
            received_at
          FROM inbox_replies
-         WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
+         WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?)
+                OR prospect_id = ?)
            AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause})
          ORDER BY received_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email), canonEmail(email)) as { kind: string; received_at: string }) ?? null;
+      .get(canonEmail(email), canonEmail(email), prospectId) as {
+      kind: string;
+      received_at: string;
+    }) ?? null;
   if (replied) return replied;
   // Asked on a call not to be contacted again (ledger-calls.ts): an
   // unsubscribe, though it arrived by phone. Older ledgers have no table.
@@ -128,10 +138,10 @@ export function contactSuppressionFor(
       .query(
         `SELECT 'unsubscribe' AS kind, started_at AS received_at FROM calls
           WHERE outcome = 'do_not_contact'
-            AND prospect_id IN (SELECT id FROM prospects WHERE email = ?)
+            AND (prospect_id IN (SELECT id FROM prospects WHERE email = ?) OR prospect_id = ?)
           ORDER BY started_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email)) as { kind: string; received_at: string } | null) ?? null
+      .get(canonEmail(email), prospectId) as { kind: string; received_at: string } | null) ?? null
   );
 }
 

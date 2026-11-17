@@ -644,4 +644,30 @@ describe("review fixes", () => {
     });
     expect(brief.offer).toBe("Widgets renewals.");
   });
+
+  it("an on-demand brief is written again once the sequence's offer changed", async () => {
+    callsOn();
+    const id = enroll();
+    ledger.setCadenceOffer({
+      prospectId: id,
+      playName: PLAY,
+      offer: { offer: "Audit your renewals", steps: "a list in a week" },
+      origin: "derived",
+    });
+    responses.push(BRIEF_JSON, BRIEF_JSON);
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Audit your renewals");
+    ledger.setCadenceOffer({
+      prospectId: id,
+      playName: PLAY,
+      offer: { offer: "Cut one vendor this quarter", steps: "a shortlist" },
+      origin: "derived",
+    });
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Cut one vendor this quarter");
+    expect(ledger.getCallBrief(id)!.brief).not.toHaveProperty("offerKey");
+  });
 });

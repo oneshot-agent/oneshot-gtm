@@ -475,4 +475,49 @@ describe("ledger calls: review fixes", () => {
       replyIntent: "interested",
     });
   });
+
+  it("matches a queue row's founderEmail when it has no email, in phoneForCall and the call list", () => {
+    const id = ledger.upsertProspect({ name: "F", email: "f@a.test" });
+    const qid = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { founderEmail: " F@a.test ", phone: "(512) 653-1187" },
+      dedupeKey: "f",
+      source: "s",
+    })!;
+    expect(ledger.phoneForCall(id)).toEqual({
+      phone: "+15126531187",
+      raw: "(512) 653-1187",
+      queueId: qid,
+    });
+    expect(ledger.listCallCandidates({ limit: 10 })).toMatchObject([
+      { prospectId: id, queuePhone: "(512) 653-1187", queueId: qid },
+    ]);
+  });
+
+  it("a meeting cancelled on the calendar does not count as booked", () => {
+    const id = ledger.upsertProspect({ name: "M", email: "m@a.test", phone: phone(1) });
+    ledger.recordInboxReply({
+      id: "m1",
+      threadKey: "t",
+      prospectId: id,
+      fromEmail: "m@a.test",
+      body: "let's talk",
+      receivedAt: "2026-11-01T00:00:00Z",
+    });
+    ledger.setInboxReplyIntent("m1", "interested", null);
+    const db = (ledger as unknown as { db: Database }).db;
+    const meeting = (eventId: string, status: string) =>
+      db
+        .prepare(
+          `INSERT INTO meetings (calendar_id, event_id, status, starts_at, ends_at, prospect_id)
+           VALUES ('c', ?, ?, '2026-12-01T10:00:00Z', '2026-12-01T10:30:00Z', ?)`,
+        )
+        .run(eventId, status, id);
+    const tier = () => ledger.listCallCandidates({ limit: 10 })[0]!.tier;
+    meeting("e1", "cancelled");
+    expect(tier()).toBe(1);
+    // A confirmed upcoming meeting is booked.
+    meeting("e2", "confirmed");
+    expect(tier()).toBe(4);
+  });
 });

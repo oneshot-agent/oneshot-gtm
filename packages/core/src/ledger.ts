@@ -1466,7 +1466,7 @@ export class Ledger {
    * choose between an "unsubscribed" and a "bounced" outcome.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
-    return delivContactSuppressionFor(this.db, email);
+    return delivContactSuppressionFor(this.db, email, this.findProspectByEmail(email)?.id ?? null);
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
