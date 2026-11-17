@@ -12,7 +12,7 @@ import type {
   LinkedInMessagesPage,
   LinkedInSyncStatus,
 } from "@oneshot-gtm/core";
-import { adoptLinkedInConnections } from "./linkedin-connect.ts";
+import { adoptLinkedInConnections, pendingLinkedInConnectionWallets } from "./linkedin-connect.ts";
 import { adoptPendingLinkedInReplacements } from "./linkedin-replacement.ts";
 import { callLinkedIn } from "./linkedin-client.ts";
 
@@ -37,7 +37,7 @@ export function refreshLinkedInInbox(force = false): Promise<void> {
 }
 
 async function capture(force: boolean) {
-  const unresolvedWallets = await adoptLinkedInConnections();
+  await adoptLinkedInConnections();
   await adoptPendingLinkedInReplacements();
   const store = getLinkedInInboxStore();
   const review = getReplyReviewStore();
@@ -50,6 +50,7 @@ async function capture(force: boolean) {
         owner,
         { kind: "accounts" },
       );
+      const unresolvedWallets = pendingLinkedInConnectionWallets();
       for (const account of discovered.accounts) {
         if (
           store

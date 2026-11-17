@@ -24,16 +24,24 @@ export async function connectLinkedIn(workspace: string) {
   return result;
 }
 
-/** Resolve ownership before discovery, including after the connecting tab/server closes. */
-export async function adoptLinkedInConnections(): Promise<Set<string>> {
-  const store = getLinkedInInboxStore();
-  const unresolvedWallets = new Set<string>();
-  const intents = store.db
-    .query<{ data: string }, []>("SELECT data FROM progress WHERE key LIKE 'connect:%'")
+function pendingConnections(): ConnectionIntent[] {
+  return getLinkedInInboxStore()
+    .db.query<{ data: string }, []>("SELECT data FROM progress WHERE key LIKE 'connect:%'")
     .all()
-    .map((r) => JSON.parse(r.data) as ConnectionIntent);
+    .map((r) => JSON.parse(r.data) as ConnectionIntent)
+    .filter((intent) => !intent.complete);
+}
+
+/** Re-read after discovery's await: another workspace may have started a connection meanwhile. */
+export function pendingLinkedInConnectionWallets(): Set<string> {
+  return new Set(pendingConnections().map((intent) => intent.wallet));
+}
+
+/** Resolve ownership before discovery, including after the connecting tab/server closes. */
+export async function adoptLinkedInConnections(): Promise<void> {
+  const store = getLinkedInInboxStore();
+  const intents = pendingConnections();
   for (const intent of intents) {
-    if (intent.complete) continue;
     try {
       const result = await callLinkedIn<{ status: string; account?: LinkedInAccount | null }>(
         intent.workspace,
@@ -62,13 +70,9 @@ export async function adoptLinkedInConnections(): Promise<Set<string>> {
           .immediate();
       } else if (["failed", "expired", "cancelled"].includes(result.status)) {
         store.saveProgress(`connect:${intent.intentId}`, { ...intent, complete: true });
-      } else {
-        unresolvedWallets.add(intent.wallet);
       }
     } catch {
       // Keep the intent retryable. Unknown accounts cannot be assigned to a discovering workspace.
-      unresolvedWallets.add(intent.wallet);
     }
   }
-  return unresolvedWallets;
 }

@@ -159,3 +159,28 @@ it("defers discovery while ownership is unresolved and retries a failed intent l
   await refreshLinkedInInbox(true);
   expect(store.account("shared-wallet:new")?.workspace).toBe("beta");
 });
+
+it("does not claim a new account when its connection starts during another workspace's discovery", async () => {
+  const { connectLinkedIn } = await import("../src/linkedin-connect.ts");
+  let started = false;
+  const account = { id: "racing", status: "connected", allowed_actions: ["invite"] };
+  sdk.mockImplementation(async (_workspace, op) => {
+    if (op.kind === "connect") return { intent_id: "race-b", url: "https://example.com/login" };
+    if (op.kind === "connection") return { status: "completed", account };
+    if (op.kind === "accounts") {
+      if (!started) {
+        started = true;
+        await connectLinkedIn("beta");
+      }
+      return { wallet: "shared-wallet", accounts: [account] };
+    }
+    if (op.kind === "status") return { sync_state: "complete" };
+    if (op.kind === "conversations") return { conversations: [], has_more: false };
+    if (op.kind === "messages") return { messages: [], has_more: false };
+    throw new Error(`Unexpected operation ${op.kind}`);
+  });
+  await refreshLinkedInInbox(true);
+  expect(store.account("shared-wallet:racing")).toBeNull();
+  await refreshLinkedInInbox(true);
+  expect(store.account("shared-wallet:racing")?.workspace).toBe("beta");
+});

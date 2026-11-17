@@ -653,7 +653,8 @@ async function sourceRepoCheck(cfg: OneShotConfig): Promise<CheckResult | null> 
 
 /**
  * What live profile reads go through. A connected account that may view
- * profiles is "ok". One that needs a reconnect or the grant, with no working
+ * profiles is "ok". Selection errors pause sends and reads. Without an explicit
+ * selection, one that needs a reconnect or the grant, with no working
  * browser session behind it, is a warn: the reads are paused. Otherwise the
  * browser session reports: unset is fine (person research falls back to the
  * provider's history) and says so at "ok"; a cookie that never seeded a
