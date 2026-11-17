@@ -14,6 +14,7 @@ export * from "./platform-health.ts";
 export { isGroupOrWorldAccessible } from "./sqlite-open.ts";
 export * from "./channels.ts";
 export * from "./workspaces.ts";
+export * from "./services.ts";
 export * from "./html-text.ts";
 export * from "./text-slice.ts";
 export * from "./events.ts";
