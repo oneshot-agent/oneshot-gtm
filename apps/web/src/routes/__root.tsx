@@ -322,6 +322,16 @@ function RootLayout() {
             >
               Menu · {workspace?.name ?? "oneshot"}
             </button>
+            {/* Below md the line that names the member is hidden, so name them here. */}
+            {me?.email ? (
+              <span
+                className="min-w-0 flex-1 truncate px-3 text-right text-[11.5px] text-ink-cream md:hidden"
+                title={`${me.email} · ${me.role}`}
+              >
+                <span className="sr-only">signed in as </span>
+                {me.name ?? me.email}
+              </span>
+            ) : null}
             <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
               workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
               {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
