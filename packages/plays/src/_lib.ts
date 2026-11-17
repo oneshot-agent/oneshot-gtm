@@ -499,8 +499,12 @@ function sentenceMark(text: string): string | null {
 function missingProductLine(body: string, offer: string | null | undefined): boolean {
   const name = productNameOf(loadConfig());
   if (name == null) return false;
-  // A whole word: a signature domain ("acmeclinics.com" for Acme) is not the name.
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A whole word: a signature domain ("acmeclinics.com" for Acme) is not the
+  // name. Its abbreviation dots go the way the sentences' do below ("Co.ai").
+  const escaped = name
+    .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const named = new RegExp(`(?<![\\w.-])${escaped}(?![\\w-]|\\.\\w)`, "i");
   const lines = bodyWithoutSignature(body)
     .split("\n")

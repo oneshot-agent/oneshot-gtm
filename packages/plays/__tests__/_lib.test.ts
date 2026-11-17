@@ -777,6 +777,23 @@ describe("lintEmail — no-product-line", () => {
     }
   });
 
+  it("matches a name with an abbreviation in it", () => {
+    product.oneLiner = "Co.ai books the patients your plans left open.";
+    try {
+      expect(
+        lintEmail(
+          "re: plans",
+          "Want me to run your open treatment plans to booked visits? Co.ai follows up with each patient until they book.",
+          110,
+          undefined,
+          { followUp: true, offer: "run your open treatment plans to booked visits" },
+        ),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
   it("checks nothing when the one-liner does not open with a name", () => {
     product.oneLiner = "We help clinics book patients.";
     try {
