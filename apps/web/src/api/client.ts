@@ -624,14 +624,16 @@ export const api = {
   // A paid lookup that runs in the background: the row's `phoneLookup` says
   // when it ends. `force` looks again over a stored number.
   findQueuePhone: (id: number, opts: { force?: boolean } = {}) =>
-    postJson<{ ok: boolean; status: "running" }>(
+    postJson<{ ok: boolean; status: "running"; at: string }>(
       `/queue/${id}/find-phone`,
       opts.force ? { force: true } : {},
     ),
   // How many approved rows the bulk lookup would take, and why the rest would not.
   findQueuePhonesPreview: (): Promise<FindPhonesPreview> =>
-    IS_DEMO ? Promise.resolve({ eligible: 0, skipped: {} }) : getJson("/queue/find-phones"),
-  // No ids: every approved row without a number.
+    IS_DEMO
+      ? Promise.resolve({ eligible: 0, ids: [], skipped: {} })
+      : getJson("/queue/find-phones"),
+  // The ids the founder confirmed (from the preview); no ids: every approved row without a number.
   findQueuePhones: (ids?: number[]) =>
     postJson<{ started: number; skipped: FindPhonesPreview["skipped"] }>(
       "/queue/find-phones",

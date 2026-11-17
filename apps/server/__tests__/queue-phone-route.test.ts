@@ -9,6 +9,10 @@ const h = vi.hoisted(() => ({
   rows: new Map<number, Record<string, unknown>>(),
   writes: [] as Array<{ id: number; input: Record<string, unknown> }>,
   writeResult: "written" as "written" | "busy" | "gone",
+  /** Answers for the next writes, in order, before `writeResult`; an Error is thrown. */
+  nextWrites: [] as Array<"written" | "busy" | "gone" | Error>,
+  reserve: vi.fn(),
+  release: vi.fn(),
   findPhone: vi.fn(),
   config: {} as Record<string, unknown>,
   ceilingReached: false,
@@ -22,12 +26,15 @@ vi.mock("@oneshot-gtm/core", async () => ({
       (opts.offset ?? 0) > 0 ? [] : [...h.rows.values()].filter((r) => r["status"] === opts.status),
     setQueuePhoneLookup: (id: number, input: Record<string, unknown>) => {
       h.writes.push({ id, input });
-      return h.writeResult;
+      const next = h.nextWrites.shift() ?? h.writeResult;
+      if (next instanceof Error) throw next;
+      return next;
     },
   }),
   findPhone: h.findPhone,
   loadConfig: () => h.config,
   dailySpendStatus: () => ({ ceilingReached: h.ceilingReached }),
+  tryReserveDailySpend: h.reserve,
 }));
 
 const {
@@ -35,6 +42,8 @@ const {
   findQueuePhoneRoute,
   findQueuePhonesPreviewRoute,
   findQueuePhonesRoute,
+  PHONE_LOOKUP_RESERVATION_USD,
+  PHONE_WRITE_RETRY_MS,
   schedulePhoneOnApproval,
 } = await import("../src/api/queue-phone.ts");
 
@@ -89,6 +98,10 @@ beforeEach(() => {
   h.rows.clear();
   h.writes.length = 0;
   h.writeResult = "written";
+  h.nextWrites.length = 0;
+  h.reserve.mockReset();
+  h.release.mockReset();
+  h.reserve.mockReturnValue({ granted: true, release: h.release });
   h.config = {};
   h.ceilingReached = false;
   h.findPhone.mockReset();
@@ -100,8 +113,13 @@ describe("POST /api/queue/:id/find-phone", () => {
     row(9);
     const res = await one(9);
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ ok: true, status: "running" });
-    expect(h.writes[0]).toMatchObject({ id: 9, input: { lookup: { status: "running" } } });
+    const body = (await res.json()) as { at: string };
+    expect(body).toEqual({ ok: true, status: "running", at: expect.any(String) });
+    // The page orders later reads against the server's own mark.
+    expect(h.writes[0]).toMatchObject({
+      id: 9,
+      input: { lookup: { status: "running", at: body.at } },
+    });
     await settle();
     expect(h.findPhone).toHaveBeenCalledWith(
       { linkedinUrl: linkedin(9), name: "P 9" },
@@ -217,6 +235,7 @@ describe("the bulk lookup", () => {
     );
     expect(await preview.json()).toEqual({
       eligible: 2,
+      ids: [1, 6],
       skipped: { has_phone: 1, no_linkedin: 1, no_number: 1 },
     });
     const res = await bulk();
@@ -263,6 +282,15 @@ describe("the bulk lookup", () => {
   });
 });
 
+/** findPhone that misses the cache on a cache-only read and buys otherwise. */
+function missTheCache() {
+  h.findPhone.mockImplementation((_input: unknown, _ctx: unknown, opts?: { cacheOnly?: boolean }) =>
+    opts?.cacheOnly
+      ? Promise.reject(Object.assign(new Error("not cached"), { name: "PaidCacheMissError" }))
+      : Promise.resolve({ phone: "+15550100", lookup: "found", receiptId: 1, cost: 0.1 }),
+  );
+}
+
 describe("a lookup on approval", () => {
   it("does nothing while phoneOnApprove is off", async () => {
     row(1);
@@ -274,12 +302,14 @@ describe("a lookup on approval", () => {
 
   it("looks up each approved row when it is on, skipping rows that need none", async () => {
     h.config = { phoneOnApprove: true };
+    missTheCache();
     row(1);
     row(2, "approved", { phone: "+15550111" });
     row(3, "approved", { linkedinUrl: undefined });
     schedulePhoneOnApproval([1, 2, 3]);
     await settle();
-    expect(h.findPhone).toHaveBeenCalledTimes(1);
+    const rows = h.findPhone.mock.calls.map((c) => (c[0] as { linkedinUrl: string }).linkedinUrl);
+    expect(new Set(rows)).toEqual(new Set([linkedin(1)]));
     expect(h.findPhone.mock.calls[0]![1]).toMatchObject({
       decisionContext: { trigger: "approve" },
     });
@@ -292,5 +322,91 @@ describe("a lookup on approval", () => {
     schedulePhoneOnApproval([1]);
     await settle();
     expect(h.findPhone).not.toHaveBeenCalled();
+  });
+
+  it("reserves spend for each lookup it buys, and releases it after", async () => {
+    h.config = { phoneOnApprove: true };
+    missTheCache();
+    row(1);
+    schedulePhoneOnApproval([1]);
+    await settle();
+    expect(h.reserve).toHaveBeenCalledWith(PHONE_LOOKUP_RESERVATION_USD);
+    expect(h.findPhone.mock.calls.map((c) => c[2])).toEqual([{ cacheOnly: true }, undefined]);
+    expect(h.release).toHaveBeenCalledTimes(1);
+    expect(h.writes.at(-1)?.input).toMatchObject({ phone: "+15550100" });
+  });
+
+  it("answers from the cache without a reservation", async () => {
+    h.config = { phoneOnApprove: true };
+    row(1);
+    schedulePhoneOnApproval([1]);
+    await settle();
+    expect(h.findPhone.mock.calls.map((c) => c[2])).toEqual([{ cacheOnly: true }]);
+    expect(h.reserve).not.toHaveBeenCalled();
+    expect(h.writes.at(-1)?.input).toMatchObject({ phone: "+15550100" });
+  });
+
+  it("buys nothing once a queued lookup's reservation is refused, and takes the running mark off", async () => {
+    h.config = { phoneOnApprove: true };
+    missTheCache();
+    h.reserve.mockReturnValue({ granted: false, reason: "daily spend ceiling reached" });
+    row(1);
+    schedulePhoneOnApproval([1]);
+    await settle();
+    expect(h.findPhone.mock.calls.map((c) => c[2])).toEqual([{ cacheOnly: true }]);
+    expect(h.writes.map((w) => w.input["lookup"])).toEqual([
+      expect.objectContaining({ status: "running" }),
+      null,
+    ]);
+  });
+});
+
+describe("a lookup's own failures", () => {
+  it("forgets the row when the running mark cannot be written", async () => {
+    row(9);
+    h.nextWrites.push(new Error("database is locked"));
+    expect((await one(9)).status).toBe(409);
+    // Not left "running": the next request starts it.
+    expect((await one(9)).status).toBe(202);
+  });
+
+  it("reads the row again once it has a slot, and buys nothing for a row rejected while it waited", async () => {
+    for (let id = 1; id <= 5; id++) row(id);
+    const release = holdLookups();
+    await bulk();
+    await settle();
+    expect(h.findPhone).toHaveBeenCalledTimes(4);
+    row(5, "rejected");
+    release[0]!();
+    await settle();
+    await settle();
+    expect(h.findPhone).toHaveBeenCalledTimes(4);
+    expect(h.writes.filter((w) => w.id === 5).map((w) => w.input["lookup"])).toEqual([
+      expect.objectContaining({ status: "running" }),
+      null,
+    ]);
+  });
+
+  it("keeps a finished result while a send holds the row, and writes it once the row is free", async () => {
+    vi.useFakeTimers();
+    try {
+      row(9);
+      h.nextWrites.push("written", "busy", "busy");
+      expect((await one(9)).status).toBe(202);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.writes).toHaveLength(2);
+      // Until it is written, the row's lookup counts as running: nothing is bought again.
+      expect((await one(9)).status).toBe(409);
+      await vi.advanceTimersByTimeAsync(PHONE_WRITE_RETRY_MS);
+      expect(h.writes).toHaveLength(3);
+      await vi.advanceTimersByTimeAsync(PHONE_WRITE_RETRY_MS);
+      expect(h.writes).toHaveLength(4);
+      expect(h.writes.slice(1).map((w) => w.input)).toEqual(
+        Array(3).fill(expect.objectContaining({ phone: "+15550100" })),
+      );
+      expect(h.findPhone).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

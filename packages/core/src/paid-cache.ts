@@ -86,7 +86,11 @@ function phoneAnswered(result: unknown): boolean {
   if (profile["phone_lookup"] === "none") return true;
   if (str(profile["phone"])) return true;
   const full = profile["fullphone"];
-  return Array.isArray(full) && full.some((p) => isRecord(p) && str(p["fullphone"]));
+  // Both shapes `extractFirstPhone` reads: `{ fullphone }` entries and bare strings.
+  return (
+    Array.isArray(full) &&
+    full.some((p) => (isRecord(p) ? str(p["fullphone"]) : str(p)) !== undefined)
+  );
 }
 
 /** Call type → expiry and identity, for every paid LOOKUP. */

@@ -2616,7 +2616,7 @@ export class Ledger {
    */
   setQueuePhoneLookup(
     id: number,
-    input: { phone?: string | null; lookup: QueuePhoneLookup },
+    input: { phone?: string | null; lookup: QueuePhoneLookup | null },
   ): "written" | "busy" | "gone" {
     const out = this.queue.setQueuePhoneLookup(id, input);
     const phone = input.phone?.trim();

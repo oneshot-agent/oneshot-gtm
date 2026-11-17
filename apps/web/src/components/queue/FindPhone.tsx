@@ -18,6 +18,9 @@ import { Modal } from "../primitives/Modal.tsx";
 
 const PRICING_URL = "https://docs.oneshotagent.com/pricing";
 
+/** How often the approved list re-counts the rows the bulk lookup would take. */
+const PHONE_PREVIEW_POLL_MS = 20_000;
+
 /**
  * The case view's phone line: a "Find phone" button on an approved or sent
  * row with no number, "Looking up…" while the lookup runs (the row is read
@@ -56,8 +59,10 @@ export function FindPhone({ row }: { row: QueueRowView }) {
 
   const find = useMutation({
     mutationFn: () => api.findQueuePhone(row.id),
-    onSuccess: () => {
-      setStartedAt(new Date().toISOString());
+    // The server's time of the running mark, never this browser's clock: the
+    // row's later reads are ordered against it.
+    onSuccess: (res) => {
+      setStartedAt(res.at);
       void qc.invalidateQueries({ queryKey: ["queue"] });
     },
     onError: (err) => toast.error(`couldn't look up a phone · ${err.message}`),
@@ -109,20 +114,35 @@ export function FindPhone({ row }: { row: QueueRowView }) {
 /**
  * The approved list's bulk lookup: "Find phones · N" for the approved rows
  * with a LinkedIn URL and no number, then a confirm before any is bought.
+ * Opening the confirm reads the rows afresh and holds them: the lookup buys
+ * exactly the rows the confirm counted, never one that became eligible since.
  */
 export function FindPhonesButton() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [confirmed, setConfirmed] = useState<{ ids: number[]; noLinkedin: number } | null>(null);
+  // Its own poll: a lookup ending (or turning retryable) changes the count.
   const preview = useQuery({
     queryKey: ["queue", "find-phones"],
     queryFn: api.findQueuePhonesPreview,
+    refetchInterval: PHONE_PREVIEW_POLL_MS,
   });
   const eligible = preview.data?.eligible ?? 0;
-  const noLinkedin = preview.data?.skipped.no_linkedin ?? 0;
+  const ids = confirmed?.ids ?? [];
+  const noLinkedin = confirmed?.noLinkedin ?? 0;
+  const open = confirmed != null;
+  const close = () => setConfirmed(null);
+  const openConfirm = async () => {
+    const fresh = await preview.refetch();
+    if (!fresh.data) {
+      toast.error("couldn't count the rows · try again");
+      return;
+    }
+    setConfirmed({ ids: fresh.data.ids, noLinkedin: fresh.data.skipped.no_linkedin ?? 0 });
+  };
   const run = useMutation({
-    mutationFn: () => api.findQueuePhones(),
+    mutationFn: (rowIds: number[]) => api.findQueuePhones(rowIds),
     onSuccess: (res) => {
-      setOpen(false);
+      close();
       toast.success(
         `looking up ${res.started} ${res.started === 1 ? "phone" : "phones"} · they appear on each row as they land`,
       );
@@ -136,7 +156,7 @@ export function FindPhonesButton() {
         variant="ghost"
         size="sm"
         disabled={eligible === 0}
-        onClick={() => setOpen(true)}
+        onClick={() => void openConfirm()}
         title={
           eligible === 0
             ? "Every approved row has a number, a lookup running, or no LinkedIn URL"
@@ -149,16 +169,20 @@ export function FindPhonesButton() {
       </Button>
       <Modal
         open={open}
-        onClose={() => setOpen(false)}
-        title={`Find phones for ${eligible} ${eligible === 1 ? "person" : "people"}?`}
+        onClose={close}
+        title={`Find phones for ${ids.length} ${ids.length === 1 ? "person" : "people"}?`}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>
+            <Button variant="ghost" onClick={close}>
               Cancel
             </Button>
-            <Button disabled={run.isPending} onClick={() => run.mutate()} {...readOnly}>
+            <Button
+              disabled={run.isPending || ids.length === 0}
+              onClick={() => run.mutate(ids)}
+              {...readOnly}
+            >
               <Phone size={12} />
-              {run.isPending ? "Starting…" : `Find ${eligible}`}
+              {run.isPending ? "Starting…" : `Find ${ids.length}`}
             </Button>
           </>
         }

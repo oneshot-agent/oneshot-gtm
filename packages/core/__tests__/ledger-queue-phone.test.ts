@@ -71,6 +71,15 @@ describe("Ledger.setQueuePhoneLookup", () => {
     expect(ledger.setQueuePhoneLookup(999_999, { phone: "+1", lookup: done })).toBe("gone");
   });
 
+  it("takes the lookup off with null, leaving the number", () => {
+    const id = enqueue({ name: "Pat", phone: "+15550111" });
+    ledger.setQueuePhoneLookup(id, {
+      lookup: { status: "running", at: "2026-11-17T10:00:00.000Z" },
+    });
+    expect(ledger.setQueuePhoneLookup(id, { lookup: null })).toBe("written");
+    expect(payloadOf(id)).toEqual({ name: "Pat", phone: "+15550111" });
+  });
+
   it("writes a sent row and fills its prospect's empty phone", () => {
     const id = enqueue({ name: "Pat", email: "pat@acme.example" });
     const prospectId = ledger.upsertProspect({ email: "pat@acme.example", name: "Pat" });

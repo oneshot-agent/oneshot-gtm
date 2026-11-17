@@ -3,7 +3,11 @@ import type { QueueRowView } from "@oneshot-gtm/shared-types";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { FindPhone } from "../src/components/queue/FindPhone.tsx";
-import { PHONE_LOOKUP_STALE_MS, phoneLookupState } from "../src/lib/phoneLookup.ts";
+import {
+  latestPhoneLookup,
+  PHONE_LOOKUP_STALE_MS,
+  phoneLookupState,
+} from "../src/lib/phoneLookup.ts";
 
 // The case view's phone line: a button on an approved or sent row with a
 // LinkedIn URL and no number, "Looking up…" while a lookup runs, and how the
@@ -14,6 +18,17 @@ const linkedinUrl = "https://www.linkedin.com/in/pat-lee";
 const at = (msAgo: number) => new Date(now - msAgo).toISOString();
 const state = (status: QueueRowView["status"], payload: Record<string, unknown>) =>
   phoneLookupState({ status, payload, now });
+
+describe("latestPhoneLookup", () => {
+  it("lets the server's finished read replace the running mark the server stamped", () => {
+    // Both times are the server's: the page keeps the `at` the start route answered.
+    const mark = { status: "running" as const, at: "2026-11-17T12:00:00.000Z" };
+    const done = { status: "done" as const, at: "2026-11-17T12:01:30.000Z" };
+    expect(latestPhoneLookup(mark, done)).toBe(done);
+    expect(latestPhoneLookup(done, mark)).toBe(done);
+    expect(latestPhoneLookup(null, mark)).toBe(mark);
+  });
+});
 
 describe("phoneLookupState", () => {
   it("offers a lookup on approved and sent rows only", () => {

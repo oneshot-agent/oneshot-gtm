@@ -5,10 +5,12 @@ import {
   demoMode,
   findPhone,
   getLedger,
+  isPaidCacheMiss,
   isSettlementAmbiguous,
   loadConfig,
   logEvent,
   phoneOnApproveOf,
+  tryReserveDailySpend,
   type QueuePhoneLookup,
   type QueueRow,
 } from "@oneshot-gtm/core";
@@ -82,15 +84,17 @@ function linkedinOf(payload: Record<string, unknown>): string | null {
 /**
  * Why `row` gets no lookup, or null when it can have one. `force` looks
  * again over a stored number or a "none". `bulk` also leaves out a row whose
- * last lookup found no number: asking again is the same answer.
+ * last lookup found no number: asking again is the same answer. `own` is a
+ * job rechecking its row: its own in-flight entry and a send in progress do
+ * not stop it (the result waits for the send).
  */
 export function phoneLookupSkip(
   row: QueueRow,
-  opts: { force?: boolean; bulk?: boolean } = {},
+  opts: { force?: boolean; bulk?: boolean; own?: boolean } = {},
 ): PhoneLookupSkip | null {
   if (row.status !== "approved" && row.status !== "sent") return "status";
-  if (row.send_started_at) return "sending";
-  if (looking.has(row.id)) return "running";
+  if (!opts.own && row.send_started_at) return "sending";
+  if (!opts.own && looking.has(row.id)) return "running";
   const payload = payloadOf(row);
   if (!linkedinOf(payload)) return "no_linkedin";
   if (opts.force) return null;
@@ -103,93 +107,174 @@ export function phoneLookupSkip(
 type Trigger = "button" | "bulk" | "approve";
 
 /**
- * Mark the row `running` and start its lookup in the background. False when
- * the row could not be marked (a send or a drain took it meanwhile).
+ * The most an approval-started lookup reserves against the daily spend
+ * ceiling: a worst-case bound, well above what one lookup is billed. The
+ * receipt records the real cost and the reservation is released after it.
  */
-function startPhoneLookup(row: QueueRow, trigger: Trigger, fresh = false): boolean {
-  const ledger = getLedger();
-  const payload = payloadOf(row);
+export const PHONE_LOOKUP_RESERVATION_USD = 0.5;
+
+/**
+ * How long a finished result waits to be written while a send or a drain
+ * lease holds its row, and how often it tries. Longer than the drain lease,
+ * so a claimed row is either sent or released by the last try. A result
+ * that still cannot be written is not lost: a number or a "none" is in the
+ * paid cache, and the next lookup of the row answers from it for free.
+ */
+export const PHONE_WRITE_RETRY_MS = 30_000;
+export const PHONE_WRITE_ATTEMPTS = 40;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(err: unknown): string {
+  return ((err as Error | undefined)?.message ?? "").slice(0, 120);
+}
+
+/**
+ * Mark the row `running` and start its lookup in the background. Returns the
+ * mark's time, or null when the row could not be marked (a send or a drain
+ * took it meanwhile, or the write failed).
+ */
+function startPhoneLookup(row: QueueRow, trigger: Trigger, fresh = false): string | null {
+  const at = new Date().toISOString();
   looking.add(row.id);
-  const marked = ledger.setQueuePhoneLookup(row.id, {
-    lookup: { status: "running", at: new Date().toISOString() },
-  });
+  let marked: string;
+  try {
+    marked = getLedger().setQueuePhoneLookup(row.id, { lookup: { status: "running", at } });
+  } catch (err) {
+    marked = "failed";
+    logEvent(
+      "error.swallowed",
+      { kind: "queue.phone_lookup", queue_id: row.id, message_120: errorMessage(err) },
+      "warn",
+    );
+  }
   if (marked !== "written") {
     looking.delete(row.id);
-    return false;
+    return null;
   }
+  void runPhoneLookup(row.id, trigger, fresh).finally(() => looking.delete(row.id));
+  return at;
+}
+
+type JobResult =
+  | {
+      kind: "result";
+      playName: string;
+      phone: string | null;
+      lookup: QueuePhoneLookup;
+      cached: boolean;
+    }
+  | { kind: "skipped"; reason: PhoneLookupSkip | "spend-ceiling" };
+
+/** One lookup, in a slot: the row is read again first, since it may have changed while it waited. */
+async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promise<JobResult> {
+  const row = getLedger().getQueueRow(id);
+  const skip = row ? phoneLookupSkip(row, { force: fresh, own: true }) : "status";
+  if (!row || skip) return { kind: "skipped", reason: skip ?? "status" };
+  const payload = payloadOf(row);
   const input = {
     linkedinUrl: linkedinOf(payload)!,
     ...(text(payload["email"]) ? { email: text(payload["email"])! } : {}),
     ...(text(payload["name"]) ? { name: text(payload["name"])! } : {}),
   };
-  void inSlot(() => runPhoneLookup(row, input, trigger, fresh)).finally(() =>
-    looking.delete(row.id),
-  );
-  return true;
-}
-
-async function runPhoneLookup(
-  row: QueueRow,
-  input: { linkedinUrl: string; email?: string; name?: string },
-  trigger: Trigger,
-  fresh: boolean,
-): Promise<void> {
-  let phone: string | null = null;
-  let lookup: QueuePhoneLookup;
-  let cached = false;
+  const ctx = {
+    playName: row.play_name,
+    memo: `${row.play_name} phone lookup`,
+    decisionContext: { subject: { queueId: id }, trigger },
+  };
+  const done = (out: Awaited<ReturnType<typeof findPhone>>): JobResult => ({
+    kind: "result",
+    playName: row.play_name,
+    phone: out.phone,
+    cached: Boolean(out.cached),
+    lookup: {
+      status: out.phone ? "done" : out.lookup === "none" ? "none" : "unavailable",
+      at: new Date().toISOString(),
+      costUsd: out.cost,
+    },
+  });
+  let release: (() => void) | null = null;
   try {
-    const out = await findPhone(
-      input,
-      {
-        playName: row.play_name,
-        memo: `${row.play_name} phone lookup`,
-        decisionContext: { subject: { queueId: row.id }, trigger },
-      },
-      fresh ? { fresh: true } : undefined,
-    );
-    phone = out.phone;
-    cached = Boolean(out.cached);
-    const status: QueuePhoneLookup["status"] = phone
-      ? "done"
-      : out.lookup === "none"
-        ? "none"
-        : "unavailable";
-    lookup = { status, at: new Date().toISOString(), costUsd: out.cost };
+    // An automatic lookup is gated by the daily spend ceiling. A cached
+    // answer costs nothing, so it is read first and needs no reservation.
+    if (trigger === "approve") {
+      try {
+        return done(await findPhone(input, ctx, { cacheOnly: true }));
+      } catch (err) {
+        if (!isPaidCacheMiss(err)) throw err;
+      }
+      const reservation = tryReserveDailySpend(PHONE_LOOKUP_RESERVATION_USD);
+      if (!reservation.granted) return { kind: "skipped", reason: "spend-ceiling" };
+      release = reservation.release;
+    }
+    return done(await findPhone(input, ctx, fresh ? { fresh: true } : undefined));
   } catch (err) {
-    const message = ((err as Error | undefined)?.message ?? "").slice(0, 120);
+    const message = errorMessage(err);
     // OneShot or the provider failing, not the person: worth asking again.
     // An unresolved payment is not: asking again is refused until it is
     // reconciled, so the message is shown.
-    lookup = {
-      status: !isSettlementAmbiguous(err) && classifyPlatformError(err) ? "unavailable" : "error",
-      at: new Date().toISOString(),
-      ...(message ? { message } : {}),
+    return {
+      kind: "result",
+      playName: row.play_name,
+      phone: null,
+      cached: false,
+      lookup: {
+        status: !isSettlementAmbiguous(err) && classifyPlatformError(err) ? "unavailable" : "error",
+        at: new Date().toISOString(),
+        ...(message ? { message } : {}),
+      },
     };
+  } finally {
+    release?.();
   }
-  let written: string;
+}
+
+/** Write a result, waiting out a send or a drain lease that holds the row (`PHONE_WRITE_RETRY_MS`). */
+async function persistPhoneLookup(
+  id: number,
+  input: { phone: string | null; lookup: QueuePhoneLookup | null },
+): Promise<string> {
+  for (let attempt = 1; ; attempt++) {
+    const written = getLedger().setQueuePhoneLookup(id, input);
+    if (written !== "busy" || attempt >= PHONE_WRITE_ATTEMPTS) return written;
+    await sleep(PHONE_WRITE_RETRY_MS);
+  }
+}
+
+async function runPhoneLookup(id: number, trigger: Trigger, fresh: boolean): Promise<void> {
   try {
-    written = getLedger().setQueuePhoneLookup(row.id, { phone, lookup });
+    const job = await inSlot(() => lookUpInSlot(id, trigger, fresh));
+    if (job.kind === "skipped") {
+      // Nothing was bought: take the running mark off a row that still takes writes.
+      const written = await persistPhoneLookup(id, { phone: null, lookup: null });
+      logEvent("queue.phone_lookup_skipped", {
+        queue_id: id,
+        trigger,
+        reason: job.reason,
+        written,
+      });
+      return;
+    }
+    // Outside the slot: waiting for a send must not hold up other lookups.
+    const written = await persistPhoneLookup(id, { phone: job.phone, lookup: job.lookup });
+    logEvent("queue.phone_lookup", {
+      queue_id: id,
+      play: job.playName,
+      trigger,
+      status: job.lookup.status,
+      cost_usd: job.lookup.costUsd ?? 0,
+      cached: job.cached,
+      written,
+    });
   } catch (err) {
-    written = "failed";
     logEvent(
       "error.swallowed",
-      {
-        kind: "queue.phone_lookup",
-        queue_id: row.id,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
-      },
+      { kind: "queue.phone_lookup", queue_id: id, message_120: errorMessage(err) },
       "warn",
     );
   }
-  logEvent("queue.phone_lookup", {
-    queue_id: row.id,
-    play: row.play_name,
-    trigger,
-    status: lookup.status,
-    cost_usd: lookup.costUsd ?? 0,
-    cached,
-    written,
-  });
 }
 
 async function readBody(req: Request): Promise<Record<string, unknown> | null> {
@@ -220,9 +305,10 @@ export async function findQueuePhoneRoute(
   const force = body["force"] === true;
   const skip = phoneLookupSkip(row, { force });
   if (skip) return jsonResponse({ error: SKIP_MESSAGES[skip], skip }, 409, req);
-  if (!startPhoneLookup(row, "button", force))
-    return jsonResponse({ error: SKIP_MESSAGES.sending, skip: "sending" }, 409, req);
-  return jsonResponse({ ok: true, status: "running" }, 202, req);
+  const at = startPhoneLookup(row, "button", force);
+  if (!at) return jsonResponse({ error: SKIP_MESSAGES.sending, skip: "sending" }, 409, req);
+  // The server's time: the page orders this mark against the row's later reads.
+  return jsonResponse({ ok: true, status: "running", at }, 202, req);
 }
 
 /** Approved rows read per page when the bulk action picks its rows. */
@@ -257,10 +343,18 @@ function tally(rows: readonly QueueRow[]): {
   return { eligible, skipped };
 }
 
-/** `GET /api/queue/find-phones`: how many approved rows the bulk action would look up, and why the rest would not. */
+/**
+ * `GET /api/queue/find-phones`: the approved rows the bulk action would look
+ * up, and why the rest would not. The page posts these ids back once the
+ * founder confirms, so a row that became eligible since is never bought.
+ */
 export async function findQueuePhonesPreviewRoute(req: Request): Promise<Response> {
   const { eligible, skipped } = tally(approvedRows());
-  const body: FindPhonesPreview = { eligible: eligible.length, skipped };
+  const body: FindPhonesPreview = {
+    eligible: eligible.length,
+    ids: eligible.map((r) => r.id),
+    skipped,
+  };
   return jsonResponse(body, 200, req);
 }
 

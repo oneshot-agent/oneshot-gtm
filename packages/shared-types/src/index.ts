@@ -1197,6 +1197,8 @@ export type PhoneLookupSkipView =
 /** `GET /api/queue/find-phones`: approved rows the bulk lookup would take, and why the rest would not. */
 export interface FindPhonesPreview {
   eligible: number;
+  /** The eligible rows; the bulk POST sends these back so it buys only what was confirmed. */
+  ids: number[];
   skipped: Partial<Record<PhoneLookupSkipView, number>>;
 }
 

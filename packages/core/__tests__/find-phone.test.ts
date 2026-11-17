@@ -118,6 +118,7 @@ describe("findPhone", () => {
 
   it.each([
     ["a number", { fullphone: [{ fullphone: "+15550100" }], phone: "+15550100" }, "found"],
+    ["a number in the string-list shape", { fullphone: ["+15550100"] }, "found"],
     ["none", { phone_lookup: "none" }, "none"],
   ])("keeps %s: the second lookup is free", async (_label, profile, lookup) => {
     personProfileMock.mockResolvedValue(answer(profile));
