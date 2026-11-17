@@ -11,6 +11,7 @@ const cache = new Map<string, { result_json: string; fetched_at: string; status:
 let readsToday = 0;
 let cfg: Record<string, unknown> = {};
 let account: { workspace: string; accountId: string } | null = null;
+let selectionBlocker: "ambiguous" | "missing" | "disconnected" | null = null;
 let browserCalls = 0;
 let countedSince: string | null = null;
 let identities: Array<{ accountKey: string; identity: Record<string, unknown> }> = [];
@@ -22,6 +23,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     loadConfig: () => ({ ...actual.loadConfig(), ...cfg }),
     logEvent: () => {},
     linkedInProfileReadAccount: () => account,
+    linkedInAccountSelectionBlocker: () => selectionBlocker,
     browserTask: async () => {
       browserCalls++;
       throw new Error("the browser path must not run");
@@ -117,6 +119,7 @@ function script(...next: unknown[]) {
 }
 
 beforeEach(() => {
+  selectionBlocker = null;
   cache.clear();
   _resetPaidCache();
   readsToday = 0;
@@ -454,4 +457,19 @@ describe("readLinkedInProfile through the connected account", () => {
       ).skipped,
     ).toBe("daily-limit");
   });
+});
+
+it("selection failures block browser fallback and make no paid calls", async () => {
+  account = null;
+  cfg = { linkedinBrowserProfileId: "browser", linkedinSessionCheckedAt: "2026-11-17" };
+  for (const reason of ["ambiguous", "missing", "disconnected"] as const) {
+    selectionBlocker = reason;
+    expect(liveReadConfigured()).toBe(false);
+    expect(liveReadReady()).toBe(false);
+    expect((await readLinkedInProfile(URL_A, ctx, { remainingUsd: 1 })).skipped).toBe(
+      "not-connected",
+    );
+  }
+  expect(ops).toHaveLength(0);
+  expect(browserCalls).toBe(0);
 });

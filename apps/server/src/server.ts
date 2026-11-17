@@ -2,6 +2,11 @@ import { getOnboarding, deferOnboarding, verifyOnboardingAI } from "./api/onboar
 import { benchmarksRoute } from "./api/benchmarks.ts";
 import { benchmarksPage } from "./benchmarks-page.ts";
 import { resolveQueueContactRoute } from "./api/queue-contact.ts";
+import {
+  findQueuePhoneRoute,
+  findQueuePhonesPreviewRoute,
+  findQueuePhonesRoute,
+} from "./api/queue-phone.ts";
 import { queueDossierRoute } from "./api/queue-dossier.ts";
 import { readProfileRoute } from "./api/queue-read-profile.ts";
 import {
@@ -289,6 +294,9 @@ const routes: RouteEntry[] = [
   route("GET", "/api/queue/search", searchQueueRoute),
   // Literal before param for the same reason; the destination side of a move.
   route("POST", "/api/queue/import", importQueueRowRoute),
+  // Literal before param: the bulk phone lookup and its count.
+  route("GET", "/api/queue/find-phones", findQueuePhonesPreviewRoute),
+  route("POST", "/api/queue/find-phones", findQueuePhonesRoute),
   route("GET", "/api/queue/:id", queueRowDetailRoute),
   route("GET", "/api/queue/:id/drafts", queueDraftVersionsRoute),
   route("GET", "/api/queue/:id/dossier", queueDossierRoute),
@@ -296,6 +304,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
   route("POST", "/api/queue/:id/resolve-contact", resolveQueueContactRoute),
+  route("POST", "/api/queue/:id/find-phone", findQueuePhoneRoute),
   route("POST", "/api/queue/:id/reject", rejectQueueRoute),
   route("POST", "/api/queue/:id/reject-reason", suggestRejectReasonRoute),
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),

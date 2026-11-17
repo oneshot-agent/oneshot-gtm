@@ -1,4 +1,5 @@
 import { removeLinkedInAccount, forceReconnectLinkedInAccount } from "../linkedin-remove.ts";
+import { connectLinkedIn } from "../linkedin-connect.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -637,8 +638,7 @@ export async function repliesLinkedInRoute(req: Request) {
       await refreshLinkedInInbox(true);
       return jsonResponse({ ok: true }, 200, req);
     }
-    if (b.action === "connect")
-      return jsonResponse(await callLinkedIn(workspace, { kind: "connect" }), 200, req);
+    if (b.action === "connect") return jsonResponse(await connectLinkedIn(workspace), 200, req);
     if ((b.action === "reconnect" || b.action === "upgrade") && a) {
       // A refusal recorded when permissions were asked for with a second
       // connection says nothing about a reconnect of this account: drop it.

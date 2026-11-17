@@ -256,31 +256,6 @@ function writePersistedLookup(cacheKey: string, url: string | null): void {
   }
 }
 
-/**
- * First usable phone from an enrichProfile (`profile.phone`), LLM extract
- * (`extract.phone`), or deepResearchPerson (`enrichment.fullphone[]`) shape:
- * the single read site for all three. Raw string, no E.164 normalization.
- */
-export function extractFirstPhone(source: unknown): string | null {
-  if (!source || typeof source !== "object") return null;
-  const obj = source as Record<string, unknown>;
-
-  // deepResearchPerson `enrichment.fullphone` array shape
-  const fullphone = obj["fullphone"];
-  if (Array.isArray(fullphone)) {
-    for (const entry of fullphone) {
-      if (entry && typeof entry === "object") {
-        const v = (entry as Record<string, unknown>)["fullphone"];
-        if (typeof v === "string" && v.trim().length > 0) return v.trim();
-      } else if (typeof entry === "string" && entry.trim().length > 0) {
-        return entry.trim();
-      }
-    }
-  }
-
-  // enrichProfile `profile.phone` OR LLM-extract `extract.phone` shape
-  const phone = obj["phone"];
-  if (typeof phone === "string" && phone.trim().length > 0) return phone.trim();
-
-  return null;
-}
+// The phone reader moved to core with the phone lookup that uses it;
+// re-exported for existing importers.
+export { extractFirstPhone } from "@oneshot-gtm/core";

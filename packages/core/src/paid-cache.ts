@@ -78,6 +78,21 @@ function enrichAliases(result: unknown): unknown[] {
   return [...emails].map((email) => ({ email }));
 }
 
+/** A phone lookup that answered: a number on the profile, or `phone_lookup: "none"`. */
+function phoneAnswered(result: unknown): boolean {
+  if (!defaultStorable(result)) return false;
+  const profile = isRecord(result) && isRecord(result["profile"]) ? result["profile"] : null;
+  if (!profile) return false;
+  if (profile["phone_lookup"] === "none") return true;
+  if (str(profile["phone"])) return true;
+  const full = profile["fullphone"];
+  // Both shapes `extractFirstPhone` reads: `{ fullphone }` entries and bare strings.
+  return (
+    Array.isArray(full) &&
+    full.some((p) => (isRecord(p) ? str(p["fullphone"]) : str(p)) !== undefined)
+  );
+}
+
 /** Call type → expiry and identity, for every paid LOOKUP. */
 export const PAID_LOOKUPS = {
   "enrich.profile": {
@@ -91,6 +106,22 @@ export const PAID_LOOKUPS = {
           ? { linkedinUrl: personUrl(i["linkedinUrl"]) }
           : { name: i["name"], companyDomain: i["companyDomain"] },
     aliases: enrichAliases,
+  },
+  // A profile read with the phone add-on. Its own type: an enrich.profile
+  // hit carries no number, so it must never answer this one.
+  "enrich.phone": {
+    ttlMs: 30 * DAY,
+    failureTtlMs: PAID_FAILURE_TTL_MS,
+    // Lookups are by LinkedIn URL; the email and name are hints.
+    identity: (i) =>
+      str(i["linkedinUrl"])
+        ? { linkedinUrl: personUrl(i["linkedinUrl"]) }
+        : str(i["email"])
+          ? { email: i["email"] }
+          : { name: i["name"], companyDomain: i["companyDomain"] },
+    // Only an answer is kept: a number, or every provider saying none. An
+    // outage, a reveal still pending or a lookup never run is asked again.
+    storable: phoneAnswered,
   },
   "research.person": {
     ttlMs: 90 * DAY,

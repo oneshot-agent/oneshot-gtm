@@ -156,6 +156,20 @@ describe("setup config writer", () => {
     });
   });
 
+  describe("phoneOnApprove", () => {
+    it("stays absent until a body sets it, then keeps what was set", () => {
+      expect("phoneOnApprove" in mergeSetupConfig(FULL_CFG, {}, FULL_CFG.emailIdentities)).toBe(
+        false,
+      );
+      const on = mergeSetupConfig(FULL_CFG, { phoneOnApprove: true }, FULL_CFG.emailIdentities);
+      expect(on.phoneOnApprove).toBe(true);
+      expect(mergeSetupConfig(on, {}, FULL_CFG.emailIdentities).phoneOnApprove).toBe(true);
+      expect(
+        mergeSetupConfig(on, { phoneOnApprove: false }, FULL_CFG.emailIdentities).phoneOnApprove,
+      ).toBe(false);
+    });
+  });
+
   // Issue #451 surfaced these two keys: real config, no UI, no CLI. The
   // sectioned /setup now writes them through the same sparse body.
   describe("queueReviewOrder", () => {

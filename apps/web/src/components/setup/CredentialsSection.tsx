@@ -13,6 +13,7 @@ import {
   X_OAUTH_KEYS,
   type SecretKey,
 } from "./constants.ts";
+import { LinkedInAccountPicker } from "./LinkedInAccountPicker.tsx";
 import { LinkedInConnect } from "./LinkedInConnect.tsx";
 import { SectionShell } from "./SectionShell.tsx";
 import { useSectionDraft } from "./useSectionDraft.ts";
@@ -189,13 +190,16 @@ export function CredentialsSection({
         inUse: () => true,
         optional: true,
         body: (
-          <LinkedInConnect
-            cfg={cfg}
-            cookieSet={cookieSet}
-            reads={linkedinReads}
-            advancedOpen={linkedinAdvanced}
-            onToggleAdvanced={() => setLinkedinAdvanced((v) => !v)}
-          />
+          <div className="flex flex-col gap-3">
+            <LinkedInAccountPicker cfg={cfg} />
+            <LinkedInConnect
+              cfg={cfg}
+              cookieSet={cookieSet}
+              reads={linkedinReads}
+              advancedOpen={linkedinAdvanced}
+              onToggleAdvanced={() => setLinkedinAdvanced((v) => !v)}
+            />
+          </div>
         ),
       },
     ],

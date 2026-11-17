@@ -44,7 +44,6 @@ vi.mock("@oneshot-gtm/core", () => ({
 
 const {
   _resetLinkedInCache,
-  extractFirstPhone,
   findLinkedInUrl,
   isLinkedInProfileUrl,
   looksLikeOrgName,
@@ -365,31 +364,6 @@ describe("findLinkedInUrl — circuit breaker", () => {
     });
     expect(url).toBeNull();
     expect(calls.webSearch).toBe(5);
-  });
-});
-
-describe("extractFirstPhone", () => {
-  it("reads deepResearch enrichment.fullphone[0].fullphone shape", () => {
-    const enrichment = {
-      fullphone: [{ fullphone: "+15551234567" }, { fullphone: "+15557654321" }],
-    };
-    expect(extractFirstPhone(enrichment)).toBe("+15551234567");
-  });
-
-  it("reads enrichProfile profile.phone shape", () => {
-    expect(extractFirstPhone({ phone: "+447700900123" })).toBe("+447700900123");
-  });
-
-  it("returns null on missing shapes", () => {
-    expect(extractFirstPhone(null)).toBeNull();
-    expect(extractFirstPhone(undefined)).toBeNull();
-    expect(extractFirstPhone({})).toBeNull();
-    expect(extractFirstPhone({ fullphone: [] })).toBeNull();
-    expect(extractFirstPhone({ phone: "" })).toBeNull();
-  });
-
-  it("trims whitespace from the returned phone", () => {
-    expect(extractFirstPhone({ phone: "  +12025551212  " })).toBe("+12025551212");
   });
 });
 

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Field, Input, Select } from "../primitives/Field.tsx";
+import { Checkbox, Field, Input, Select } from "../primitives/Field.tsx";
 import { validateTimeZone } from "../../lib/setupValidation.ts";
 import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
@@ -14,15 +14,16 @@ const RUNTIME_ZONE = (() => {
 })();
 
 /**
- * Two config keys that existed with no UI and no CLI (issue #451): the
- * /queue default order, and the install's time zone for event-relative
- * plays (Luma slots, "tomorrow morning").
+ * The /queue default order, the install's time zone for event-relative
+ * plays (Luma slots, "tomorrow morning"), and whether approving a row looks
+ * up its phone number.
  */
 export function ReviewQueueSection({ cfg, onDirtyChange }: SectionProps) {
   const server = useMemo(
     () => ({
       queueReviewOrder: cfg.queueReviewOrder ?? "newest",
       timezone: cfg.timezone ?? "",
+      phoneOnApprove: cfg.phoneOnApprove === true,
     }),
     [cfg],
   );
@@ -38,7 +39,7 @@ export function ReviewQueueSection({ cfg, onDirtyChange }: SectionProps) {
   return (
     <SectionShell
       {...s.shell}
-      lede="The default order on /queue, and the clock for event-relative copy."
+      lede="The default order on /queue, the clock for event-relative copy, and phone lookups on approval."
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
@@ -65,6 +66,25 @@ export function ReviewQueueSection({ cfg, onDirtyChange }: SectionProps) {
             spellCheck={false}
           />
         </Field>
+        <div className="md:col-span-2">
+          <Checkbox
+            checked={s.values.phoneOnApprove}
+            onChange={(e) => s.set("phoneOnApprove", e.target.checked)}
+            label="Look up a phone number for each row I approve"
+          />
+          <p className="m-0 mt-1 text-[12px] leading-5 text-ink-muted">
+            Each lookup is a paid call (see{" "}
+            <a
+              href="https://docs.oneshotagent.com/pricing"
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
+            >
+              pricing
+            </a>
+            ) and a number is not guaranteed. Rows need a LinkedIn URL.
+          </p>
+        </div>
       </div>
     </SectionShell>
   );

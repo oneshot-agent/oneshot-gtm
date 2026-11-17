@@ -2,7 +2,7 @@
  * Read live LinkedIn Experience data. The first path is the connected
  * LinkedIn account's silent profile view (OneShot's `profile-view` with the
  * experience section): seconds per read, paced and capped by the platform.
- * The fallback, only when no connected account may view profiles, is a
+ * The fallback, only without an explicit or ambiguous account selection, is a
  * persistent OneShot browser profile: connect through hosted login (including
  * 2FA) or import a `li_at` cookie. Browser reads use the founder's identity,
  * so serialize them, space them, and cap daily usage. A login wall
@@ -17,6 +17,7 @@ import {
   browserTaskCost,
   callLinkedInAs,
   linkedInProfileReadAccount,
+  linkedInAccountSelectionBlocker,
   type LinkedInOperation,
   createBrowserProfile,
   deleteBrowserProfile,
@@ -217,27 +218,36 @@ function readAccount(): { workspace: string; accountId: string } | null {
   }
 }
 
+/** Explicit selection never silently uses the browser's identity instead. */
+function browserReadAllowed(): boolean {
+  try {
+    return !loadConfig().linkedin?.accountKey && linkedInAccountSelectionBlocker() === null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Some live read can be attempted: a connected account may view profiles, or
- * a browser session is on record (it may still be invalid or unchecked; the
+ * an allowed browser session is on record (it may still be invalid or unchecked; the
  * read reports that as its skip reason).
  */
 export function liveReadConfigured(): boolean {
-  return readAccount() !== null || linkedinSessionState() !== "unset";
+  return readAccount() !== null || (browserReadAllowed() && linkedinSessionState() !== "unset");
 }
 
-/** A live read would run now: a connected account may view profiles, or the browser session is verified. */
+/** A live read would run now: a connected account may view profiles, or an allowed browser session is verified. */
 export function liveReadReady(): boolean {
-  return readAccount() !== null || linkedinSessionState() === "ok";
+  return readAccount() !== null || (browserReadAllowed() && linkedinSessionState() === "ok");
 }
 
 /**
  * What a live read goes through now: the connected account, else the
- * verified browser session, else nothing (`liveReadReady` is false).
+ * allowed verified browser session, else nothing (`liveReadReady` is false).
  */
 export function liveReadVia(): "account" | "browser" | null {
   if (readAccount() !== null) return "account";
-  return linkedinSessionState() === "ok" ? "browser" : null;
+  return browserReadAllowed() && linkedinSessionState() === "ok" ? "browser" : null;
 }
 
 /** The daily read cap (`linkedinReadsPerDay`), shared by both read paths. */
@@ -862,7 +872,7 @@ export async function readLinkedInProfile(
 
 /**
  * The read itself, behind the cache: the connected account, else the
- * browser session. A profile that cannot be read throws, so the cache keeps
+ * allowed browser session. A profile that cannot be read throws, so the cache keeps
  * it as a negative entry; every other miss is a skip.
  */
 async function readLive(
@@ -896,7 +906,7 @@ async function readLive(
   }
   const cfg = loadConfig();
   const state = linkedinSessionState(cfg);
-  if (state === "unset")
+  if (!browserReadAllowed() || state === "unset")
     return { profile: null, skipped: "not-connected", costUsd: 0, cached: false };
   if (state === "invalid")
     return { profile: null, skipped: "session-invalid", costUsd: 0, cached: false };

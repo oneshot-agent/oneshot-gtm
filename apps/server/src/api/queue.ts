@@ -59,6 +59,7 @@ import {
   type MovedFrom,
 } from "@oneshot-gtm/find";
 import { ensureWorkspaceRunning, resolveOtherWorkspace } from "./workspace.ts";
+import { schedulePhoneOnApproval } from "./queue-phone.ts";
 import {
   MANUAL_PLAYS,
   PLAYS,
@@ -942,6 +943,7 @@ const LIST_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   "offerCandidates",
   "personResearch",
   "phone",
+  "phoneLookup",
   "platform",
   "podcast",
   "podcastName",
@@ -1230,6 +1232,8 @@ export async function approveQueueRoute(
   // Recent posts are bought on approval, in the background: the response
   // never waits on them, and a failed capture never fails the approval.
   scheduleNewsfeedOnApproval([id]);
+  // So is a phone number, when the workspace turned that on.
+  schedulePhoneOnApproval([id]);
   return jsonResponse({ ok: true }, 200, req);
 }
 
@@ -1832,7 +1836,10 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   const pendingIds = filteredPendingIds(ledger, filters);
   const exact = !filters.show || queueShowIsExact(filters.show.show);
   const n = ledger.approveAllPending(exact ? filters : { ...filters, ids: pendingIds });
-  if (n > 0) scheduleNewsfeedOnApproval(pendingIds);
+  if (n > 0) {
+    scheduleNewsfeedOnApproval(pendingIds);
+    schedulePhoneOnApproval(pendingIds);
+  }
   return jsonResponse({ approved: n }, 200, req);
 }
 
