@@ -85,7 +85,7 @@ export function callSectionErrors(
 ): Partial<Record<keyof CallSectionValues, string | null>> {
   const step = values.stepOn;
   return {
-    position: step ? whole(values.position, 1) : null,
+    position: step ? whole(values.position, 2) : null,
     delayDays: step ? whole(values.delayDays, 0) : null,
     holdDays: step ? whole(values.holdDays, 1) : null,
     start: TIME.test(values.start) ? null : "A time like 09:00.",

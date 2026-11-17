@@ -90,7 +90,7 @@ describe("Calls section request", () => {
   it("checks the step numbers and the window", () => {
     const values = { ...callSectionValues(off), stepOn: true, position: "0", end: "08:00" };
     const errors = callSectionErrors(values);
-    expect(errors.position).toMatch(/1 or more/);
+    expect(errors.position).toMatch(/2 or more/);
     expect(errors.delayDays).toBeNull();
     expect(errors.end).toBe("After the start.");
     expect(callSectionErrors({ ...values, stepOn: false, start: "9am" }).position).toBeNull();

@@ -54,7 +54,11 @@ export function CallsSection({
       />
       {v.stepOn && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Field label="Step position" error={s.errors.position} hint="1 = the first follow-up.">
+          <Field
+            label="Step position"
+            error={s.errors.position}
+            hint="Which touch the call is: 2 = right after the first email."
+          >
             <Input
               value={v.position}
               onChange={(e) => s.set("position", e.target.value)}
