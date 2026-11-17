@@ -489,11 +489,11 @@ export function sloganSentences(text: string): string[] {
  * name must come after it; without one, anywhere counts. Unknown name (no
  * one-liner, or one that opens without a name) passes.
  */
-/** True when a line ends a sentence: [.!?], then any closing quotes or brackets. */
-function endsSentence(line: string): boolean {
-  let i = line.length - 1;
-  while (i >= 0 && "\"')".includes(line[i]!)) i--;
-  return i >= 0 && ".!?".includes(line[i]!);
+/** The mark that ends a sentence ([.!?], before any closing quotes or brackets), or null. */
+function sentenceMark(text: string): string | null {
+  let i = text.length - 1;
+  while (i >= 0 && "\"')”’".includes(text[i]!)) i--;
+  return i >= 0 && ".!?".includes(text[i]!) ? text[i]! : null;
 }
 
 function missingProductLine(body: string, offer: string | null | undefined): boolean {
@@ -511,7 +511,7 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   // unpunctuated lines after the last sentence. A name or company there says
   // nothing about what the product does.
   let end = lines.length - 1;
-  while (end >= start && !endsSentence(lines[end] ?? "")) end--;
+  while (end >= start && sentenceMark(lines[end] ?? "") === null) end--;
   if (start < 0 || end < start) return true;
   // Keep abbreviations inside their sentence ("Dr. Lee"), with the same rules
   // the sentence counter uses.
@@ -520,10 +520,10 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
     .join(" ")
     .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
     .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
-    .split(/(?<=[.!?])\s/);
+    .split(/(?<=[.!?]["')”’]*)\s/);
   // A question asks; it does not say what the product is.
   return !(offer ? sentences.slice(1) : sentences).some(
-    (s) => !s.trim().endsWith("?") && named.test(s),
+    (s) => sentenceMark(s.trim()) !== "?" && named.test(s),
   );
 }
 

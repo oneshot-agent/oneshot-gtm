@@ -732,6 +732,17 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai"),
       ).toContain("no-product-line");
+      // A closing quote ends the sentence before it, and a quoted question asks.
+      expect(
+        check(
+          'I can run what your team calls "the backlog." Acme.ai follows up with each patient until they book.',
+        ),
+      ).not.toContain("no-product-line");
+      expect(
+        check(
+          'I can run your open treatment plans to booked visits. Did you ask "should Acme.ai start?"',
+        ),
+      ).toContain("no-product-line");
       // The configured signature is peeled, punctuation and all.
       product.founderName = "Sam at Acme.ai.";
       expect(
