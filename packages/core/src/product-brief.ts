@@ -75,7 +75,7 @@ const MORE_NAME = /^\s+[A-Z][\w.-]*/;
  * product, and no check runs.
  */
 const NAME_FOLLOWER =
-  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets|helps|makes|turns|gives|brings|finds|runs|works|keeps|books|sends|takes|gets|handles|automates|connects|tracks|builds|does|puts|answers|follows|writes|reads|checks|carries|clears|recovers|collects|stops|saves|cuts|moves|pays|ships|monitors|manages|schedules|routes|matches|catches|fixes|replaces|sees|shows|tells|turns|wins|chases|calls|emails|executes|delivers|powers|enables|protects|verifies|finishes|closes)\b)/;
+  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets|helps|makes|turns|gives|brings|finds|runs|works|keeps|books|sends|takes|gets|handles|automates|connects|tracks|builds|does|puts|answers|follows|writes|reads|checks|carries|clears|recovers|collects|stops|saves|cuts|moves|pays|ships|monitors|manages|schedules|routes|matches|catches|fixes|replaces|sees|shows|tells|turns|wins|chases|calls|emails|executes|delivers|powers|enables|protects|verifies|finishes|closes|provides|offers|sells|unifies|simplifies|plans|reviews|drafts|prepares)\b)/;
 
 /**
  * The product's name as the founder's one-liner opens with it ("OneShot is the

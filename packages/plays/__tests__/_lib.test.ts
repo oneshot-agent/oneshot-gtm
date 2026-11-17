@@ -736,6 +736,10 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
       ).toContain("no-product-line");
+      // A company line after a declarative close is the sign-off too.
+      expect(
+        check("I can run your open treatment plans to booked visits.\n\nSam Lee\nAcme.ai Inc."),
+      ).toContain("no-product-line");
       // A short product sentence after the question is a sentence, not the sign-off.
       expect(
         check(
