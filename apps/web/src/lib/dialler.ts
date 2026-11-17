@@ -19,17 +19,87 @@ export function outcomeTitle(outcome: CallOutcome | null): string {
   return CALL_OUTCOMES.find((o) => o.outcome === outcome)?.title ?? "—";
 }
 
+const WEEKDAY: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+/** The clock in one IANA zone: "14:05" and the weekday (0 = Sunday); null for a zone Intl doesn't know. */
+export function zoneClock(zone: string, now: Date): { hhmm: string; weekday: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      weekday: "short",
+    }).formatToParts(now);
+    const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const weekday = WEEKDAY[part("weekday")];
+    if (weekday === undefined) return null;
+    return { hhmm: `${part("hour")}:${part("minute")}`, weekday };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Inside the call window in every zone the number may be in, read from the
+ * browser's clock so it never waits on the next poll. An unknown zone (or
+ * none at all) counts as inside, as the server counts it.
+ */
+export function inCallWindow(
+  zones: readonly string[],
+  window: CallListResponse["window"],
+  now: Date,
+): boolean {
+  return zones.every((zone) => {
+    const clock = zoneClock(zone, now);
+    if (!clock) return true;
+    if (window.weekdays && (clock.weekday === 0 || clock.weekday === 6)) return false;
+    return clock.hhmm >= window.start && clock.hhmm < window.end;
+  });
+}
+
+/** Their local time now, from the first zone; the server's reading when the zone is unknown. */
+export function localTimeNow(local: CallListRow["local"], now: Date): string | null {
+  const zone = local.zones[0];
+  return (zone ? zoneClock(zone, now)?.hhmm : null) ?? local.localTime;
+}
+
 /** A number that can be called now: it has one and it is inside their call window. */
-export function canDial(row: Pick<CallListRow, "phone" | "local">): boolean {
-  return row.phone != null && row.local.inWindow;
+export function canDial(
+  row: Pick<CallListRow, "phone" | "local">,
+  window: CallListResponse["window"],
+  now: Date,
+): boolean {
+  return row.phone != null && inCallWindow(row.local.zones, window, now);
 }
 
 /** "calls at 09:00 their time", outside the window; null inside it. */
 export function windowHint(
   row: Pick<CallListRow, "local">,
   window: CallListResponse["window"],
+  now: Date,
 ): string | null {
-  return row.local.inWindow ? null : `calls at ${window.start} their time`;
+  return inCallWindow(row.local.zones, window, now) ? null : `calls at ${window.start} their time`;
+}
+
+/**
+ * Call was clicked: check the window once more on the clock as it is now.
+ * Outside it, the tel: link is stopped and the page re-reads the clock.
+ */
+export function beginCall(
+  e: { preventDefault: () => void },
+  row: Pick<CallListRow, "phone" | "local">,
+  window: CallListResponse["window"],
+  handlers: { start: () => void; refresh: () => void },
+  now: Date = new Date(),
+): boolean {
+  if (canDial(row, window, now)) {
+    handlers.start();
+    return true;
+  }
+  e.preventDefault();
+  handlers.refresh();
+  return false;
 }
 
 /** The row after this one in its own section; null at the end. */
@@ -84,21 +154,52 @@ export interface DialKeyEvent {
   altKey: boolean;
 }
 
+function tagOf(
+  target: EventTarget | null,
+): { tag: string; editable: boolean; role: string | null } | null {
+  const el = target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+    getAttribute?: (name: string) => string | null;
+  } | null;
+  if (!el || typeof el.tagName !== "string") return null;
+  return {
+    tag: el.tagName,
+    editable: el.isContentEditable === true,
+    role: el.getAttribute?.("role") ?? null,
+  };
+}
+
 function inEditable(target: EventTarget | null): boolean {
-  const el = target as { tagName?: string; isContentEditable?: boolean } | null;
-  if (!el || typeof el.tagName !== "string") return false;
-  if (el.isContentEditable) return true;
-  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+  const t = tagOf(target);
+  if (!t) return false;
+  return t.editable || t.tag === "INPUT" || t.tag === "TEXTAREA" || t.tag === "SELECT";
+}
+
+/** A control that does its own thing on Enter: a button, link, field or switch. */
+function isInteractive(target: EventTarget | null): boolean {
+  const t = tagOf(target);
+  if (!t) return false;
+  return (
+    inEditable(target) ||
+    t.tag === "BUTTON" ||
+    t.tag === "A" ||
+    t.tag === "SUMMARY" ||
+    t.role === "button" ||
+    t.role === "switch" ||
+    t.role === "link"
+  );
 }
 
 /**
  * A key on the dial panel: a digit picks its outcome, Enter saves and moves
- * on. Typing in the note keeps its keys; ⌘/Ctrl+Enter saves from there.
+ * on. Typing in the note keeps its keys, and a focused button or link keeps
+ * its own Enter; ⌘/Ctrl+Enter saves from anywhere.
  */
 export function dialKeyAction(e: DialKeyEvent): DialAction | { kind: "save" } | null {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return { kind: "save" };
   if (inEditable(e.target) || e.metaKey || e.ctrlKey || e.altKey) return null;
-  if (e.key === "Enter") return { kind: "save" };
+  if (e.key === "Enter") return isInteractive(e.target) ? null : { kind: "save" };
   const hit = OUTCOME_KEYS.find((o) => o.key === e.key);
   return hit ? { kind: "pick", outcome: hit.outcome } : null;
 }

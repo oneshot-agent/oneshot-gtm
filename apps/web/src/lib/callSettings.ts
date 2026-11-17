@@ -84,15 +84,14 @@ export function callSectionErrors(
   values: CallSectionValues,
 ): Partial<Record<keyof CallSectionValues, string | null>> {
   const step = values.stepOn;
+  const misordered = TIME.test(values.start) && TIME.test(values.end) && values.end <= values.start;
   return {
     position: step ? whole(values.position, 2) : null,
     delayDays: step ? whole(values.delayDays, 0) : null,
     holdDays: step ? whole(values.holdDays, 1) : null,
-    start: TIME.test(values.start) ? null : "A time like 09:00.",
-    end: !TIME.test(values.end)
-      ? "A time like 17:00."
-      : TIME.test(values.start) && values.end <= values.start
-        ? "After the start."
-        : null,
+    // The window's order is checked on both ends: errors show only on edited
+    // fields, and moving just one end past the other must still block Save.
+    start: !TIME.test(values.start) ? "A time like 09:00." : misordered ? "Before the end." : null,
+    end: !TIME.test(values.end) ? "A time like 17:00." : misordered ? "After the start." : null,
   };
 }

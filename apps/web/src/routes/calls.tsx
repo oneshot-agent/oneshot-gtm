@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
@@ -8,7 +8,16 @@ import { NoNumber } from "../components/calls/NoNumber.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
-import { findRow, nextRow, outcomeTitle, sectionRows, windowHint } from "../lib/dialler.ts";
+import {
+  beginCall,
+  canDial,
+  findRow,
+  localTimeNow,
+  nextRow,
+  outcomeTitle,
+  sectionRows,
+  windowHint,
+} from "../lib/dialler.ts";
 import { useMask } from "../lib/privacy.tsx";
 
 interface CallsSearch {
@@ -49,6 +58,13 @@ export function CallsView({
   // When Call was pressed, per prospect: the panel's timer reads it.
   const [started, setStarted] = useState<{ prospectId: number; at: number } | null>(null);
   const start = (prospectId: number) => setStarted({ prospectId, at: Date.now() });
+  // The call window is read on this clock, so a row turns callable (or not)
+  // as a boundary passes, without waiting on the next poll.
+  const [now, refresh] = useNow(CLOCK_TICK_MS);
+  // Which row is open as of the latest render: a save that finishes after the
+  // founder opened someone else must not move them on.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   const header = (
     <div>
@@ -61,7 +77,9 @@ export function CallsView({
     </div>
   );
 
-  if (error) {
+  // A failed refresh keeps the page (and the open panel's outcome and note);
+  // only a first load that failed replaces it.
+  if (error && !data) {
     return (
       <div className="flex flex-col gap-6">
         {header}
@@ -122,6 +140,8 @@ export function CallsView({
               key={r.prospectId}
               row={r}
               data={data}
+              now={now}
+              onRefresh={refresh}
               open={r.prospectId === selected}
               onOpen={() => onOpen(r.prospectId)}
               onStart={() => {
@@ -138,6 +158,11 @@ export function CallsView({
   return (
     <div className="flex flex-col gap-6">
       {header}
+      {error && (
+        <div className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+          couldn't refresh calls · {error.message}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <div className="flex min-w-0 flex-col gap-8">
           {section("Due", data.due, "No cadence calls due.")}
@@ -151,9 +176,12 @@ export function CallsView({
               next={next}
               dialMode={data.dialMode}
               window={data.window}
+              now={now}
+              onRefresh={refresh}
               startedAt={started?.prospectId === row.prospectId ? started.at : null}
               onStart={() => start(row.prospectId)}
               onOpen={onOpen}
+              isOpen={(id) => selectedRef.current === id}
             />
           ) : selected != null ? (
             <EmptyNote note="This person isn't on the call list: no usable number, or they can't be contacted." />
@@ -169,19 +197,24 @@ export function CallsView({
 function CallRow({
   row,
   data,
+  now,
+  onRefresh,
   open,
   onOpen,
   onStart,
 }: {
   row: CallListRow;
   data: CallListResponse;
+  now: Date;
+  onRefresh: () => void;
   open: boolean;
   onOpen: () => void;
   onStart: () => void;
 }) {
   const mask = useMask();
-  const hint = windowHint(row, data.window);
-  const dialable = row.phone != null && !hint && data.dialMode === "tel";
+  const hint = windowHint(row, data.window, now);
+  const dialable = canDial(row, data.window, now) && data.dialMode === "tel";
+  const localTime = localTimeNow(row.local, now);
   return (
     <div
       onClick={(e) => {
@@ -210,13 +243,19 @@ function CallRow({
           {row.phone == null ? (
             <NoNumber row={row} />
           ) : dialable ? (
-            <a href={`tel:${row.phone}`} onClick={onStart} className="hover:text-ink-cream">
+            <a
+              href={`tel:${row.phone}`}
+              onClick={(e) =>
+                beginCall(e, row, data.window, { start: onStart, refresh: onRefresh })
+              }
+              className="hover:text-ink-cream"
+            >
               {mask("phone", row.phone)}
             </a>
           ) : (
             <span>{mask("phone", row.phone)}</span>
           )}
-          {row.local.localTime && <span>· {row.local.localTime} their time</span>}
+          {localTime && <span>· {localTime} their time</span>}
           <span>· {row.reason}</span>
           {row.lastTouchAt && <span>· last touch {timeAgo(row.lastTouchAt)}</span>}
           {row.lastCall && (
@@ -228,8 +267,27 @@ function CallRow({
       </div>
       {/* The bridge's button lives in the panel only. */}
       {(data.dialMode === "tel" || hint) && (
-        <CallControl row={row} dialMode={data.dialMode} hint={hint} onStart={onStart} />
+        <CallControl
+          row={row}
+          dialMode={data.dialMode}
+          window={data.window}
+          now={now}
+          onStart={onStart}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );
+}
+
+const CLOCK_TICK_MS = 30_000;
+
+/** The current time, re-read every `ms` and on demand. */
+function useNow(ms: number): [Date, () => void] {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), ms);
+    return () => clearInterval(t);
+  }, [ms]);
+  return [now, () => setNow(new Date())];
 }

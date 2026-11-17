@@ -1,13 +1,15 @@
 import type { ReactElement, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallBrief, CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
 import { api } from "../src/api/client.ts";
 import { briefKey, saveCall } from "../src/components/calls/DialPanel.tsx";
 import { CallsView } from "../src/routes/calls.tsx";
 import {
+  beginCall,
   dialKeyAction,
+  inCallWindow,
   dialReducer,
   logCallRequest,
   nextRow,
@@ -99,9 +101,17 @@ const key = (
   ...mods,
 });
 
+// A Wednesday, 10:05 in Chicago and 01:05 Thursday in Tokyo: the page reads
+// the call window on this clock, not on the server's last reading.
+const NOW = new Date("2026-11-18T16:05:00Z");
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
 afterEach(() => {
   client.clear();
   client = new QueryClient();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -121,12 +131,39 @@ describe("Calls page", () => {
     expect(html).toContain("Call</a>");
   });
 
-  it("hides Call outside their window and says when it opens", () => {
-    const out = row({ local: { zones: [], localTime: "20:10", inWindow: false, opensAt: null } });
-    const html = page(data({ due: [out], list: [] }));
+  it("hides Call outside their window on this clock, whatever the last poll said", () => {
+    // The server read it as inside; it is 01:05 in Tokyo now.
+    const local = { zones: ["Asia/Tokyo"], localTime: "16:55", inWindow: true, opensAt: null };
+    const html = page(data({ due: [row({ local })], list: [] }));
     expect(html).toContain("calls at 09:00 their time");
+    expect(html).toContain("01:05 their time");
     expect(html).not.toContain("tel:");
     expect(html).not.toContain("Call</a>");
+  });
+
+  it("shows Call once the window opened since the last poll", () => {
+    const local = {
+      zones: ["America/Chicago"],
+      localTime: "08:58",
+      inWindow: false,
+      opensAt: null,
+    };
+    const html = page(data({ due: [row({ local })], list: [] }));
+    expect(html).toContain("Call</a>");
+    expect(html).not.toContain("calls at 09:00");
+  });
+
+  it("keeps the page and the open panel when a refresh fails", () => {
+    const html = render(
+      <CallsView data={data()} error={new Error("offline")} selected={1} onOpen={() => {}} />,
+    );
+    expect(html).toContain("couldn&#x27;t refresh calls · offline");
+    expect(html).toContain(">Due (1)</h2>");
+    expect(html).toContain("Do not contact");
+    const first = render(
+      <CallsView data={undefined} error={new Error("offline")} selected={1} onOpen={() => {}} />,
+    );
+    expect(first).toContain("couldn&#x27;t load calls · offline");
   });
 
   it("shows No number, with a link to the queue row when there is one", () => {
@@ -168,6 +205,39 @@ describe("Calls page", () => {
   });
 });
 
+describe("call window on the browser clock", () => {
+  const win = { start: "09:00", end: "17:00", weekdays: true };
+
+  it("needs every zone inside the window; an unknown zone counts as inside", () => {
+    expect(inCallWindow(["America/Chicago"], win, NOW)).toBe(true);
+    expect(inCallWindow(["America/Chicago", "Asia/Tokyo"], win, NOW)).toBe(false);
+    expect(inCallWindow([], win, NOW)).toBe(true);
+    expect(inCallWindow(["Not/AZone", "America/Chicago"], win, NOW)).toBe(true);
+  });
+
+  it("ends at the window's end and skips weekends when asked", () => {
+    expect(inCallWindow(["America/Chicago"], win, new Date("2026-11-18T22:59:00Z"))).toBe(true);
+    expect(inCallWindow(["America/Chicago"], win, new Date("2026-11-18T23:00:00Z"))).toBe(false);
+    const saturday = new Date("2026-11-21T16:05:00Z");
+    expect(inCallWindow(["America/Chicago"], win, saturday)).toBe(false);
+    expect(inCallWindow(["America/Chicago"], { ...win, weekdays: false }, saturday)).toBe(true);
+  });
+
+  it("checks again when Call is clicked, and stops the link when the window has closed", () => {
+    const r = row();
+    const handlers = { start: vi.fn(), refresh: vi.fn() };
+    const e = { preventDefault: vi.fn() };
+    expect(beginCall(e, r, win, handlers, NOW)).toBe(true);
+    expect(handlers.start).toHaveBeenCalledTimes(1);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+
+    expect(beginCall(e, r, win, handlers, new Date("2026-11-18T23:30:00Z"))).toBe(false);
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    expect(handlers.refresh).toHaveBeenCalledTimes(1);
+    expect(handlers.start).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("dial keys and Save & next", () => {
   const start: DialState = { outcome: null, note: "", holdUntil: "2026-11-24" };
 
@@ -197,6 +267,33 @@ describe("dial keys and Save & next", () => {
     expect(dialKeyAction(key("2", null, { metaKey: true }))).toBeNull();
   });
 
+  it("leaves Enter to a focused button, link or switch; ⌘↵ and digits still work there", () => {
+    const button = { tagName: "BUTTON", getAttribute: () => null };
+    const link = { tagName: "A", getAttribute: () => null };
+    const toggle = {
+      tagName: "SPAN",
+      getAttribute: (n: string) => (n === "role" ? "switch" : null),
+    };
+    for (const target of [button, link, toggle]) {
+      expect(dialKeyAction(key("Enter", target))).toBeNull();
+      expect(dialKeyAction(key("Enter", target, { ctrlKey: true }))).toEqual({ kind: "save" });
+    }
+    expect(dialKeyAction(key("3", button))).toEqual({ kind: "pick", outcome: "gatekeeper" });
+    expect(dialKeyAction(key("Enter", { tagName: "BODY", getAttribute: () => null }))).toEqual({
+      kind: "save",
+    });
+  });
+
+  it("stays on the row the founder opened while the save ran", async () => {
+    const log = vi.fn().mockResolvedValue({});
+    const open = vi.fn();
+    const req = logCallRequest({ ...start, outcome: "no_answer" }, {})!;
+    // Row 1 saved; meanwhile row 3 was opened.
+    await saveCall(log, row(), req, row({ prospectId: 2 }), open, (id) => id === 3);
+    expect(log).toHaveBeenCalledWith(1, { outcome: "no_answer" });
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("a key logs its outcome and Enter moves to the next row", async () => {
     const rows = data().list;
     let state = start;
@@ -208,7 +305,7 @@ describe("dial keys and Save & next", () => {
     const log = vi.fn().mockResolvedValue({});
     const open = vi.fn();
     const req = logCallRequest(state, { durationSec: 41.6, playName: null })!;
-    await saveCall(log, rows[0]!, req, nextRow(rows, 2), open);
+    await saveCall(log, rows[0]!, req, nextRow(rows, 2), open, (id) => id === 2);
     expect(log).toHaveBeenCalledWith(2, {
       outcome: "voicemail",
       note: "left a message",
@@ -217,7 +314,7 @@ describe("dial keys and Save & next", () => {
     expect(open).toHaveBeenCalledWith(3);
 
     // The section's last row closes the panel.
-    await saveCall(log, rows[1]!, req, nextRow(rows, 3), open);
+    await saveCall(log, rows[1]!, req, nextRow(rows, 3), open, (id) => id === 3);
     expect(open).toHaveBeenLastCalledWith(null);
   });
 
@@ -225,9 +322,9 @@ describe("dial keys and Save & next", () => {
     const open = vi.fn();
     const log = vi.fn().mockRejectedValue(new Error("offline"));
     const req = logCallRequest({ ...start, outcome: "no_answer" }, {})!;
-    await expect(saveCall(log, row(), req, row({ prospectId: 2 }), open)).rejects.toThrow(
-      "offline",
-    );
+    await expect(
+      saveCall(log, row(), req, row({ prospectId: 2 }), open, () => true),
+    ).rejects.toThrow("offline");
     expect(open).not.toHaveBeenCalled();
   });
 

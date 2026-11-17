@@ -17,6 +17,8 @@ import {
   formatDuration,
   logCallRequest,
   OUTCOME_KEYS,
+  beginCall,
+  localTimeNow,
   outcomeTitle,
   windowHint,
 } from "../../lib/dialler.ts";
@@ -36,8 +38,10 @@ export const briefKey = (row: Pick<CallListRow, "prospectId" | "playName">) => [
 
 /**
  * Log one call and move on: posts the outcome, then opens the next row in
- * the same section (or closes the panel at its end). Kept apart from the
- * component so the keyboard path and the button path are the same code.
+ * the same section (or closes the panel at its end). When the founder opened
+ * someone else while the save ran, the page stays where they went. Kept
+ * apart from the component so the keyboard path and the button path are the
+ * same code.
  */
 export async function saveCall(
   log: (prospectId: number, req: LogCallRequest) => Promise<unknown>,
@@ -45,9 +49,10 @@ export async function saveCall(
   req: LogCallRequest,
   next: Pick<CallListRow, "prospectId"> | null,
   open: (prospectId: number | null) => void,
+  isOpen: (prospectId: number) => boolean,
 ): Promise<void> {
   await log(row.prospectId, req);
-  open(next?.prospectId ?? null);
+  if (isOpen(row.prospectId)) open(next?.prospectId ?? null);
 }
 
 /**
@@ -60,18 +65,27 @@ export function DialPanel({
   next,
   dialMode,
   window: callWindow,
+  now,
+  onRefresh,
   startedAt,
   onStart,
   onOpen,
+  isOpen,
 }: {
   row: CallListRow;
   next: CallListRow | null;
   dialMode: CallListResponse["dialMode"];
   window: CallListResponse["window"];
+  /** The page's clock, which the call window is read on. */
+  now: Date;
+  /** Re-read the clock: Call found the window closed. */
+  onRefresh: () => void;
   /** When Call was pressed for this row (ms); null before. */
   startedAt: number | null;
   onStart: () => void;
   onOpen: (prospectId: number | null) => void;
+  /** Whether this prospect is still the open row. */
+  isOpen: (prospectId: number) => boolean;
 }) {
   const qc = useQueryClient();
   const mask = useMask();
@@ -99,7 +113,7 @@ export function DialPanel({
   });
 
   const save = useMutation({
-    mutationFn: (req: LogCallRequest) => saveCall(api.logCall, row, req, next, onOpen),
+    mutationFn: (req: LogCallRequest) => saveCall(api.logCall, row, req, next, onOpen, isOpen),
     onSuccess: (_data, req) => {
       void qc.invalidateQueries({ queryKey: ["calls"] });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
@@ -131,7 +145,7 @@ export function DialPanel({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  const hint = windowHint(row, callWindow);
+  const localTime = localTimeNow(row.local, now);
   const flags = brief.data?.flags ?? [];
 
   return (
@@ -144,7 +158,7 @@ export function DialPanel({
           </div>
           <div className="mt-1 font-mono text-[11.5px] text-ink-muted">
             {row.phone ? mask("phone", row.phone) : <NoNumber row={row} />}
-            {row.local.localTime && <span> · {row.local.localTime} their time</span>}
+            {localTime && <span> · {localTime} their time</span>}
           </div>
         </div>
         <div className="flex items-center gap-3">
@@ -156,8 +170,10 @@ export function DialPanel({
           <CallControl
             row={row}
             dialMode={dialMode}
-            hint={hint}
+            window={callWindow}
+            now={now}
             onStart={onStart}
+            onRefresh={onRefresh}
             className="h-8 px-3 text-[13px]"
           />
         </div>
@@ -276,17 +292,22 @@ export function DialPanel({
 export function CallControl({
   row,
   dialMode,
-  hint,
+  window: callWindow,
+  now,
   onStart,
+  onRefresh,
   className,
 }: {
   row: Pick<CallListRow, "phone" | "local">;
   dialMode: CallListResponse["dialMode"];
-  hint: string | null;
+  window: CallListResponse["window"];
+  now: Date;
   onStart: () => void;
+  onRefresh: () => void;
   className?: string;
 }) {
   if (!row.phone) return null;
+  const hint = windowHint(row, callWindow, now);
   if (hint) return <span className="font-mono text-[11px] text-ink-faint">{hint}</span>;
   if (dialMode === "bridge") {
     return (
@@ -303,7 +324,8 @@ export function CallControl({
   return (
     <a
       href={`tel:${row.phone}`}
-      onClick={onStart}
+      // Checked again on the clock as it is now: the page's clock ticks only every 30s.
+      onClick={(e) => beginCall(e, row, callWindow, { start: onStart, refresh: onRefresh })}
       className={cn(buttonStyles({ variant: "receipt", size: "sm" }), className)}
     >
       <Phone size={11} /> Call

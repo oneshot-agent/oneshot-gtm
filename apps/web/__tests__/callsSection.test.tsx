@@ -87,6 +87,16 @@ describe("Calls section request", () => {
     expect(callSectionRequest(values, {})).toEqual({});
   });
 
+  it("flags a window out of order on both ends, so editing either one blocks Save", () => {
+    const base = callSectionValues(off);
+    // Only the start moved past the end: the error lands on the edited field.
+    expect(callSectionErrors({ ...base, start: "18:00" }).start).toBe("Before the end.");
+    expect(callSectionErrors({ ...base, end: "08:00" }).end).toBe("After the start.");
+    expect(callSectionErrors({ ...base, start: "17:00" }).end).toBe("After the start.");
+    expect(callSectionErrors(base).start).toBeNull();
+    expect(callSectionErrors(base).end).toBeNull();
+  });
+
   it("checks the step numbers and the window", () => {
     const values = { ...callSectionValues(off), stepOn: true, position: "0", end: "08:00" };
     const errors = callSectionErrors(values);
