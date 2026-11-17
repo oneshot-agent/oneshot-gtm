@@ -236,8 +236,9 @@ export function normalizePhone(
   // national numbers run 6–11 digits), the code plus at least eight, and
   // longer than any national number starting with those digits could be.
   // North American numbers never reach here: they are read above.
+  // A trunk-prefix country's national form starts with its trunk "0", which
+  // no calling code does, so the same reading holds there.
   if (
-    !plan.trunk &&
     s.startsWith(plan.code) &&
     (plan.national
       ? s.length === plan.code.length + plan.national

@@ -42,6 +42,12 @@ describe("normalizePhone", () => {
     expect(normalizePhone(null)).toBeNull();
   });
 
+  it("reads a trunk-prefix country's number written with its code and no plus", () => {
+    expect(normalizePhone("442079460958", "GB")).toBe("+442079460958");
+    expect(normalizePhone("02079460958", "GB")).toBe("+442079460958");
+    expect(normalizePhone("2079460958", "GB")).toBe("+442079460958");
+  });
+
   it("drops a bracketed trunk zero after the country code, where the plan has one", () => {
     expect(normalizePhone("+44 (0)20 7946 0958")).toBe("+442079460958");
     expect(normalizePhone("+44(0) 20 7946 0958")).toBe("+442079460958");
