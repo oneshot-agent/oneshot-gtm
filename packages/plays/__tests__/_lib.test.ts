@@ -1,11 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
 // The subject checks below are the lowercase rule's: a workspace that sets it.
+const product = vi.hoisted(() => ({
+  oneLiner: null as string | null,
+  founderName: undefined as string | undefined,
+}));
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    loadConfig: () => ({ ...actual.loadConfig(), subjectCase: "lowercase" }),
+    loadConfig: () => ({
+      ...actual.loadConfig(),
+      subjectCase: "lowercase",
+      productOneLiner: product.oneLiner,
+      ...(product.founderName ? { founderName: product.founderName } : {}),
+    }),
   };
 });
 
@@ -16,6 +25,7 @@ import {
   meetingBlock,
   openerStem,
   overusedOpeners,
+  sloganSentences,
   thinBody,
 } from "../src/_lib.ts";
 
@@ -610,5 +620,218 @@ describe("thin-body — a follow-up too thin to carry its offer", () => {
     expect(lintEmail("vendor renewals", full, 50, undefined, opts)).not.toContain(
       "opens-without-offer",
     );
+  });
+});
+
+describe("lintEmail — slogan-line", () => {
+  it.each([
+    "A demo answers questions, but a hard number moves a board.",
+    "A demo answers questions; a number moves a board.",
+    "A model can predict component failure, but service contracts are judged on resolved downtime.",
+  ])("flags the general saying %s", (line) => {
+    expect(sloganSentences(`Want me to run it?\n\n${line}`)).toEqual([line]);
+    expect(lintEmail("pilot", `Want me to run it?\n\n${line}\n\nSam`)).toContain("slogan-line");
+  });
+
+  it.each([
+    // Over the length a saying runs to: an explanation, not a maxim.
+    "Deciding what needs to happen is easy for a model, but acting across channels usually means wiring vendor accounts, API keys, and retry logic for every step.",
+    // No contrast.
+    "Field teams usually find out about delayed materials only after a delivery fails to show up.",
+    // About the reader.
+    "A demo answers questions, but your board wants a number.",
+    // About their firm.
+    "A demo answers questions, but Carpe's board wants a number.",
+    "We agree the target first, but your team decides when it is done.",
+    // A firm named first, not a generic plural.
+    "Atlas is measured on booked visits, but a demo answers questions.",
+    "Atlas can predict failure, but a number moves a board.",
+    "Boeing builds planes, but a pilot flies them.",
+  ])("passes a plain sentence: %s", (line) => {
+    expect(sloganSentences(line)).toEqual([]);
+  });
+});
+
+describe("lintEmail — no-product-line", () => {
+  const body = "Want me to run your open treatment plans this month?\n\nSam\nacme.com";
+
+  it("flags a follow-up that never names the product", () => {
+    product.oneLiner = "Acme brings back patients whose treatment was never booked.";
+    try {
+      expect(lintEmail("re: plans", body, 110, undefined, { followUp: true })).toContain(
+        "no-product-line",
+      );
+      expect(
+        lintEmail("re: plans", `Acme books those patients. ${body}`, 110, undefined, {
+          followUp: true,
+        }),
+      ).not.toContain("no-product-line");
+      // A first touch is not checked.
+      expect(lintEmail("plans", body)).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("does not take the signature's domain for the name", () => {
+    product.oneLiner = "Acme is the scheduling layer for clinics.";
+    try {
+      expect(
+        lintEmail("re: plans", "Want me to run it?\n\nSam\nacmeclinics.com", 110, undefined, {
+          followUp: true,
+        }),
+      ).toContain("no-product-line");
+      expect(
+        lintEmail("re: plans", "Acme's schedulers run it. Want me to?", 110, undefined, {
+          followUp: true,
+        }),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("wants the name in a sentence of its own after the offer", () => {
+    product.oneLiner = "Acme brings back patients whose treatment was never booked.";
+    const offer = "run your open treatment plans to booked visits";
+    try {
+      expect(
+        lintEmail(
+          "re: plans",
+          "Want me to run your open treatment plans through Acme?",
+          110,
+          undefined,
+          {
+            followUp: true,
+            offer,
+          },
+        ),
+      ).toContain("no-product-line");
+      expect(
+        lintEmail(
+          "re: plans",
+          "Want me to run your open treatment plans to booked visits? Acme follows up with each patient until they book.",
+          110,
+          undefined,
+          { followUp: true, offer },
+        ),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("does not count a closing question or the signature as the product line", () => {
+    product.oneLiner = "Acme.ai brings back patients whose treatment was never booked.";
+    const offer = "run your open treatment plans to booked visits";
+    const check = (body: string) =>
+      lintEmail("re: plans", body, 110, undefined, { followUp: true, offer });
+    try {
+      expect(
+        check("Want me to run your open treatment plans to booked visits? Should Acme.ai start?"),
+      ).toContain("no-product-line");
+      expect(
+        check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai"),
+      ).toContain("no-product-line");
+      // A company line after the closing question is the sign-off.
+      expect(
+        check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
+      ).toContain("no-product-line");
+      // Lowercase prose splits on its plain marks.
+      expect(
+        check(
+          "want me to run your open treatment plans to booked visits? acme.ai follows up with each patient until they book. want me to start?",
+        ),
+      ).not.toContain("no-product-line");
+      // A quoted sentence inside the offer does not end it.
+      expect(
+        check(
+          'I can send the reminder "Your visit is due." through Acme.ai for your team. Want me to?',
+        ),
+      ).toContain("no-product-line");
+      // An initialism does not end the offer sentence.
+      expect(
+        check("I can run open treatment plans for your U.S. clinics through Acme.ai this month."),
+      ).toContain("no-product-line");
+      // A company line after a declarative close is the sign-off too.
+      expect(
+        check("I can run your open treatment plans to booked visits.\n\nSam Lee\nAcme.ai Inc."),
+      ).toContain("no-product-line");
+      // A short product sentence after the question is a sentence, not the sign-off.
+      expect(
+        check(
+          "Want me to run your open treatment plans to booked visits?\n\nAcme.ai books them.\n\nSam",
+        ),
+      ).not.toContain("no-product-line");
+      // A closing quote ends the sentence before it, and a quoted question asks.
+      expect(
+        check(
+          'I can run what your team calls "the backlog." Acme.ai follows up with each patient until they book.',
+        ),
+      ).not.toContain("no-product-line");
+      expect(
+        check(
+          'I can run your open treatment plans to booked visits. Did you ask "should Acme.ai start?"',
+        ),
+      ).toContain("no-product-line");
+      // The configured signature is peeled, punctuation and all.
+      product.founderName = "Sam at Acme.ai.";
+      expect(
+        check("Want me to run your open treatment plans to booked visits?\n\nSam at Acme.ai."),
+      ).toContain("no-product-line");
+      product.founderName = undefined;
+      // "Dr." does not end the offer sentence.
+      expect(
+        check("I can run Dr. Acme.ai's open treatment plans to booked visits for you."),
+      ).toContain("no-product-line");
+      expect(
+        check(
+          "Want me to run your open treatment plans to booked visits? Acme.ai follows up with each patient until they book.\n\nSam\nacme.ai",
+        ),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("matches a name with an abbreviation in it", () => {
+    product.oneLiner = "Co.ai books the patients your plans left open.";
+    try {
+      expect(
+        lintEmail(
+          "re: plans",
+          "Want me to run your open treatment plans to booked visits? Co.ai follows up with each patient until they book.",
+          110,
+          undefined,
+          { followUp: true, offer: "run your open treatment plans to booked visits" },
+        ),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("reads the name after an introducing word", () => {
+    product.oneLiner = "Meet Acme: scheduling for clinics.";
+    try {
+      expect(
+        lintEmail("re: plans", "Acme books the patients your plans left open.", 110, undefined, {
+          followUp: true,
+        }),
+      ).not.toContain("no-product-line");
+    } finally {
+      product.oneLiner = null;
+    }
+  });
+
+  it("checks nothing when the one-liner does not open with a name", () => {
+    product.oneLiner = "We help clinics book patients.";
+    try {
+      expect(lintEmail("re: plans", body, 110, undefined, { followUp: true })).not.toContain(
+        "no-product-line",
+      );
+    } finally {
+      product.oneLiner = null;
+    }
   });
 });

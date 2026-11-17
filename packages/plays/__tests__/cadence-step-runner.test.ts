@@ -84,7 +84,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "TestProduct",
+      productOneLiner: "a test product", // no leading name: no-product-line stays out of it
       productDomain: null,
       sendingDomain: null,
       icpOneLiner: null,

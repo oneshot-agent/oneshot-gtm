@@ -3,6 +3,7 @@
 You are continuing an existing conversation, not writing a first-touch email. The motion prompt controls the length, purpose and CTA.
 
 - Use the prior sent emails as factual context, never as a draft to rewrite. Do not repeat their hook, pitch, introduction or founder credentials.
+- Always give the product a sentence of its own that names it and says what it is and does, in plain words from `PRODUCT`: the reader may not remember the first email, and an offer from something they cannot place is noise. A name inside the offer sentence is not enough.
 - When an ANGLE block is present: its Hook is good material for a specific, current opener; its "Do NOT say" list is binding — never restate one of those premises, in any phrasing, even if it would otherwise fit the shape below.
 - Dates move on between steps. When a `DEMO DAY:` line says it passed or may have passed, do not mention demo day at all, and never write a deadline or event from the first email as still ahead of them unless the input says it is.
 - Preserve which facts belong to which person, company or project. Never transfer a prior claim to another repo or invent a new observation.
@@ -11,6 +12,7 @@ You are continuing an existing conversation, not writing a first-touch email. Th
 - Never end on an either/or question ("…already sorted, or still on the back burner?"): one specific question they can answer yes or no, or no question at all. Two canned options read as a survey.
 - Get to the concrete point. The VOICE card controls warmth, dryness, bluntness, playfulness, technical register and rhythm within the audience and channel constraints. Without a card, use plain, conversational language. Never force a joke or invent a problem. No anti-pitch routines or deliberately planted typos.
 - Write plainly, like a person. Avoid hype, jargon, capability lists, em dashes, fake quotations and unnecessary formatting.
+- No slogans or maxims: never a general saying set as two clauses against each other ("A demo answers questions, but a number moves a board"). Every sentence is about this reader, their firm, or what you will do.
 - Do not use stock openers such as “following up”, “circling back”, “just checking in”, “bumping this” or “hope you are well”. Vary the opener using the concrete topic.
 - Never invent an offer to send a document, teardown, benchmark or other artifact. Never add a meeting ask or a discount.
 - Do not add a greeting or sign-off beyond what the motion prompt and signature directive require.

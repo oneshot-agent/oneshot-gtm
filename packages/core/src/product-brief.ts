@@ -63,3 +63,40 @@ export function productBriefText(
 function clipText(text: string, max: number): string {
   return text.length > max ? `${sliceText(text, Math.max(0, max - 1))}…` : text;
 }
+
+/** Leading words that open a one-liner without naming the product. */
+const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
+const INTRODUCING = /^(?:Meet|Introducing|Try|Say hello to)\s+/;
+const NAME_TOKEN = /^[A-Z][\w.-]*/;
+const MORE_NAME = /^\s+[A-Z][\w.-]*/;
+/**
+ * What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…".
+ * The verbs are a list, not "any word ending in s": "Automate workflows for
+ * clinics" opens on an instruction. A one-liner none of them fits names no
+ * product, and no check runs.
+ */
+const NAME_FOLLOWER =
+  /^(?:['’]s\b|\s*[:,(—–]|\s+-\s|\s+(?:is|are|was|has|can|will|lets|helps|makes|turns|gives|brings|finds|runs|works|keeps|books|sends|takes|gets|handles|automates|connects|tracks|builds|does|puts|answers|follows|writes|reads|checks|carries|clears|recovers|collects|stops|saves|cuts|moves|pays|ships|monitors|manages|schedules|routes|matches|catches|fixes|replaces|sees|shows|tells|turns|wins|chases|calls|emails|executes|delivers|powers|enables|protects|verifies|finishes|closes|provides|offers|sells|unifies|simplifies|plans|reviews|drafts|prepares)\b)/;
+
+/**
+ * The product's name as the founder's one-liner opens with it ("OneShot is the
+ * execution layer…" → "OneShot"), for checks that a message names what is being
+ * offered. Null when the one-liner is unset or does not open with a name.
+ */
+export function productNameOf(cfg: Pick<OneShotConfig, "productOneLiner">): string | null {
+  // "Meet Acme: …" introduces the name; the name is the word after it.
+  const text = (cfg.productOneLiner?.trim() ?? "").replace(INTRODUCING, "");
+  const token = NAME_TOKEN.exec(text)?.[0] ?? "";
+  // "Acme." ends the token, not the name: a trailing dot or dash is punctuation.
+  let name = token;
+  while (name && ".-".includes(name[name.length - 1]!)) name = name.slice(0, -1);
+  if (!name || NOT_A_NAME.has(name.toLowerCase())) return null;
+  // Skip the rest of a multi-word name ("Acme Clinics is…").
+  let rest = text.slice(token.length);
+  for (let next = MORE_NAME.exec(rest); next; next = MORE_NAME.exec(rest)) {
+    rest = rest.slice(next[0].length);
+  }
+  // A name is what the sentence is about: a verb or a clause mark follows it.
+  // "Automate patient follow-ups" opens on an instruction, not a name.
+  return NAME_FOLLOWER.test(rest) ? name : null;
+}

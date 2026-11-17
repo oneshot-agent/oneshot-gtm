@@ -19,7 +19,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "TestProduct",
+      productOneLiner: "a test product", // no leading name: no-product-line stays out of it
       productDomain: null,
       sendingDomain: null,
       emailProvider: "oneshot" as const,
@@ -118,7 +118,7 @@ function ctx(prospectId = 42, angleJson: string | null = null) {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "TestProduct",
+      productOneLiner: "a test product", // no leading name: no-product-line stays out of it
       productDomain: null,
       sendingDomain: null,
       emailProvider: "oneshot" as const,
@@ -171,7 +171,7 @@ describe("buildFollowUpEmail — VOICE block", () => {
     const userMsg = llmCalls[0]!.user;
     expect(userMsg).toContain("VOICE (the founder's own register");
     expect(userMsg).toContain("cost is information.");
-    expect(userMsg).toContain("VOICE BUDGET: at most ONE aphoristic");
+    expect(userMsg).toContain("VOICE BUDGET: at most ONE deflating line");
     expect(userMsg.indexOf("VOICE (")).toBeGreaterThan(
       userMsg.indexOf("PLAY: stack-consolidation"),
     );
@@ -187,7 +187,7 @@ describe("buildFollowUpEmail — VOICE block", () => {
     });
     await builder(ctx());
     expect(llmCalls[0]!.user).toContain("no aphorism in a breakup");
-    expect(llmCalls[0]!.user).not.toContain("at most ONE aphoristic");
+    expect(llmCalls[0]!.user).not.toContain("at most ONE deflating line");
   });
 
   it("carries only the greeting and subject-case lines, with no key on the payload, when no card is set", async () => {

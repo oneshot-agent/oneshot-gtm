@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const responses: string[] = [];
 const calls: Array<Array<{ role: string; content: string }>> = [];
 const events: Array<{ kind: string; ctx: Record<string, unknown> }> = [];
+let productOneLiner = "thing";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -17,7 +18,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       llmProvider: "anthropic",
       llmModel: "test",
       founderName: "Founder",
-      productOneLiner: "thing",
+      productOneLiner,
       productDomain: null,
       founderCredentials: null,
       productPortfolio: null,
@@ -59,6 +60,7 @@ const words = (n: number): string => Array.from({ length: n }, (_, i) => `w${i}`
 const json = (body: string): string => JSON.stringify({ subject: "subject", body });
 
 beforeEach(() => {
+  productOneLiner = "thing";
   responses.length = 0;
   calls.length = 0;
   events.length = 0;
@@ -240,6 +242,7 @@ describe("shared writing lint repair", () => {
     ["excess-exclamations", "Good news! It works!"],
     ["calendar-link", "Book at https://cal.com/example."],
     ["public-record-leverage", "Your license expired."],
+    ["slogan-line", "A demo answers questions, but a hard number moves a board."],
   ])("repairs %s with its actual lint feedback", async (flag, body) => {
     responses.push(JSON.stringify(clean));
     const fixed = await repairWritingLints(messages(), { ...clean, body }, { promptName: "p" });
@@ -247,6 +250,24 @@ describe("shared writing lint repair", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.at(-1)?.content).toContain(flag);
     expect(calls[0]?.[0]?.content).toContain("Verified context");
+  });
+
+  it("repairs a follow-up that never names the product", async () => {
+    productOneLiner = "Acme books the patients your plans left open.";
+    const named = {
+      ...clean,
+      body: "Acme books the patients your plans left open. Want me to run it?",
+    };
+    responses.push(JSON.stringify(named));
+    const fixed = await repairWritingLints(
+      messages(),
+      { ...clean, body: "Want me to run your open treatment plans this month?" },
+      { promptName: "p", followUp: true },
+    );
+    expect(fixed).toEqual(named);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.at(-1)?.content).toContain("no-product-line");
+    expect(calls[0]?.at(-1)?.content).toContain("names the product");
   });
 
   it("keeps the subject locked for body-only public record wording", async () => {

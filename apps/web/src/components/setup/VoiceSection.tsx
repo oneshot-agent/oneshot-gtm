@@ -38,7 +38,7 @@ export function VoiceSection({ cfg, onDirtyChange }: SectionProps) {
   return (
     <SectionShell
       {...s.shell}
-      lede="How you write, in your words. The drafts keep their structure and the anti-slop rules; this shapes the sentences. One aphoristic line per email at most."
+      lede="How you write, in your words. The drafts keep their structure and the anti-slop rules; this shapes the sentences. No slogans or general sayings."
     >
       <Field
         label="Voice card"
