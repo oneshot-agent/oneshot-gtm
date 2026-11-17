@@ -646,6 +646,7 @@ describe("lintEmail — slogan-line", () => {
     // A firm named first, not a generic plural.
     "Atlas is measured on booked visits, but a demo answers questions.",
     "Atlas can predict failure, but a number moves a board.",
+    "Boeing builds planes, but a pilot flies them.",
   ])("passes a plain sentence: %s", (line) => {
     expect(sloganSentences(line)).toEqual([]);
   });
@@ -735,6 +736,12 @@ describe("lintEmail — no-product-line", () => {
       // A company line after the closing question is the sign-off.
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
+      ).toContain("no-product-line");
+      // A quoted sentence inside the offer does not end it.
+      expect(
+        check(
+          'I can send the reminder "Your visit is due." through Acme.ai for your team. Want me to?',
+        ),
       ).toContain("no-product-line");
       // A company line after a declarative close is the sign-off too.
       expect(

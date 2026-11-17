@@ -451,7 +451,9 @@ const RULE_OF_THREE = /(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/;
 const PERSON_WORD =
   /\b(?:i|i'd|i'm|i'll|me|my|we|we're|we'd|we'll|us|our|you|you're|you'd|your|yours)\b/i;
 const CONTRAST = /,\s*but\s+|;\s+|,\s*while\s+/i;
-const GENERIC_SUBJECT = /^(?:(?:a|an|every|each|no|most|any)\s+\S+|[a-z]{3,}ing\b)/i;
+const GENERIC_SUBJECT = /^(?:a|an|every|each|no|most|any)\s+\S+/i;
+// A gerund, lowercase like the bare plural: "Boeing builds planes" is a firm.
+const GERUND = /^[a-z]{3,}ing\b/;
 // A bare plural, lowercase so a firm named first ("Atlas can…") is not one, with
 // plural verbs only ("Atlas is…" never matches).
 const BARE_PLURAL =
@@ -477,7 +479,7 @@ export function sloganSentences(text: string): string[] {
       const clauses = s.slice(0, end).split(CONTRAST);
       return (
         clauses.length === 2 &&
-        clauses.every((c) => GENERIC_SUBJECT.test(c.trim()) || BARE_PLURAL.test(c.trim()))
+        clauses.every((c) => [GENERIC_SUBJECT, GERUND, BARE_PLURAL].some((re) => re.test(c.trim())))
       );
     });
 }
@@ -532,7 +534,9 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
     .join(" ")
     .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
     .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
-    .split(/(?<=[.!?]["')”’]*)\s/);
+    // A new sentence starts with a capital: a quoted "Your visit is due." inside
+    // the offer does not end it.
+    .split(/(?<=[.!?]["')”’]*)\s+(?=["'“‘(]*[\p{Lu}\d])/u);
   // A question asks; it does not say what the product is.
   return !(offer ? sentences.slice(1) : sentences).some(
     (s) => sentenceMark(s.trim()) !== "?" && named.test(s),
