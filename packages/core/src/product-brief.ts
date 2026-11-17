@@ -67,7 +67,7 @@ function clipText(text: string, max: number): string {
 /** Leading words that open a one-liner without naming the product. */
 const NOT_A_NAME = new Set(["a", "an", "the", "we", "our", "i", "it", "this", "my"]);
 const NAME_TOKEN = /^[A-Z][\w.-]*/;
-const MORE_NAME = /^\s[A-Z][\w.-]*/;
+const MORE_NAME = /^\s+[A-Z][\w.-]*/;
 /**
  * What follows a name in "<Name> is…", "<Name>: …", "<Name> brings…", "<Name>'s…".
  * The verbs are a list, not "any word ending in s": "Automate workflows for

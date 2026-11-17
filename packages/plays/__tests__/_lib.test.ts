@@ -736,6 +736,12 @@ describe("lintEmail — no-product-line", () => {
       expect(
         check("Want me to run your open treatment plans to booked visits?\n\nSam\nAcme.ai Inc."),
       ).toContain("no-product-line");
+      // A short product sentence after the question is a sentence, not the sign-off.
+      expect(
+        check(
+          "Want me to run your open treatment plans to booked visits?\n\nAcme.ai books them.\n\nSam",
+        ),
+      ).not.toContain("no-product-line");
       // A closing quote ends the sentence before it, and a quoted question asks.
       expect(
         check(
