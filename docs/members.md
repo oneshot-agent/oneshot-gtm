@@ -46,7 +46,7 @@ tailscale serve --bg --https=<port> http://127.0.0.1:<port>    # once per other 
 tailscale serve status
 ```
 
-Members open `https://<machine>.<tailnet>.ts.net:3030/`. Links between workspaces keep the hostname the page was opened on and change the port, which is why the two port numbers must match. A workspace started from the switcher still needs its port served before its tab loads.
+Members open `https://<machine>.<tailnet>.ts.net:3030/`. On the host machine keep opening `http://127.0.0.1:3030`: Tailscale may attach no sign-in to the host's own requests to its tailnet name, and without one they are refused. Links between workspaces keep the hostname the page was opened on and change the port, which is why the two port numbers must match. A workspace started from the switcher still needs its port served before its tab loads.
 
 `tailscale serve --https=<port> off` stops serving a port. To close the install again, do that for each port and `members disallow-host` the name. Do not use `tailscale funnel`: a Funnel visitor carries no sign-in and is refused.
 
