@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   writes: [] as Array<{ id: number; input: Record<string, unknown> }>,
   writeResult: "written" as "written" | "busy" | "gone",
   /** Answers for the next writes, in order, before `writeResult`; an Error is thrown. */
-  nextWrites: [] as Array<"written" | "busy" | "gone" | Error>,
+  nextWrites: [] as Array<"written" | "busy" | "gone" | "moved" | Error>,
   reserve: vi.fn(),
   release: vi.fn(),
   findPhone: vi.fn(),
@@ -362,6 +362,19 @@ describe("a lookup on approval", () => {
 });
 
 describe("a lookup's own failures", () => {
+  it("writes nothing on a row that names someone else by the time the result lands", async () => {
+    row(9);
+    h.nextWrites.push("written", "moved");
+    expect((await one(9)).status).toBe(202);
+    await settle();
+    // The result is bound to the profile it was bought for; the mark comes off.
+    expect(h.writes.map((w) => w.input)).toEqual([
+      { lookup: expect.objectContaining({ status: "running" }) },
+      expect.objectContaining({ phone: "+15550100", linkedinUrl: linkedin(9) }),
+      { phone: null, lookup: null },
+    ]);
+  });
+
   it("forgets the row when the running mark cannot be written", async () => {
     row(9);
     h.nextWrites.push(new Error("database is locked"));

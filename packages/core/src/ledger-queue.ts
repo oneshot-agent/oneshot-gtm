@@ -1693,8 +1693,37 @@ export class QueueStore {
    * live drain lease holds is refused (`busy`): the drain sends from the
    * payload it claimed. A sent row's status no longer moves, so its lease
    * does not matter.
+   *
+   * `linkedinUrl` binds the write to the person the lookup was for: when the
+   * row's profile no longer names the same person (an import replaced the
+   * payload), nothing is written (`moved`). Checked in the same transaction
+   * as the write.
    */
   setQueuePhoneLookup(
+    id: number,
+    input: { phone?: string | null; lookup: QueuePhoneLookup | null; linkedinUrl?: string },
+  ): "written" | "busy" | "gone" | "moved" {
+    return this.db
+      .transaction((): "written" | "busy" | "gone" | "moved" => {
+        if (input.linkedinUrl !== undefined) {
+          const current = this.db
+            .query(
+              `SELECT CASE WHEN json_valid(payload_json)
+                           THEN json_extract(payload_json, '$.linkedinUrl') END AS url
+                 FROM target_queue WHERE id = ?`,
+            )
+            .get(id) as { url: unknown } | null;
+          if (!current) return "gone";
+          const now =
+            typeof current.url === "string" ? canonicalLinkedInProfileKey(current.url) : null;
+          if (!now || now !== canonicalLinkedInProfileKey(input.linkedinUrl)) return "moved";
+        }
+        return this.writeQueuePhoneLookup(id, input);
+      })
+      .immediate();
+  }
+
+  private writeQueuePhoneLookup(
     id: number,
     input: { phone?: string | null; lookup: QueuePhoneLookup | null },
   ): "written" | "busy" | "gone" {

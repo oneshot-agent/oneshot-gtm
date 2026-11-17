@@ -71,6 +71,38 @@ describe("Ledger.setQueuePhoneLookup", () => {
     expect(ledger.setQueuePhoneLookup(999_999, { phone: "+1", lookup: done })).toBe("gone");
   });
 
+  it("writes only while the row still names the person the lookup was for", () => {
+    const id = enqueue({ name: "Pat", linkedinUrl: "https://www.linkedin.com/in/pat-lee/" });
+    // The same profile however it is spelled.
+    expect(
+      ledger.setQueuePhoneLookup(id, {
+        phone: "+15550100",
+        lookup: done,
+        linkedinUrl: "https://linkedin.com/in/Pat-Lee",
+      }),
+    ).toBe("written");
+    const other = enqueue({ name: "Sam", linkedinUrl: "https://www.linkedin.com/in/sam-roe" });
+    expect(
+      ledger.setQueuePhoneLookup(other, {
+        phone: "+15550100",
+        lookup: done,
+        linkedinUrl: "https://www.linkedin.com/in/pat-lee",
+      }),
+    ).toBe("moved");
+    expect(payloadOf(other)).toEqual({
+      name: "Sam",
+      linkedinUrl: "https://www.linkedin.com/in/sam-roe",
+    });
+    const none = enqueue({ name: "No profile" });
+    expect(
+      ledger.setQueuePhoneLookup(none, {
+        phone: "+1",
+        lookup: done,
+        linkedinUrl: "https://linkedin.com/in/x",
+      }),
+    ).toBe("moved");
+  });
+
   it("takes the lookup off with null, leaving the number", () => {
     const id = enqueue({ name: "Pat", phone: "+15550111" });
     ledger.setQueuePhoneLookup(id, {

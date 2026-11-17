@@ -24,13 +24,20 @@ export function phoneLookupFor(payload: unknown): PhoneLookupView | null {
   return r as unknown as PhoneLookupView;
 }
 
-/** The later of two reads of one row's lookup: the list's and the open case's poll. */
+/**
+ * The later of two reads of one row's lookup: the list's and the open case's
+ * poll. On a tie a result beats a running mark: a cached answer can land in
+ * the millisecond its mark was written.
+ */
 export function latestPhoneLookup(
   a: PhoneLookupView | null,
   b: PhoneLookupView | null,
 ): PhoneLookupView | null {
   if (!a || !b) return a ?? b;
-  return Date.parse(b.at) > Date.parse(a.at) ? b : a;
+  const ta = Date.parse(a.at);
+  const tb = Date.parse(b.at);
+  if (tb !== ta) return tb > ta ? b : a;
+  return a.status === "running" && b.status !== "running" ? b : a;
 }
 
 /** A lookup still `running` after this long was cut off (a restart); it can be asked again. */

@@ -162,6 +162,8 @@ type JobResult =
   | {
       kind: "result";
       playName: string;
+      /** The profile the lookup was for: the write lands only on a row that still names it. */
+      linkedinUrl: string;
       phone: string | null;
       lookup: QueuePhoneLookup;
       cached: boolean;
@@ -187,6 +189,7 @@ async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promi
   const done = (out: Awaited<ReturnType<typeof findPhone>>): JobResult => ({
     kind: "result",
     playName: row.play_name,
+    linkedinUrl: input.linkedinUrl,
     phone: out.phone,
     cached: Boolean(out.cached),
     lookup: {
@@ -218,6 +221,7 @@ async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promi
     return {
       kind: "result",
       playName: row.play_name,
+      linkedinUrl: input.linkedinUrl,
       phone: null,
       cached: false,
       lookup: {
@@ -234,7 +238,7 @@ async function lookUpInSlot(id: number, trigger: Trigger, fresh: boolean): Promi
 /** Write a result, waiting out a send or a drain lease that holds the row (`PHONE_WRITE_RETRY_MS`). */
 async function persistPhoneLookup(
   id: number,
-  input: { phone: string | null; lookup: QueuePhoneLookup | null },
+  input: { phone: string | null; lookup: QueuePhoneLookup | null; linkedinUrl?: string },
 ): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     const written = getLedger().setQueuePhoneLookup(id, input);
@@ -258,7 +262,22 @@ async function runPhoneLookup(id: number, trigger: Trigger, fresh: boolean): Pro
       return;
     }
     // Outside the slot: waiting for a send must not hold up other lookups.
-    const written = await persistPhoneLookup(id, { phone: job.phone, lookup: job.lookup });
+    const written = await persistPhoneLookup(id, {
+      phone: job.phone,
+      lookup: job.lookup,
+      linkedinUrl: job.linkedinUrl,
+    });
+    if (written === "moved") {
+      // The row names someone else now: their row gets none of this result.
+      const cleared = await persistPhoneLookup(id, { phone: null, lookup: null });
+      logEvent("queue.phone_lookup_skipped", {
+        queue_id: id,
+        trigger,
+        reason: "linkedin_changed",
+        written: cleared,
+      });
+      return;
+    }
     logEvent("queue.phone_lookup", {
       queue_id: id,
       play: job.playName,

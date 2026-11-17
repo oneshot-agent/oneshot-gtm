@@ -28,6 +28,13 @@ describe("latestPhoneLookup", () => {
     expect(latestPhoneLookup(done, mark)).toBe(done);
     expect(latestPhoneLookup(null, mark)).toBe(mark);
   });
+
+  it("lets a result beat a running mark stamped in the same millisecond", () => {
+    const mark = { status: "running" as const, at: "2026-11-17T12:00:00.000Z" };
+    const none = { status: "none" as const, at: mark.at };
+    expect(latestPhoneLookup(mark, none)).toBe(none);
+    expect(latestPhoneLookup(none, mark)).toBe(none);
+  });
 });
 
 describe("phoneLookupState", () => {
