@@ -17,6 +17,7 @@ const run = vi.fn(async (_command: string, _args: string[]) => {});
 const req = (body: unknown) =>
   new Request("http://localhost/api/workspaces", {
     method: "POST",
+    headers: { host: "localhost" },
     body: JSON.stringify(body),
   });
 const create = (body: unknown, platform: NodeJS.Platform = "linux") =>
@@ -115,7 +116,11 @@ describe("POST /api/workspaces", () => {
     ]) {
       expect((await create(body)).status, JSON.stringify(body)).toBe(400);
     }
-    const malformed = new Request("http://localhost/api/workspaces", { method: "POST", body: "{" });
+    const malformed = new Request("http://localhost/api/workspaces", {
+      method: "POST",
+      headers: { host: "localhost" },
+      body: "{",
+    });
     expect((await buildFetchHandler()(malformed)).status).toBe(400);
     const crossSite = req({ name: "acme" });
     crossSite.headers.set("origin", "https://untrusted.example");
