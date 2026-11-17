@@ -672,6 +672,25 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   } catch {
     // an unreadable inbox store leaves the browser session to report
   }
+  if (
+    blocker === "ambiguous" ||
+    blocker === "missing" ||
+    (blocker === "disconnected" && cfg.linkedin?.accountKey)
+  ) {
+    return {
+      name,
+      group: "install",
+      severity: "warn",
+      message: `${
+        blocker === "ambiguous"
+          ? "several LinkedIn accounts are connected; this workspace has not selected one"
+          : blocker === "missing"
+            ? "this workspace's selected LinkedIn account was removed or is missing"
+            : "this workspace's selected LinkedIn account is disconnected"
+      } — LinkedIn sends and live profile reads are paused`,
+      hint: "choose a connected account on /setup → LinkedIn (linkedin.accountKey), or reconnect the selected account",
+    };
+  }
   if (blocker === null) {
     return {
       name,
@@ -683,7 +702,7 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
   const browserOk = Boolean(
     cfg.linkedinBrowserProfileId && cfg.linkedinSessionCheckedAt && !cfg.linkedinSessionInvalidAt,
   );
-  if (blocker !== "none" && !browserOk) {
+  if (blocker !== "none" && (!browserOk || cfg.linkedin?.accountKey)) {
     return {
       name,
       group: "install",

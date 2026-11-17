@@ -17,6 +17,7 @@ import {
   browserTaskCost,
   callLinkedInAs,
   linkedInProfileReadAccount,
+  linkedInAccountSelectionBlocker,
   type LinkedInOperation,
   createBrowserProfile,
   deleteBrowserProfile,
@@ -217,18 +218,27 @@ function readAccount(): { workspace: string; accountId: string } | null {
   }
 }
 
+/** Explicit selection never silently uses the browser's identity instead. */
+function browserReadAllowed(): boolean {
+  try {
+    return !loadConfig().linkedin?.accountKey && linkedInAccountSelectionBlocker() === null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Some live read can be attempted: a connected account may view profiles, or
  * a browser session is on record (it may still be invalid or unchecked; the
  * read reports that as its skip reason).
  */
 export function liveReadConfigured(): boolean {
-  return readAccount() !== null || linkedinSessionState() !== "unset";
+  return readAccount() !== null || (browserReadAllowed() && linkedinSessionState() !== "unset");
 }
 
 /** A live read would run now: a connected account may view profiles, or the browser session is verified. */
 export function liveReadReady(): boolean {
-  return readAccount() !== null || linkedinSessionState() === "ok";
+  return readAccount() !== null || (browserReadAllowed() && linkedinSessionState() === "ok");
 }
 
 /**
@@ -237,7 +247,7 @@ export function liveReadReady(): boolean {
  */
 export function liveReadVia(): "account" | "browser" | null {
   if (readAccount() !== null) return "account";
-  return linkedinSessionState() === "ok" ? "browser" : null;
+  return browserReadAllowed() && linkedinSessionState() === "ok" ? "browser" : null;
 }
 
 /** The daily read cap (`linkedinReadsPerDay`), shared by both read paths. */
@@ -896,7 +906,7 @@ async function readLive(
   }
   const cfg = loadConfig();
   const state = linkedinSessionState(cfg);
-  if (state === "unset")
+  if (!browserReadAllowed() || state === "unset")
     return { profile: null, skipped: "not-connected", costUsd: 0, cached: false };
   if (state === "invalid")
     return { profile: null, skipped: "session-invalid", costUsd: 0, cached: false };

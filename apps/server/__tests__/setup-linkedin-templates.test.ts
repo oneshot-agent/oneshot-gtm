@@ -167,3 +167,24 @@ describe("linkedin template warnings", () => {
     ).toHaveLength(1);
   });
 });
+
+it("saves, preserves and clears the workspace account key without changing other LinkedIn settings", () => {
+  const selected = merge(withLinkedIn({ invitesPerDay: 12, writer: "model" }), {
+    linkedin: { accountKey: " wallet:beta " },
+  });
+  expect(selected.linkedin).toEqual({
+    invitesPerDay: 12,
+    writer: "model",
+    accountKey: "wallet:beta",
+  });
+  expect(
+    merge(selected, { linkedin: { templates: { note: "Hello." } } }).linkedin?.accountKey,
+  ).toBe("wallet:beta");
+  expect(merge(selected, { linkedin: { accountKey: null } }).linkedin).toEqual({
+    invitesPerDay: 12,
+    writer: "model",
+  });
+  expect(() => merge(selected, { linkedin: { accountKey: 12 } } as never)).toThrow(
+    "accountKey must be a string or null",
+  );
+});

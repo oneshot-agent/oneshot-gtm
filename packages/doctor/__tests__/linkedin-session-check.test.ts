@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // it is logged in as: whether it came from a hosted login or a cookie.
 
 let cfgOverride: Record<string, unknown> = {};
-let readBlocker: "none" | "disconnected" | "no-grant" | null = "none";
+let readBlocker: "none" | "disconnected" | "no-grant" | "ambiguous" | "missing" | null = "none";
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -140,4 +140,22 @@ describe("doctor: linkedin session", () => {
     expect(fallback.severity).toBe("ok");
     expect(fallback.message).toContain("connected via browser login");
   });
+});
+
+it("explains blocked workspace selection even with a working browser session", async () => {
+  cfgOverride = {
+    linkedinBrowserProfileId: "browser",
+    linkedinSessionCheckedAt: "2026-11-17",
+    linkedinSessionInvalidAt: null,
+  };
+  readBlocker = "ambiguous";
+  const ambiguous = await linkedinCheck();
+  expect(ambiguous.severity).toBe("warn");
+  expect(ambiguous.message).toContain("several LinkedIn accounts");
+  expect(ambiguous.hint).toContain("linkedin.accountKey");
+  cfgOverride.linkedin = { accountKey: "wallet:gone" };
+  readBlocker = "missing";
+  expect((await linkedinCheck()).message).toContain("removed or is missing");
+  readBlocker = "disconnected";
+  expect((await linkedinCheck()).message).toContain("selected LinkedIn account is disconnected");
 });

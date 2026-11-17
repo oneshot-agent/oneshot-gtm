@@ -685,6 +685,8 @@ export interface SetupRequest {
    *   response's `warnings`.
    */
   linkedin?: {
+    /** Shared account key used for this workspace's sends and profile reads. */
+    accountKey?: string | null;
     templates?: Partial<Record<LinkedInTemplateStep, string>> | null;
     writer?: "template" | "model" | null;
   };
