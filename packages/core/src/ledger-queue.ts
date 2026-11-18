@@ -177,6 +177,7 @@ const QUEUE_COLUMNS: ReadonlySet<string> = new Set<keyof QueueRow>([
   "decided_at",
   "decided_by",
   "decided_by_member",
+  "sent_by_member",
   "decision_reason",
 ]);
 
@@ -1007,15 +1008,17 @@ export class QueueStore {
     if (input.status === "sent") {
       // COALESCE on the decision columns: a drain/run send must never
       // overwrite the human approve that put the row here; a send on a
-      // never-decided row records an honest machine disposition.
+      // never-decided row records the caller's disposition. Store the sender
+      // separately so neither a human send nor an unattended send relabels
+      // the approval. A retry retains the member of the first recorded send.
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), decision = COALESCE(decision, 'approve'), decided_at = COALESCE(decided_at, ?), decided_by = COALESCE(decided_by, ?), decided_by_member = CASE WHEN ? = 'human' THEN ? ELSE decided_by_member END, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), decision = COALESCE(decision, 'approve'), decided_at = COALESCE(decided_at, ?), decided_by = COALESCE(decided_by, ?), decided_by_member = CASE WHEN decision IS NULL THEN COALESCE(decided_by_member, ?) ELSE decided_by_member END, sent_by_member = CASE WHEN sent_at IS NULL THEN ? ELSE sent_by_member END, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
-            ? [input.status, now, now, now, decidedBy, decidedBy, member, input.notes, input.id]
-            : [input.status, now, now, now, decidedBy, decidedBy, member, input.id]),
+            ? [input.status, now, now, now, decidedBy, member, member, input.notes, input.id]
+            : [input.status, now, now, now, decidedBy, member, member, input.id]),
         );
     } else if (input.status === "approved" || input.status === "pending") {
       // The ledger, not the routes, owns "never re-approve a sent row": drain

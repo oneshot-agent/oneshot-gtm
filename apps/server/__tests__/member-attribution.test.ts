@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
+import { describeDecision } from "@oneshot-gtm/shared-types";
+import { buildProspectTimeline } from "../src/api/_prospect-timeline.ts";
+import { memberDecision } from "../../web/src/lib/queueCase.ts";
 import {
   configDir,
   getLedger,
@@ -189,10 +192,36 @@ it("send draft stores the sender even when another member approved", async () =>
   expect(ledger.getQueueRow(id)).toMatchObject({
     status: "sent",
     decided_by: "human",
-    decided_by_member: member,
+    decided_by_member: owner,
+    sent_by_member: member,
   });
+  const saved = ledger.getQueueRow(id)!;
+  const view = queue.toView(saved);
+  expect(memberDecision(view)).toBe(`Sent by ${member}`);
+  expect(describeDecision(view)).toBe(`approved by ${owner}`);
+  expect(
+    buildProspectTimeline({
+      row: saved,
+      sequenceEvents: [],
+      replies: [],
+      channelEvents: [],
+      outcomes: [],
+    }).find((event) => event.kind === "decided")?.label,
+  ).toBe(`approved by ${owner}`);
   expect((await queue.approveQueueRoute(req(), params(id))).status).toBe(409);
-  expect(ledger.getQueueRow(id)?.decided_by_member).toBe(member);
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    decided_by_member: owner,
+    sent_by_member: member,
+  });
+});
+it("an unattended send shows no sender while retaining the approval member", () => {
+  const id = row();
+  ledger.approveAllPending({ member: owner });
+  ledger.setQueueStatus({ id, status: "sent" });
+  const view = queue.toView(ledger.getQueueRow(id)!);
+  expect(view).toMatchObject({ decidedByMember: owner, sentByMember: null });
+  expect(memberDecision(view)).toBeNull();
+  expect(describeDecision(view)).toBe(`approved by ${owner} (bulk)`);
 });
 it("mark sent records the member once; a retry cannot replace the sender", async () => {
   const id = row(true);
@@ -200,7 +229,11 @@ it("mark sent records the member once; a retry cannot replace the sender", async
   draft(id);
   expect((await queue.markSentRoute(req(), params(id))).status).toBe(200);
   expect((await queue.markSentRoute(req({}, "/api/queue", owner), params(id))).status).toBe(200);
-  expect(ledger.getQueueRow(id)).toMatchObject({ status: "sent", decided_by_member: member });
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    status: "sent",
+    decided_by_member: owner,
+    sent_by_member: member,
+  });
   expect(ledger.listSequenceEventsForProspect(ledger.getQueueRow(id)!.prospect_id!)).toHaveLength(
     1,
   );

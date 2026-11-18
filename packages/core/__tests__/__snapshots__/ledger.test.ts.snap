@@ -1154,7 +1154,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         notes TEXT,
         prospect_id INTEGER,
         last_draft_json TEXT,
-        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email', decision_reason TEXT, decided_by_member TEXT,
+        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email', decision_reason TEXT, decided_by_member TEXT, sent_by_member TEXT,
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "target_queue",

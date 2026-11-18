@@ -571,6 +571,13 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       )`);
     },
   },
+  {
+    version: 26,
+    name: "queue-send-member",
+    up: (db) => {
+      addColumnIfMissing(db, "target_queue", "sent_by_member", "TEXT");
+    },
+  },
 ];
 
 /**

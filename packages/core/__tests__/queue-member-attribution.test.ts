@@ -29,7 +29,11 @@ it("machine decisions never accept a member, and replace stale human attribution
   });
   expect(ledger.getQueueRow(id)).toMatchObject({ decided_by: "machine", decided_by_member: null });
   ledger.setQueueStatus({ id, status: "sent", member: "ignored@example.com" });
-  expect(ledger.getQueueRow(id)).toMatchObject({ decided_by: "machine", decided_by_member: null });
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    decided_by: "machine",
+    decided_by_member: null,
+    sent_by_member: null,
+  });
 });
 it("an unattended send retains the human approval, and a sent row cannot be reapproved", () => {
   ledger.approveAllPending({ member: "mia@example.com" });
@@ -57,4 +61,13 @@ it("a failed draft compare-and-set cannot overwrite the saved editor", () => {
   expect(ledger.setQueueDraftIfCurrent({ ...input, member: "mia@example.com" })).toBe(true);
   expect(ledger.setQueueDraftIfCurrent({ ...input, member: "other@example.com" })).toBe(false);
   expect(JSON.parse(ledger.getQueueRow(id)!.last_draft_json!).editedBy).toBe("mia@example.com");
+});
+
+it("a human-kind send without a member preserves stored attribution", () => {
+  ledger.setQueueStatus({ id, status: "approved", member: "mia@example.com" });
+  ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    decided_by_member: "mia@example.com",
+    sent_by_member: null,
+  });
 });

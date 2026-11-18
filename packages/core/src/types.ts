@@ -948,6 +948,8 @@ export interface QueueRow {
   decided_by: "human" | "human_bulk" | "machine" | null;
   /** Member email; null for legacy or unattributed decisions. */
   decided_by_member?: string | null;
+  /** Sending member, separate from approval; null for unattended or legacy sends. */
+  sent_by_member?: string | null;
   /** Structured decision reason (#813, v13): fit | wrong_audience | wrong_person | bad_timing | already_contacted | draft_problem | other. */
   decision_reason?: DecisionReason | null;
 }

@@ -158,7 +158,19 @@ describe("memberDecision", () => {
     expect(memberDecision({ ...row, status: "rejected", decision: "reject" })).toBe(
       "Rejected by mia@example.com",
     );
-    expect(memberDecision({ ...row, status: "sent" })).toBe("Sent by mia@example.com");
+    expect(memberDecision({ ...row, status: "sent", sentByMember: "sender@example.com" })).toBe(
+      "Sent by sender@example.com",
+    );
+    expect(memberDecision({ ...row, status: "sent", sentByMember: null })).toBeNull();
+    expect(memberDecision({ ...row, status: "sent" })).toBeNull();
+    expect(
+      memberDecision({
+        ...row,
+        status: "sent",
+        decidedBy: "machine",
+        sentByMember: "sender@example.com",
+      }),
+    ).toBe("Sent by sender@example.com");
     expect(memberDecision({ ...row, decidedBy: "machine" })).toBeNull();
     expect(memberDecision({ ...row, decidedByMember: null })).toBeNull();
   });

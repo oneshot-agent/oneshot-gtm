@@ -1049,6 +1049,7 @@ export interface QueueRowView {
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
   decidedByMember?: string | null;
+  sentByMember?: string | null;
   decidedAt: string | null;
   /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
   decisionReason?: DecisionReason | null;

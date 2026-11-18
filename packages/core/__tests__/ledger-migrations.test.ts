@@ -624,3 +624,32 @@ it("v25 reads pre-member decisions as unattributed without changing their kind",
     reopened.close();
   }
 });
+
+it("v26 leaves old senders unknown while preserving approval attribution", () => {
+  withRaw((db) => {
+    runLedgerMigrations(
+      db,
+      LEDGER_MIGRATIONS.filter((m) => m.version < 26),
+    );
+    db.exec(`INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, decision, decided_by, decided_by_member)
+      VALUES ('show-hn', '{}', 'legacy-sender', 'manual', 'sent', 'approve', 'human', 'mia@example.com')`);
+    expect(columns(db, "target_queue")).not.toContain("sent_by_member");
+  });
+  const ledger = new Ledger(dbPath);
+  try {
+    expect(ledger.listQueue({ status: "sent" })[0]).toMatchObject({
+      decided_by_member: "mia@example.com",
+      sent_by_member: null,
+    });
+  } finally {
+    ledger.close();
+  }
+  withRaw((db) => {
+    const step = LEDGER_MIGRATIONS.find((m) => m.version === 26)!;
+    step.up(db);
+    expect(db.query("SELECT decided_by_member, sent_by_member FROM target_queue").get()).toEqual({
+      decided_by_member: "mia@example.com",
+      sent_by_member: null,
+    });
+  });
+});

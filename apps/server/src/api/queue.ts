@@ -397,6 +397,7 @@ export function toView(
     decision: row.decision ?? null,
     decidedBy: row.decided_by ?? null,
     decidedByMember: row.decided_by === "machine" ? null : (row.decided_by_member ?? null),
+    sentByMember: row.sent_by_member ?? null,
     decisionReason: isDecisionReason(row.decision_reason) ? row.decision_reason : null,
     decidedAt: row.decided_at ?? null,
     delivery: deliveryFor(row.status, lastDraft),

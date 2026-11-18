@@ -127,16 +127,11 @@ export function researchEmptyState(payload: unknown): string | null {
 
 /** Named human decisions only: old rows and machine decisions have no member. */
 export function memberDecision(
-  row: Pick<QueueRowView, "status" | "decision" | "decidedBy" | "decidedByMember">,
+  row: Pick<QueueRowView, "status" | "decision" | "decidedBy" | "decidedByMember" | "sentByMember">,
 ): string | null {
+  if (row.status === "sent") return row.sentByMember ? `Sent by ${row.sentByMember}` : null;
   if (!row.decidedByMember || row.decidedBy === "machine") return null;
   const verb =
-    row.status === "sent"
-      ? "Sent"
-      : row.decision === "approve"
-        ? "Approved"
-        : row.decision === "reject"
-          ? "Rejected"
-          : null;
+    row.decision === "approve" ? "Approved" : row.decision === "reject" ? "Rejected" : null;
   return verb ? `${verb} by ${row.decidedByMember}` : null;
 }
