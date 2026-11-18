@@ -50,6 +50,16 @@ Members open `https://<machine>.<tailnet>.ts.net:3030/`. On the host machine kee
 
 `tailscale serve --https=<port> off` stops serving a port. To close the install again, do that for each port and `members disallow-host` the name. Do not use `tailscale funnel`: a Funnel visitor carries no sign-in and is refused.
 
+## Connecting Gmail from another machine
+
+Open Setup on the allowed HTTPS host and look under Email. It shows the exact callback URI for that workspace: `<origin>/api/gmail/auth/callback`, including the port when present.
+
+In Google Cloud, enable the Gmail API and create an OAuth client with application type **Web application**. Add the displayed URI under **Authorized redirect URIs**. Save the client ID and client secret from that same Web client as `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` in Setup → Credentials, then choose **Connect Gmail account**. Add each workspace's displayed callback URI if you use the client across multiple ports.
+
+If Google rejects the redirect (`redirect_uri_mismatch` or a loopback-only redirect error), check that the URI matches exactly and that both saved credentials belong to the Web client. Google may leave you on its error page without returning to Setup; return manually after correcting the client and retry. A Desktop client cannot redirect to the member-facing hostname.
+
+The Desktop-client flow on the host machine at `localhost` or `127.0.0.1` is unchanged. See [Gmail setup](./sending.md#connecting-gmail-from-another-machine) for the two connection options.
+
 ## How a request is judged
 
 | Request                                                                 | Acts as     |
@@ -72,5 +82,4 @@ Read from Tailscale's source (`ipn/ipnlocal/serve.go`), since the gate depends o
 ## Limits
 
 - **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md).
-- **Connecting Gmail.** Google's sign-in returns to a loopback address, so do it in a browser on the host machine.
 - **One sign-in method.** Identity comes from Tailscale only.

@@ -7,10 +7,23 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 ## Adding identities
 
 - **OneShot domain and mailbox.** Setup, or `identities add`. Pick an active address on a provisioned domain, or review and buy domain/address setup separately. Setup never sends an email. `domains list`, `pause` and `resume` manage them.
-- **Gmail or Workspace.** `gmail auth`, a one-time OAuth. It needs a Google Cloud Desktop client with the Gmail API on.
+- **Gmail or Workspace.** `gmail auth`, a one-time OAuth, or **Connect Gmail account** in Setup. The CLI and loopback Setup flow use a Google Cloud Desktop client with the Gmail API on. Setup from another machine needs a Web application client, as described below.
 - **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. oneshot-gtm sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
 `identities test-send <id> --to you@example.com --dry-run` shows what a test would send.
+
+## Connecting Gmail from another machine
+
+First configure [member access and an allowed HTTPS host](./members.md). Open that workspace's Setup page from the other machine. Under Email, copy the exact redirect URI shown: `<origin>/api/gmail/auth/callback`. The scheme, hostname, port and path must all match.
+
+1. In Google Cloud, enable the Gmail API and create an OAuth client of type **Web application**.
+2. Add the copied URI to that client's **Authorized redirect URIs**. Each workspace port needs its own URI.
+3. In Setup → Credentials, save `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` from that same Web client.
+4. Choose **Connect Gmail account** and sign in as the mailbox to connect.
+
+For `redirect_uri_mismatch` or an error saying the redirect must use loopback, register the exact URI and replace both credentials with the Web client's values, then retry. A Desktop client cannot use the remote hostname. Google can show this error without calling the app back; return to Setup yourself in that case. Callback errors that reach Setup explain the same fix.
+
+Connecting on the host machine through a loopback address, or through `gmail auth`, keeps the existing Desktop-client flow. Switching a workspace to Web-client credentials does not migrate previously connected mailboxes: reconnect them using that client.
 
 ## The rules
 
