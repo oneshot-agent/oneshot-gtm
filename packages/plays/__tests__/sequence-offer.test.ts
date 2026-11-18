@@ -420,6 +420,17 @@ describe("a preview and the offer it restates", () => {
     expect(ledger.getCadenceDraft(at(id))).toBeNull();
     expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
   });
+
+  it("is not stored when the offer is replaced after it was read for the draft and before the draft starts", async () => {
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer(at(id));
+    // Runs up to the offer read, then yields: the replacement lands in between.
+    const drafting = previewCadenceStep(at(id));
+    expect(replaceOffer(id)).toBe(true);
+    await expect(drafting).rejects.toThrow(PREVIEW_STEP_MOVED);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
 });
 
 describe("a sequence that can't get an offer", () => {

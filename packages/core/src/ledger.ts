@@ -38,6 +38,7 @@ import {
   breakupReviveHoldFor as cadBreakupReviveHoldFor,
   cadencePlansFor as cadCadencePlansFor,
   cadenceOfferKey as cadCadenceOfferKey,
+  cadenceOfferKeyOf as cadCadenceOfferKeyOf,
   cadenceQueueRow as cadCadenceQueueRow,
   cadencesForQueueRows as cadCadencesForQueueRows,
   type CadenceOfferJson,
@@ -613,6 +614,11 @@ export class Ledger {
   /** What a draft restates of a cadence's stored offer, as one comparable string (ledger-cadence.ts). */
   cadenceOfferKey(input: { prospectId: number; playName: string }): string | null {
     return cadCadenceOfferKey(this.db, input);
+  }
+
+  /** The key a cadence has while `offer` is its stored offer (ledger-cadence.ts). */
+  cadenceOfferKeyOf(offer: Record<string, unknown>): string {
+    return cadCadenceOfferKeyOf(this.db, offer);
   }
 
   /** Keep the offer writer's refusal on an active cadence with no offer, or in place of a weak one (ledger-cadence.ts). */

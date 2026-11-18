@@ -220,6 +220,24 @@ describe("Ledger.setCadenceOffer", () => {
     expect(ledger.cadenceOfferKey(bare)).toBe(JSON.stringify([offer.offer, offer.steps, null]));
   });
 
+  it("refuses a preview keyed to the offer it was drafted from once another is stored", () => {
+    const c = enrolled({ offer });
+    const cadence = ledger.getCadence(c.prospectId, c.playName)!;
+    const drafted = { ...offer, return: 'a day\nback, "signed" \u2028 caf\u00e9' };
+    const expect_ = {
+      currentStep: cadence.current_step,
+      enrolledAt: cadence.enrolled_at,
+      offerKey: ledger.cadenceOfferKeyOf(drafted),
+    };
+    const draft = { ...preview, payload: { kind: "email" } };
+    // Keyed to the value drafted from, not to the row as it reads at keying time.
+    expect(ledger.setCadenceDraft({ ...c, draft, expect: expect_ })).toBe(false);
+    ledger.setCadenceOffer({ ...c, offer: drafted });
+    expect(ledger.cadenceOfferKeyOf(drafted)).toBe(ledger.cadenceOfferKey(c));
+    expect(ledger.setCadenceDraft({ ...c, draft, expect: expect_ })).toBe(true);
+    expect(ledger.cadenceOfferKeyOf({})).toBe("[null,null,null]");
+  });
+
   it("refuses an expect key that is not a plain identifier", () => {
     const c = enrolled({ offer });
     expect(() =>

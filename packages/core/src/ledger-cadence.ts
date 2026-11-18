@@ -270,6 +270,22 @@ export function cadenceOfferKey(
 }
 
 /**
+ * The key (`cadenceOfferKey`) a cadence has while `offer` is its stored
+ * offer: what a draft written from that value restates. Built by the same
+ * JSON functions, so the two compare as strings.
+ */
+export function cadenceOfferKeyOf(db: Database, offer: Record<string, unknown>): string {
+  const row = db
+    .query(
+      `SELECT json_array(json_extract(o, '$.offer'), json_extract(o, '$.steps'),
+                         json_extract(o, '$.return')) AS k
+         FROM (SELECT json(?) AS o)`,
+    )
+    .get(JSON.stringify(offer)) as { k: string };
+  return row.k;
+}
+
+/**
  * Keep the offer the LinkedIn close makes (`close`), or the writer's finding
  * that there is none (`closeSkip`), on an active cadence that has an offer.
  * One of the two stands: writing either drops the other. Bound to
@@ -953,8 +969,9 @@ export function setCadenceDraft(
      * stored, so a draft never lands on the step after the one it was for.
      * `stepId` is the plan step it was written for: a settings change can
      * replace the step at the same index of a saved plan. `offerKey` is the
-     * offer it restates (`cadenceOfferKey`, read before drafting): an offer
-     * replaced since refuses it.
+     * offer it restates (`cadenceOfferKeyOf` the value drafted from, else
+     * `cadenceOfferKey` read before drafting): an offer replaced since
+     * refuses it.
      */
     expect?: {
       currentStep: number;

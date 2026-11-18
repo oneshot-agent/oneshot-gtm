@@ -2632,10 +2632,19 @@ export async function previewCadenceStep(input: {
     });
   }
   const seqOffer = derived && derived.status !== "none" && offerStep ? derived : null;
-  // The draft restates the offer as it is stored now: one replaced before
-  // the completion returns leaves nothing stored.
+  // The draft is stored only while the cadence still holds the offer it
+  // restates: the one handed to the builder, else the stored one as the
+  // builder is about to read it. A read of its own could see a later offer.
   const drafting = guarded.expect
-    ? { ...guarded, expect: { ...guarded.expect, offerKey: ledger.cadenceOfferKey(input) } }
+    ? {
+        ...guarded,
+        expect: {
+          ...guarded.expect,
+          offerKey: seqOffer
+            ? ledger.cadenceOfferKeyOf(seqOffer.offer)
+            : ledger.cadenceOfferKey(input),
+        },
+      }
     : guarded;
   const intro = mailDraft
     ? null
