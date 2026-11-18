@@ -451,6 +451,35 @@ describe("structured upstream failures", () => {
     expect(events.some((e) => e.kind === "oneshot.platform_resumed")).toBe(true);
   });
 
+  it("a call that started before a service_auth pause cannot end it early", async () => {
+    vi.useFakeTimers();
+    let release: (() => void) | undefined;
+    let calls = 0;
+    const raw = {
+      personFind: vi.fn(async () => {
+        calls++;
+        if (calls > 1) throw jobError("service_auth");
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return { results: [] };
+      }),
+    };
+    const agent = watchAgent(raw);
+    const stale = agent.personFind();
+    await agent.personFind().catch(() => {});
+    const before = (await agent.personFind().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    vi.setSystemTime(Date.now() + 90_000);
+    release?.();
+    await stale;
+    const after = await agent.personFind().catch((e: unknown) => e);
+    expect(after).toBeInstanceOf(PlatformUnavailableError);
+    expect((after as typeof before).retryAt).toBe(before.retryAt);
+    expect(raw.personFind).toHaveBeenCalledTimes(2);
+  });
+
   it("backs off failed transient probes to 15 minutes and resets on success", async () => {
     vi.useFakeTimers();
     let fail = true;

@@ -3,6 +3,7 @@ import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { LEGACY_GMAIL_ID, LEGACY_ONESHOT_ID, resolveIdentities } from "./identities.ts";
 import { getLedger } from "./ledger.ts";
+import { TRANSIENT_TOOL_CODES, VERDICT_CODES } from "./platform-health.ts";
 import { sqliteToIso, toSqliteUtc } from "./time.ts";
 import type { EmailIdentity } from "./types.ts";
 
@@ -103,16 +104,8 @@ export function isTransientToolError(err: unknown): boolean {
   if (isSettlementAmbiguous(err)) return false;
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === "string") {
-    if (["service_auth", "service_unavailable", "rate_limited"].includes(code)) return true;
-    if (
-      [
-        "invalid_input",
-        "enrichment_exhausted",
-        "target_unreachable",
-        "source_unsupported",
-      ].includes(code)
-    )
-      return false;
+    if (TRANSIENT_TOOL_CODES.has(code)) return true;
+    if (VERDICT_CODES.has(code)) return false;
   }
   const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
   if (!msg) return false;

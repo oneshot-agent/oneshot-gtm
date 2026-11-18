@@ -105,22 +105,13 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
   if (code) {
     const requestId = str(e.jobId) ?? str(e.requestId);
     const ref = requestId ? { requestId } : {};
-    if (["service_auth", "service_unavailable", "rate_limited"].includes(code)) {
+    if (TRANSIENT_TOOL_CODES.has(code)) {
       return { kind: "tool", reason: code, ...ref };
     }
     if (code === "insufficient_funds") return { kind: "wallet", reason: code, ...ref };
     if (code === "payment_failed") return { kind: "payment", reason: code, ...ref };
     // A typed job error is authoritative; misleading prose cannot turn a verdict into an outage.
-    if (
-      name === "JobError" ||
-      [
-        "invalid_input",
-        "enrichment_exhausted",
-        "target_unreachable",
-        "source_unsupported",
-      ].includes(code)
-    )
-      return null;
+    if (name === "JobError" || VERDICT_CODES.has(code)) return null;
   }
   if (name === "InsufficientCreditsError" || WALLET_MESSAGE.test(lower)) {
     return { kind: "wallet", reason: "insufficient credits" };
@@ -163,6 +154,19 @@ export const PLATFORM_WINDOW = 10;
 export const PLATFORM_TRIP = 6;
 /** How long a pause lasts before one call probes. */
 export const PLATFORM_COOLDOWN_MS = 60_000;
+/** OneShot codes for a tool that is down or throttled; send-routing retries them, the breaker pauses them. */
+export const TRANSIENT_TOOL_CODES: ReadonlySet<string> = new Set([
+  "service_auth",
+  "service_unavailable",
+  "rate_limited",
+]);
+/** OneShot codes that are an answer about the input, never an outage, whatever the message says. */
+export const VERDICT_CODES: ReadonlySet<string> = new Set([
+  "invalid_input",
+  "enrichment_exhausted",
+  "target_unreachable",
+  "source_unsupported",
+]);
 export const TOOL_AUTH_COOLDOWN_MS = 30 * 60_000;
 export const TOOL_MAX_COOLDOWN_MS = 15 * 60_000;
 
@@ -197,7 +201,7 @@ function breakerFor(key: string): Breaker {
  */
 function decides(b: Breaker, now: number, probeId: number): boolean {
   if (b.probe) return b.probe.id === probeId;
-  return now - b.openedAt >= PLATFORM_COOLDOWN_MS;
+  return now - b.openedAt >= (b.cooldownMs ?? PLATFORM_COOLDOWN_MS);
 }
 
 function record(key: string, failed: PlatformError | null, now: number, probeId = 0): void {
