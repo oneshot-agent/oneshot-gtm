@@ -222,9 +222,13 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
     b.outcomes.push(false);
   } else {
     b.outcomes.push(true);
-    b.kind = failed.kind;
-    b.reason = failed.reason;
-    b.requestId = failed.requestId;
+    // Only a failure that sets the pause names it; a late one leaves the active pause's reason.
+    const setPause = () => {
+      b.kind = failed.kind;
+      b.reason = failed.reason;
+      b.requestId = failed.requestId;
+      b.openedAt = now;
+    };
     if (b.open) {
       // The probe failed: wait another cooldown before the next one. A service_auth failure
       // from any call starts the authentication pause from now, even inside a shorter pause.
@@ -238,7 +242,7 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
             : failed.kind === "tool"
               ? Math.min((b.cooldownMs ?? PLATFORM_COOLDOWN_MS) * 2, TOOL_MAX_COOLDOWN_MS)
               : PLATFORM_COOLDOWN_MS;
-        b.openedAt = now;
+        setPause();
         b.probe = null;
       }
     } else if (
@@ -246,7 +250,7 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
       b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP
     ) {
       b.open = true;
-      b.openedAt = now;
+      setPause();
       b.cooldownMs =
         failed.reason === "service_auth" ? TOOL_AUTH_COOLDOWN_MS : PLATFORM_COOLDOWN_MS;
       logEvent(

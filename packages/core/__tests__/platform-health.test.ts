@@ -493,6 +493,33 @@ describe("structured upstream failures", () => {
     expect(paused.message).toContain("support required");
   });
 
+  it("a late failure that does not change the pause keeps the pause's reason", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let fail: ((e: unknown) => void) | undefined;
+    const raw = {
+      personFind: vi.fn(async () => {
+        calls++;
+        if (calls === 1)
+          return new Promise<never>((_, reject) => {
+            fail = reject;
+          });
+        throw Object.assign(jobError("service_auth"), { jobId: "auth-job" });
+      }),
+    };
+    const agent = watchAgent(raw);
+    const stale = agent.personFind().catch(() => {});
+    await agent.personFind().catch(() => {});
+    vi.setSystemTime(Date.now() + 10_000);
+    fail?.(Object.assign(jobError("service_unavailable"), { jobId: "late-job" }));
+    await stale;
+    const paused = (await agent.personFind().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    expect(paused.reason).toBe("service_auth");
+    expect(paused.requestId).toBe("auth-job");
+  });
+
   it("a call that started before a service_auth pause cannot end it early", async () => {
     vi.useFakeTimers();
     let release: (() => void) | undefined;
