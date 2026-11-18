@@ -258,16 +258,17 @@ export function normalizePhone(
   const national = plan.trunk && s.startsWith(plan.trunk) ? s.slice(plan.trunk.length) : s;
   // Written with the country code but without "+": exactly the code plus
   // the fixed national length, where the plan has one (a national number is
-  // shorter, so it is never misread); or the code plus at least eight, and
-  // longer than any national number starting with those digits could be
-  // (Italy, Germany, whose national numbers vary in length).
+  // shorter, so it is never misread); else the code plus at least eight. A
+  // trunk-prefix country's national form starts with its trunk "0", which no
+  // calling code does, so that is enough there ("49 30 1234567"); elsewhere
+  // (Italy) a national number may start with the code too, so the number
+  // must also be longer than any national one could be.
   // North American numbers never reach here: they are read above.
-  // A trunk-prefix country's national form starts with its trunk "0", which
-  // no calling code does, so the same reading holds there.
   if (
     s.startsWith(plan.code) &&
     ((plan.national != null && s.length === plan.code.length + plan.national) ||
-      (s.length >= plan.code.length + 8 && s.length > 11))
+      (s.length >= plan.code.length + 8 &&
+        ((plan.trunk != null && plan.national == null) || s.length > 11)))
   )
     return e164(s);
   return national.length >= 6 ? e164(`${plan.code}${national}`) : null;

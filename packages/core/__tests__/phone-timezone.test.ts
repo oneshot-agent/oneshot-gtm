@@ -217,8 +217,16 @@ describe("review fixes", () => {
     expect(normalizePhone("255504321", "AU")).toBe("+61255504321");
     expect(normalizePhone("33123456789", "FR")).toBe("+33123456789");
     expect(normalizePhone("0123456789", "FR")).toBe("+33123456789");
-    // A country whose national numbers vary in length keeps the longer-than-eleven reading.
-    expect(normalizePhone("4912345678", "DE")).toBe("+494912345678");
+    // A trunk-prefix country whose national numbers vary in length: written
+    // nationally they start with the trunk 0, so a leading 49 is the code.
+    expect(normalizePhone("49301234567", "DE")).toBe("+49301234567");
+    expect(normalizePhone("4930123456", "DE")).toBe("+4930123456");
+    expect(normalizePhone("030 1234567", "DE")).toBe("+49301234567");
+    expect(normalizePhone("301234567", "DE")).toBe("+49301234567");
+    // Without a trunk prefix (Italy) a national number may start with the
+    // code: only a number longer than any national one is read as coded.
+    expect(normalizePhone("3931234567", "IT")).toBe("+393931234567");
+    expect(normalizePhone("393123456789", "IT")).toBe("+393123456789");
   });
 
   it("drops the bracketed trunk zero after a 00 international prefix too", () => {

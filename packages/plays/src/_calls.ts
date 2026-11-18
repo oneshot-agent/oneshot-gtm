@@ -546,7 +546,9 @@ function applyCallOutcome(
   }
   // Only the number that rang the wrong person: a replacement stays.
   if (outcome === "wrong_number") ledger.clearProspectPhone(prospectId, dialled, country);
-  if (outcome === "not_now") {
+  // A repeat of a not_now (a retried save) with no date keeps the deadline
+  // the first set: the default counts from when it was logged, not retried.
+  if (outcome === "not_now" && !(existing?.outcome === "not_now" && req.holdUntil === undefined)) {
     const until = holdUntilIso(req.holdUntil, now);
     for (const c of ledger.listCadencesForProspect(prospectId)) {
       if (c.status !== "active") continue;

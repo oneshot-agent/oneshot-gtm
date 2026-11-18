@@ -57,12 +57,19 @@ export function contactAllowedClause(db: Database): string {
       person ? ` OR cl.prospect_id IN (${SAME_PERSON_IDS})` : ""
     }))`);
   // Sync may have persisted a verdict before the cadence poll consumes it.
+  // A message may be linked to no row: then its address names the person.
   if (
     db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_messages'").get()
   ) {
     clauses.push(`NOT EXISTS (SELECT 1 FROM mailbox_messages m
       WHERE m.direction = 'inbound' AND json_extract(m.data, '$.kind') = 'unsubscribe'
-        AND (m.prospect_id = p.id OR lower(json_extract(m.data, '$.from')) = lower(p.email)))`);
+        AND (m.prospect_id = p.id OR lower(json_extract(m.data, '$.from')) = lower(p.email)${
+          person
+            ? ` OR m.prospect_id IN (${SAME_PERSON_IDS})
+            OR lower(json_extract(m.data, '$.from')) IN (
+              SELECT o.email FROM prospects o WHERE o.shared_person_id = p.shared_person_id)`
+            : ""
+        }))`);
   }
   return clauses.length ? clauses.join(" AND ") : "1=1";
 }
@@ -114,6 +121,10 @@ export function contactAllowedSetClause(db: Database): string {
     emails.push(
       `SELECT lower(json_extract(data, '$.from')) AS email FROM mailbox_messages WHERE ${said}`,
     );
+    if (person)
+      people.push(`SELECT o.shared_person_id AS person FROM mailbox_messages m
+        JOIN prospects o ON o.id = m.prospect_id OR o.email = lower(json_extract(m.data, '$.from'))
+        WHERE m.direction = 'inbound' AND json_extract(m.data, '$.kind') = 'unsubscribe'`);
   }
   const clauses: string[] = [];
   if (ids.length)

@@ -153,8 +153,9 @@ export function callByClientKey(db: Database, clientKey: string): CallRecordView
  * The call step a logged call completed, brought up to a changed outcome:
  * its `metadata.outcome`, and `replied` for an outcome that counts as a
  * reply (unless the play already has a replied step, as
- * `markLatestStepReplied`). Returns the step's play; null when the call
- * completed no step.
+ * `markLatestStepReplied`), else back to `sent`: a call step is only ever
+ * marked replied by its own call. Returns the step's play; null when the
+ * call completed no step.
  */
 export function updateCallStepEvent(
   db: Database,
@@ -185,6 +186,10 @@ export function updateCallStepEvent(
           AND NOT EXISTS (SELECT 1 FROM sequence_events
                            WHERE prospect_id = ? AND play_name = ? AND status = 'replied')`,
     ).run(input.repliedAt ?? null, event.id, input.prospectId, event.play_name);
+  } else {
+    db.prepare(
+      "UPDATE sequence_events SET status = 'sent', replied_at = NULL WHERE id = ? AND status = 'replied'",
+    ).run(event.id);
   }
   return event.play_name;
 }
