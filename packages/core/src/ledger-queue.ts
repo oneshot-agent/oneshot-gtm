@@ -1992,17 +1992,18 @@ export class QueueStore {
       decided_by: decision ? "human" : null,
       decision_reason: null,
     };
-    const decisionSql =
-      input.status === "pending" || decision
-        ? `, reviewed_at = ${input.status === "pending" ? "NULL" : "$now"}, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason`
-        : "";
+    // Every restored status gets its decision back, `expired` included: the
+    // reservation overwrote these columns whatever the row's status was, and
+    // the member below is restored unconditionally, so skipping one status
+    // would leave the move's `reject` beside the prior member.
+    const reviewedAtSql = input.status === "pending" ? "NULL" : "$now";
     const sentGuard =
       input.status === "pending" || input.status === "approved"
         ? " AND status != 'sent' AND sent_at IS NULL"
         : "";
     const r = this.db
       .prepare(
-        `UPDATE target_queue SET status = $status, notes = $notes, decided_by_member = $member, send_started_at = NULL${decisionSql} WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
+        `UPDATE target_queue SET status = $status, notes = $notes, decided_by_member = $member, send_started_at = NULL, reviewed_at = ${reviewedAtSql}, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
       )
       .run({
         $status: input.status,
@@ -2010,15 +2011,11 @@ export class QueueStore {
         $id: input.id,
         $reserved: input.reservedNotes,
         $member: input.member ?? null,
-        ...(decisionSql.includes("$now") ? { $now: now } : {}),
-        ...(decisionSql
-          ? {
-              $decision: previousDecision.decision,
-              $decidedAt: previousDecision.decided_at,
-              $decidedBy: previousDecision.decided_by,
-              $decisionReason: previousDecision.decision_reason ?? null,
-            }
-          : {}),
+        ...(input.status === "pending" ? {} : { $now: now }),
+        $decision: previousDecision.decision,
+        $decidedAt: previousDecision.decided_at,
+        $decidedBy: previousDecision.decided_by,
+        $decisionReason: previousDecision.decision_reason ?? null,
       });
     return r.changes === 1;
   }
