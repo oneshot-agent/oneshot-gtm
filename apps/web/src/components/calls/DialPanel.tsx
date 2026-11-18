@@ -21,7 +21,9 @@ import {
   beginCall,
   localTimeNow,
   outcomeTitle,
+  stepOfLog,
   windowHint,
+  type CallTimer,
   type RowKey,
 } from "../../lib/dialler.ts";
 import { humanizeFlag } from "../../lib/flagLabels.ts";
@@ -82,8 +84,7 @@ export function DialPanel({
   window: callWindow,
   now,
   onRefresh,
-  startedAt,
-  dialledPhone,
+  started,
   saveKey,
   onStart,
   onLogged,
@@ -98,10 +99,8 @@ export function DialPanel({
   now: Date;
   /** Re-read the clock: Call found the window closed. */
   onRefresh: () => void;
-  /** When Call was pressed for this row (ms); null before. */
-  startedAt: number | null;
-  /** The number Call dialled, captured when it was pressed; null before. */
-  dialledPhone: string | null;
+  /** Call pressed for this row: when, the number it dialled and the step the row was on; null before. */
+  started: CallTimer | null;
   /** This row's next save id, held by the page: a retry, even from a remounted panel, sends the same. */
   saveKey: string;
   onStart: (phone: string | null) => void;
@@ -122,6 +121,7 @@ export function DialPanel({
     note: "",
     holdUntil: defaultHoldUntil(),
   }));
+  const startedAt = started?.at ?? null;
   const elapsed = useElapsed(startedAt);
 
   const brief = useQuery({
@@ -155,9 +155,8 @@ export function DialPanel({
   const request = logCallRequest(state, {
     durationSec: startedAt != null ? elapsed : null,
     playName: row.playName,
-    phone: dialledNumber(startedAt, dialledPhone, row.phone),
-    currentStep: row.currentStep,
-    enrolledAt: row.enrolledAt,
+    phone: dialledNumber(startedAt, started?.phone ?? null, row.phone),
+    ...stepOfLog(started, row),
     clientKey: saveKey,
   });
   const submit = () => {
