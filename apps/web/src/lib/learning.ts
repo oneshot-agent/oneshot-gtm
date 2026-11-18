@@ -179,5 +179,11 @@ export function whyLine(p: LearningProposalView): string {
   const notes = [p.evidenceSummary.trim()];
   if (p.legacy) notes.push("learned before review existed");
   if (p.kind === "campaign_angle") notes.push("hypothesis");
+  // The rule is shared; a LinkedIn message behind it is shown only on its own account (#1040).
+  const withheld = p.evidence.withheld ?? 0;
+  if (withheld > 0)
+    notes.push(
+      `${withheld} LinkedIn ${withheld === 1 ? "example is" : "examples are"} shown only to the member who connected the account`,
+    );
   return notes.filter(Boolean).join(" · ");
 }
