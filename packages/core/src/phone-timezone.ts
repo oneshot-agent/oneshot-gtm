@@ -431,9 +431,9 @@ const OPENS_HORIZON_DAYS = 8;
  * The prospect's local time from their number, against the workspace's call
  * window: in window only when it holds in EVERY zone the number may be in,
  * and when not, the time it next opens in all of them. A number no zone is
- * known for, or whose zones never share an hour of the window (a calling code
- * that spans the Pacific and the Atlantic), reads as unknown: in window, no
- * zone, no local time.
+ * known for reads as unknown: in window, no zone, no local time. Zones that
+ * never share a minute of the window (a calling code that spans the Pacific
+ * and the Atlantic) are out of it with no opening.
  */
 export function phoneLocalTime(
   phone: string | null | undefined,
@@ -485,6 +485,6 @@ export function phoneLocalTime(
     for (const t of offsetChanges(zone, now.getTime(), horizon.getTime())) candidates.add(t);
   }
   const opens = [...candidates].toSorted((a, b) => a - b).find((t) => all(new Date(t)));
-  if (opens === undefined) return unknown;
+  if (opens === undefined) return { zones, localTime, inWindow: false, opensAt: null };
   return { zones, localTime, inWindow: false, opensAt: new Date(opens).toISOString() };
 }

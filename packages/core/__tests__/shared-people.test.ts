@@ -251,6 +251,43 @@ describe("shared person identity with workspace memberships", () => {
     // An address nobody knows is not held.
     expect(alpha.contactSuppressionFor("stranger@example.test")).toBeNull();
   });
+  it("an opt-out on one local row of a person holds their other rows here (legacy aliases)", () => {
+    // Two rows made before the registry; the backfill binds both to one person.
+    const path = join(root, "aliases.sqlite");
+    const legacy = new Ledger(path);
+    const linkedin_url = "https://linkedin.com/in/two-rows";
+    const first = legacy.upsertProspect({ email: "first@example.test", linkedin_url });
+    const second = legacy.upsertProspect({ email: "second@example.test", linkedin_url });
+    legacy.close();
+    const ledger = new Ledger(path, { sharedPeoplePath: join(root, "shared.sqlite") });
+    try {
+      const person = ledger.getProspectById(first)?.shared_person_id;
+      expect(person).toBeTruthy();
+      expect(ledger.getProspectById(second)?.shared_person_id).toBe(person);
+      expect(ledger.findProspectByEmail("second@example.test")?.id).toBe(second);
+      ledger.recordInboxReply({
+        id: "a1",
+        threadKey: "t",
+        prospectId: first,
+        fromEmail: "first@example.test",
+        body: "remove me",
+        receivedAt: "2026-11-16T10:00:00.000Z",
+        kind: "unsubscribe",
+      });
+      expect(ledger.contactSuppressionFor("second@example.test")).toMatchObject({
+        kind: "unsubscribe",
+      });
+      ledger.insertCall({
+        prospectId: second,
+        startedAt: "2026-11-17T10:00:00.000Z",
+        outcome: "do_not_contact",
+      });
+      expect(ledger.callAllowed(first)).toBe(false);
+      expect(ledger.callAllowedIds([first, second])).toEqual(new Set());
+    } finally {
+      ledger.close();
+    }
+  });
   it("the call phone readers see a phone the shared person gained elsewhere", () => {
     const a = alpha.upsertProspect({
       email: "caller@example.test",

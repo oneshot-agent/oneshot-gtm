@@ -1469,11 +1469,29 @@ export class Ledger {
    *
    * An opt-out (an unsubscribe reply, a call logged do-not-contact) is the
    * person's: it holds every verified address `findProspectByEmail` resolves
-   * to them. A dead mailbox (auto_permanent) holds only the address it came
-   * from.
+   * to them, and every local row of that person. A dead mailbox
+   * (auto_permanent) holds only the address it came from.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
-    return delivContactSuppressionFor(this.db, email, this.findProspectByEmail(email)?.id ?? null);
+    return delivContactSuppressionFor(this.db, email, this.personProspectIds(email));
+  }
+
+  /**
+   * The local prospect rows an address belongs to: the one it resolves to
+   * and, in the shared registry, every other row of the same person (legacy
+   * aliases keep their own rows and emails in one workspace).
+   */
+  private personProspectIds(email: string): number[] {
+    const found = this.findProspectByEmail(email);
+    if (!found) return [];
+    if (!this.people) return [found.id];
+    const rows = this.db
+      .query(
+        `SELECT o.id FROM prospects p JOIN prospects o ON o.shared_person_id = p.shared_person_id
+          WHERE p.id = ?`,
+      )
+      .all(found.id) as Array<{ id: number }>;
+    return [...new Set([found.id, ...rows.map((r) => r.id)])];
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */

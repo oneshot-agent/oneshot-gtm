@@ -49,7 +49,7 @@ export interface CallLocalTime {
   localTime: string | null;
   /** True when it is inside the workspace's call window in every zone (true when unknown). */
   inWindow: boolean;
-  /** ISO time the window next opens, when outside it. */
+  /** ISO time the window next opens, when outside it; null when its zones never share an opening. */
   opensAt: string | null;
 }
 
