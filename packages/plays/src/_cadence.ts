@@ -539,7 +539,7 @@ function mailStep(dayOffset: number): SequenceStep {
 /** The id of the call step in a plan (`calls.cadenceStep`). */
 export const CALL_STEP_ID = "call";
 
-/** A preview finished after its cadence moved on; nothing was stored. */
+/** A preview finished after its cadence moved on or its offer was replaced; nothing was stored. */
 export const PREVIEW_STEP_MOVED =
   "cadence changed while the preview was written; refresh and retry";
 
@@ -2632,6 +2632,19 @@ export async function previewCadenceStep(input: {
     });
   }
   const seqOffer = derived && derived.status !== "none" && offerStep ? derived : null;
+  // Keyed to the offer handed to the builder (else the stored one, read
+  // before the builder reads it): a later read could name a newer offer.
+  const drafting = guarded.expect
+    ? {
+        ...guarded,
+        expect: {
+          ...guarded.expect,
+          offerKey: seqOffer
+            ? ledger.cadenceOfferKeyOf(seqOffer.offer)
+            : ledger.cadenceOfferKey(input),
+        },
+      }
+    : guarded;
   const intro = mailDraft
     ? null
     : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
@@ -2728,7 +2741,7 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
-  return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
+  return storePreview(drafting, cfg, seq, stepEntryIndex, step, {
     subject,
     body,
     flags,
@@ -2742,7 +2755,12 @@ function storePreview(
     prospectId: number;
     playName: string;
     rotateAngle?: boolean;
-    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+    expect?: {
+      currentStep: number;
+      enrolledAt: string;
+      stepId?: string;
+      offerKey?: string | null;
+    };
   },
   cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,

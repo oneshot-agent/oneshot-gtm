@@ -21,6 +21,8 @@ const llm = {
   judge: "relevant" as "relevant" | "weak" | "irrelevant",
   /** The follow-up writer ignores its OFFER (and its repair turn does too). */
   dropOffer: false,
+  /** Runs once while a follow-up is being written, before its reply. */
+  duringFollowUp: null as (() => void) | null,
 };
 
 const cfg: Record<string, unknown> = {
@@ -89,6 +91,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
       if (name === "offer-angles") return reply(JSON.stringify({ angles: [] }));
       if (name === "angle-select") return reply(JSON.stringify({ index: 1 }));
       const offer = offerLine(input.messages.find((m) => m.role === "user")?.content ?? "");
+      const during = llm.duringFollowUp;
+      llm.duringFollowUp = null;
+      during?.();
       return reply(
         JSON.stringify({
           subject: "leeds crews",
@@ -103,6 +108,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 });
 
 const {
+  PREVIEW_STEP_MOVED,
   buildFollowUpEmail,
   enrollInCadence,
   previewCadenceStep,
@@ -222,6 +228,7 @@ beforeEach(() => {
   llm.offers = JSON.stringify({ offers: [good, second] });
   llm.judge = "relevant";
   llm.dropOffer = false;
+  llm.duringFollowUp = null;
   delete cfg["offerExclusions"];
 });
 afterEach(() => ledger.close());
@@ -372,6 +379,57 @@ describe("a sequence that started before prospect offers", () => {
       offer: { offer: "book every crew the day the job comes in", editedBy: "founder" },
       offerCandidates: [{ offer: good.offer }, { offer: second.offer }],
     });
+  });
+});
+
+describe("a preview and the offer it restates", () => {
+  const at = (id: number) => ({ prospectId: id, playName: PLAY });
+  const founders = { ...second, editedBy: "founder" };
+  const replaceOffer = (id: number): boolean =>
+    writeSequenceOffer({ record: sequenceOfferRecord(at(id)), offer: founders });
+
+  it("is gone once the offer is replaced: Send has nothing to ship, and the next preview restates the new one", async () => {
+    const { id } = preOfferSequence();
+    expect((await preview(id)).body.startsWith(`I can ${good.offer}`)).toBe(true);
+    expect(replaceOffer(id)).toBe(true);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    await expect(sendCadenceStep(at(id))).rejects.toThrow(/no persisted preview/);
+    expect(sends).toHaveLength(0);
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
+
+  it("is kept when the founder approves the offer it restates", async () => {
+    const { id } = preOfferSequence();
+    const first = await preview(id);
+    const record = sequenceOfferRecord(at(id));
+    expect(writeSequenceOffer({ record, offer: { weakApprovedAt: "now" }, merge: true })).toBe(
+      true,
+    );
+    expect(ledger.getCadenceDraft(at(id))?.body).toBe(first.body);
+  });
+
+  it("is not stored when the offer is replaced while it is being written", async () => {
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer(at(id));
+    let replaced = false;
+    llm.duringFollowUp = () => {
+      replaced = replaceOffer(id);
+    };
+    await expect(previewCadenceStep(at(id))).rejects.toThrow(PREVIEW_STEP_MOVED);
+    expect(replaced).toBe(true);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
+
+  it("is not stored when the offer is replaced after it was read for the draft and before the draft starts", async () => {
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer(at(id));
+    // Runs up to the offer read, then yields: the replacement lands in between.
+    const drafting = previewCadenceStep(at(id));
+    expect(replaceOffer(id)).toBe(true);
+    await expect(drafting).rejects.toThrow(PREVIEW_STEP_MOVED);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
   });
 });
 
