@@ -54,7 +54,9 @@ function fakeFetch(routes: Record<string, (req: Sent) => { status?: number; body
       .toSorted((a, b) => b.length - a.length)[0];
     if (!key) return new Response(JSON.stringify({ message: "no route" }), { status: 500 });
     const out = routes[key]!(req);
-    return new Response(JSON.stringify(out.body), { status: out.status ?? 200 });
+    // A 204 carries no body, as Twilio's deletes answer.
+    const status = out.status ?? 200;
+    return new Response(status === 204 ? null : JSON.stringify(out.body), { status });
   });
   return { fetch: fn as unknown as typeof fetch, sent };
 }
@@ -244,6 +246,25 @@ describe("TwilioBridge", () => {
       const posts = sent.filter((s) => s.method === "POST");
       expect(posts.map((p) => p.form["Status"] ?? null)).toEqual(expected ? [expected] : []);
     }
+  });
+
+  it("reads the call again when a cancel is refused because it was answered meanwhile", async () => {
+    let status = "ringing";
+    const { fetch, sent } = fakeFetch({
+      [`GET ${ACCOUNT}/Calls/CA1.json`]: () => ({ body: { sid: "CA1", status } }),
+      [`POST ${ACCOUNT}/Calls/CA1.json`]: (req) => {
+        if (req.form["Status"] === "canceled") {
+          status = "in-progress";
+          return { status: 400, body: { message: "Call is not ringing", code: 21220 } };
+        }
+        return { body: { sid: "CA1", status: "completed" } };
+      },
+    });
+    await new TwilioBridge(KEYS, { fetch }).hangUp("CA1");
+    expect(sent.filter((s) => s.method === "POST").map((p) => p.form["Status"])).toEqual([
+      "canceled",
+      "completed",
+    ]);
   });
 
   it("verifies a caller ID and lists it", async () => {
@@ -946,5 +967,88 @@ describe("recording rows over time", () => {
     // Calls off: the pending transcript waits, the deletion does not.
     expect(listed("2026-11-18T12:00:00Z", true)).toEqual([id]);
     expect(listed("2026-11-18T12:00:00Z")).toEqual([id, recent]);
+  });
+});
+
+describe("writes that must not undo a newer state", () => {
+  let ledger: Ledger;
+  beforeEach(() => {
+    ledger = new Ledger(":memory:");
+  });
+  afterEach(() => ledger.close());
+
+  const call = (prospectId: number) =>
+    ledger.insertCall({
+      prospectId,
+      startedAt: "2026-11-18T10:00:00Z",
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ringing_founder",
+      transcriptStatus: "pending",
+    });
+
+  it("never puts a live status over an ended one", () => {
+    const id = call(ledger.upsertProspect({ name: "Dana", email: "d@a.test" }));
+    ledger.updateBridgedCall(id, { status: "ended", durationSec: 30 });
+    ledger.updateBridgedCall(id, { status: "connected", durationSec: 5 });
+    expect(ledger.getCall(id)).toMatchObject({ status: "ended", durationSec: 30 });
+    ledger.updateBridgedCall(id, { status: "failed" });
+    expect(ledger.getCall(id)?.status).toBe("failed");
+  });
+
+  it("writes the hold's own reads only while no poll has claimed the call", () => {
+    const id = call(ledger.upsertProspect({ name: "Dana", email: "d@a.test" }));
+    ledger.updateUnclaimedCall(id, { status: "ringing_founder" });
+    ledger.claimBridge(id, "2026-11-18T10:00:05Z");
+    ledger.updateBridgedCall(id, { status: "connected" });
+    ledger.updateUnclaimedCall(id, {
+      status: "ended",
+      statusReason: "x",
+      transcriptStatus: "none",
+    });
+    expect(ledger.getCall(id)).toMatchObject({ status: "connected", transcriptStatus: "pending" });
+  });
+});
+
+describe("member phone rows", () => {
+  beforeEach(() => {
+    const db = getSharedDb();
+    db.deleteMemberPhone("");
+    db.deleteMemberPhone("mia@example.com");
+    db.deleteMemberPhone("lee@example.com");
+  });
+
+  it("acts on a read row only by its write token", () => {
+    const db = getSharedDb();
+    const first = db.setMemberPhone({ member: "", phone: "+15550001111", status: "verifying" });
+    const second = db.setMemberPhone({ member: "", phone: "+15550001111", status: "verifying" });
+    expect(first.write_token).not.toBe(second.write_token);
+    expect(
+      db.setMemberPhone(
+        { member: "", phone: "+15550001111", status: "verified" },
+        first.write_token!,
+      ),
+    ).toBeNull();
+    expect(db.memberPhone("")?.status).toBe("verifying");
+    expect(db.deleteMemberPhone("", first)).toBe(false);
+    expect(db.deleteMemberPhone("", second)).toBe(true);
+  });
+
+  it("never keeps two verified rows for one number, and a removed member must verify again", () => {
+    const db = getSharedDb();
+    db.addMember({ email: "mia@example.com", role: "member" });
+    db.addMember({ email: "lee@example.com", role: "member" });
+    try {
+      db.setMemberPhone({ member: "mia@example.com", phone: "+15550002222", status: "verified" });
+      db.removeMember("mia@example.com");
+      expect(db.memberPhone("mia@example.com")?.status).toBe("failed");
+      db.setMemberPhone({ member: "mia@example.com", phone: "+15550002222", status: "verified" });
+      db.setMemberPhone({ member: "lee@example.com", phone: "+15550002222", status: "verified" });
+      expect(db.memberPhone("mia@example.com")?.status).toBe("failed");
+      expect(db.memberPhone("lee@example.com")?.status).toBe("verified");
+    } finally {
+      db.removeMember("lee@example.com");
+      db.removeMember("mia@example.com");
+    }
   });
 });

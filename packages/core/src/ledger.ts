@@ -157,6 +157,7 @@ import {
   callPhone as callsCallPhone,
   claimBridge as callsClaimBridge,
   claimRecording as callsClaimRecording,
+  updateUnclaimedCall as callsUpdateUnclaimedCall,
   deferDiscard as callsDeferDiscard,
   releaseRecording as callsReleaseRecording,
   failStaleTranscripts as callsFailStaleTranscripts,
@@ -1979,6 +1980,11 @@ export class Ledger {
   /** @see ledger-calls.ts#claimBridge */
   claimBridge(id: number, atIso: string): boolean {
     return callsClaimBridge(this.db, id, atIso);
+  }
+
+  /** @see ledger-calls.ts#updateUnclaimedCall */
+  updateUnclaimedCall(id: number, patch: Parameters<typeof callsUpdateUnclaimedCall>[2]): void {
+    callsUpdateUnclaimedCall(this.db, id, patch);
   }
 
   /** @see ledger-calls.ts#claimRecording */

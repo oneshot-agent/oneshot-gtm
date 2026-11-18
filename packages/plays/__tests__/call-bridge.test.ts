@@ -1134,15 +1134,21 @@ describe("calls a teammate made, in the next email", () => {
       recordCall(id, { outcome: "interested", callId: jo, commitments: [promise] });
       const own = placed(null, "2026-11-16T10:00:00Z");
       recordCall(id, { outcome: "voicemail", callId: own });
-      const lines = buildPriorCallsBlock(id, "Sam")!.split("\n");
+      const lines = buildPriorCallsBlock(id, "sam@example.com")!.split("\n");
       expect(lines).toContain("- 2026-11-17: Interested (by Jo Park)");
       expect(lines).toContain("- 2026-11-16: Left voicemail");
       expect(lines.find((l) => l.startsWith("  Promised:"))).toContain(
         "only after procurement approves",
       );
       expect(lines[0]).toMatch(/colleague/);
-      // Jo writing as the sender: their own call is theirs.
-      expect(buildPriorCallsBlock(id, "Jo Park")).toContain("- 2026-11-17: Interested\n");
+      // Jo sending (by key, case aside): their own call is theirs. A name never matches.
+      expect(buildPriorCallsBlock(id, "Jo@Example.com")).toContain("- 2026-11-17: Interested\n");
+      expect(buildPriorCallsBlock(id, "Jo Park")).toContain("(by Jo Park)");
+      // No sender key known: still a colleague's call.
+      expect(buildPriorCallsBlock(id, null)).toContain("(by Jo Park)");
+      // A declined recording takes its promises out of the email too.
+      ledger.markRecordingDiscard(jo);
+      expect(buildPriorCallsBlock(id, "sam@example.com")).not.toContain("Promised");
     } finally {
       getSharedDb().removeMember("jo@example.com");
     }
@@ -1327,8 +1333,8 @@ describe("declined recordings that are slow or failing to delete", () => {
     });
     await sweepBridgedCalls({ bridge, now: IN_WINDOW });
     expect(ledger.getBridgedCall(sixth)?.discardPending).toBe(true);
-    // The five failed and wait; the sixth gets its turn.
-    cfg = { calls: { enabled: false, bridge: { provider: "twilio" } } };
+    // The five failed and wait; the sixth gets its turn, with the bridge off too.
+    cfg = { calls: { enabled: false, bridge: null } };
     expect(
       (await sweepBridgedCalls({ bridge, now: new Date(IN_WINDOW.getTime() + 60_000) })).checked,
     ).toBe(1);
@@ -1356,6 +1362,36 @@ describe("two members verifying one number at once", () => {
     } finally {
       getSharedDb().removeMember("mia@example.com");
     }
+  });
+});
+
+describe("only the challenge Verify started proves a phone", () => {
+  it("never takes a bare reservation, or a row changed meanwhile, as verified", async () => {
+    const bridge = fakeBridge();
+    // A reservation left by a Verify that never reached Twilio.
+    getSharedDb().reserveMemberPhone("", MEMBER);
+    bridge.verified.add(MEMBER);
+    expect((await checkMemberPhone(null, { bridge })).status).toBe("verifying");
+    const again = await verifyMemberPhone(null, MEMBER, { bridge });
+    expect(again).toMatchObject({ status: "verifying", validationCode: "654321" });
+    expect(bridge.removeCallerId).toHaveBeenCalledWith(MEMBER);
+
+    // The member switched numbers while the check was asking Twilio.
+    const racing = fakeBridge({
+      isVerified: vi.fn(async () => {
+        getSharedDb().setMemberPhone({
+          member: "",
+          phone: "+14155550122",
+          status: "verifying",
+          validationCode: "111111",
+        });
+        return true;
+      }),
+    });
+    expect(await checkMemberPhone(null, { bridge: racing })).toMatchObject({
+      phone: "+14155550122",
+      status: "verifying",
+    });
   });
 });
 

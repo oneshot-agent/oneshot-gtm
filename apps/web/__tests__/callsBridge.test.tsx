@@ -23,6 +23,7 @@ import {
   bridgePollMs,
   bridgeStatusLine,
   callerLabel,
+  callLookupPending,
   commitmentsToSend,
   CONSENT_LINE,
   discardToast,
@@ -256,6 +257,16 @@ describe("bridged call logic", () => {
     expect(saveHeld(ended, { starting: false, discarding: false })).toBe(false);
     // Still looking for a call to log against.
     expect(saveHeld(undefined, { starting: false, checking: true })).toBe(true);
+  });
+
+  it("waits for the history and the signed-in member before Save, bridging on or not", () => {
+    const base = { startedId: null, noResume: false, historyKnown: true, memberKnown: true };
+    expect(callLookupPending(base)).toBe(false);
+    expect(callLookupPending({ ...base, historyKnown: false })).toBe(true);
+    expect(callLookupPending({ ...base, memberKnown: false })).toBe(true);
+    // A call started here, or a tel: call, needs no lookup.
+    expect(callLookupPending({ ...base, memberKnown: false, startedId: 3 })).toBe(false);
+    expect(callLookupPending({ ...base, historyKnown: false, noResume: true })).toBe(false);
   });
 
   it("keeps Save held on a live call whose read fails, until the member says it is over", () => {

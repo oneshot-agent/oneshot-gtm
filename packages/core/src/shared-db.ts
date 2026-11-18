@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
 import { personAliases, SharedPeople } from "./shared-people.ts";
@@ -159,6 +160,18 @@ export interface MemberPhoneRow {
   verified_at: string | null;
   error: string | null;
   updated_at: string;
+  /** New on every write: a later check or delete acts only on the write it read. */
+  write_token: string | null;
+}
+
+/** One write to a member's phone row (`SharedDb.setMemberPhone`). */
+export interface MemberPhoneWrite {
+  member: string;
+  phone: string;
+  status: MemberPhoneStatus;
+  validationCode?: string | null;
+  verifiedAt?: string | null;
+  error?: string | null;
 }
 
 /** The `member_phones` key for a request's member: the email, '' for the unlisted local owner. */
@@ -404,7 +417,8 @@ export class SharedDb {
         validation_code TEXT,
         verified_at     TEXT,
         error           TEXT,
-        updated_at      TEXT NOT NULL
+        updated_at      TEXT NOT NULL,
+        write_token     TEXT
       );
       -- Install-wide values every workspace shares (the call bridge's
       -- transcription service: the provider subaccount is install-wide).
@@ -435,6 +449,12 @@ export class SharedDb {
         if (!paymentCols.some((c) => c.name === name))
           this.db.exec(`ALTER TABLE payment_holds ADD COLUMN ${name} ${definition}`);
       }
+      // A phone row's write: a later check or delete acts only on the row it read.
+      const phoneCols = this.db
+        .query<{ name: string }, []>("PRAGMA table_info(member_phones)")
+        .all();
+      if (!phoneCols.some((c) => c.name === "write_token"))
+        this.db.exec("ALTER TABLE member_phones ADD COLUMN write_token TEXT");
       const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
         name: string;
       }>;
@@ -1483,6 +1503,15 @@ export class SharedDb {
           new Date().toISOString(),
           normalized,
         ]).changes === 1;
+      // Their phone is no longer proven: a member added back verifies it again.
+      if (removed)
+        this.db.run(
+          `UPDATE member_phones SET status = 'failed', validation_code = NULL, verified_at = NULL,
+                  error = 'the member was removed; verify the phone again', updated_at = ?,
+                  write_token = ?
+            WHERE member = ? AND status <> 'failed'`,
+          [new Date().toISOString(), randomUUID(), normalized],
+        );
       this.db.exec("COMMIT");
       return removed;
     } catch (err) {
@@ -1579,32 +1608,58 @@ export class SharedDb {
     );
   }
 
-  /** Write a member's phone and its verification state; the fields left out are cleared. */
-  setMemberPhone(input: {
-    member: string;
-    phone: string;
-    status: MemberPhoneStatus;
-    validationCode?: string | null;
-    verifiedAt?: string | null;
-    error?: string | null;
-  }): MemberPhoneRow {
-    this.db.run(
-      `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error, updated_at)
-       VALUES(?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = excluded.status,
-         validation_code = excluded.validation_code, verified_at = excluded.verified_at,
-         error = excluded.error, updated_at = excluded.updated_at`,
-      [
-        input.member,
-        input.phone,
-        input.status,
-        input.validationCode ?? null,
-        input.verifiedAt ?? null,
-        input.error ?? null,
-        new Date().toISOString(),
-      ],
-    );
-    return this.memberPhone(input.member)!;
+  /**
+   * Write a member's phone and its verification state; the fields left out
+   * are cleared, and the row gets a new `write_token`. With `ifToken`, only
+   * while the row is still the write that token names (else null). A number
+   * verified here is no one else's verified number any more.
+   */
+  setMemberPhone(input: MemberPhoneWrite): MemberPhoneRow;
+  setMemberPhone(input: MemberPhoneWrite, ifToken: string): MemberPhoneRow | null;
+  setMemberPhone(input: MemberPhoneWrite, ifToken?: string): MemberPhoneRow | null {
+    const now = new Date().toISOString();
+    const values = [
+      input.phone,
+      input.status,
+      input.validationCode ?? null,
+      input.verifiedAt ?? null,
+      input.error ?? null,
+      now,
+      randomUUID(),
+    ];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const wrote =
+        ifToken === undefined
+          ? this.db.run(
+              `INSERT INTO member_phones(phone, status, validation_code, verified_at, error, updated_at,
+                                         write_token, member)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = excluded.status,
+                 validation_code = excluded.validation_code, verified_at = excluded.verified_at,
+                 error = excluded.error, updated_at = excluded.updated_at,
+                 write_token = excluded.write_token`,
+              [...values, input.member],
+            ).changes > 0
+          : this.db.run(
+              `UPDATE member_phones SET phone = ?, status = ?, validation_code = ?, verified_at = ?,
+                      error = ?, updated_at = ?, write_token = ?
+                WHERE member = ? AND write_token = ?`,
+              [...values, input.member, ifToken],
+            ).changes > 0;
+      if (wrote && input.status === "verified")
+        this.db.run(
+          `UPDATE member_phones SET status = 'failed', verified_at = NULL, updated_at = ?,
+                  error = 'another member verified this number', write_token = ?
+            WHERE phone = ? AND member <> ? AND status = 'verified'`,
+          [now, randomUUID(), input.phone, input.member],
+        );
+      this.db.exec("COMMIT");
+      return wrote ? this.memberPhone(input.member) : null;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /**
@@ -1628,12 +1683,22 @@ export class SharedDb {
         this.db.exec("ROLLBACK");
         return false;
       }
+      const now = new Date().toISOString();
+      // A removed member's leftover claim on it holds nothing any more.
       this.db.run(
-        `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error, updated_at)
-         VALUES(?, ?, 'verifying', NULL, NULL, NULL, ?)
+        `UPDATE member_phones SET status = 'failed', verified_at = NULL, updated_at = ?,
+                error = 'the member was removed; verify the phone again', write_token = ?
+          WHERE phone = ? AND member <> ? AND status <> 'failed'`,
+        [now, randomUUID(), phone, member],
+      );
+      this.db.run(
+        `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error,
+                                   updated_at, write_token)
+         VALUES(?, ?, 'verifying', NULL, NULL, NULL, ?, ?)
          ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = 'verifying',
-           validation_code = NULL, verified_at = NULL, error = NULL, updated_at = excluded.updated_at`,
-        [member, phone, new Date().toISOString()],
+           validation_code = NULL, verified_at = NULL, error = NULL, updated_at = excluded.updated_at,
+           write_token = excluded.write_token`,
+        [member, phone, now, randomUUID()],
       );
       this.db.exec("COMMIT");
       return true;
@@ -1654,21 +1719,19 @@ export class SharedDb {
   }
 
   /**
-   * Forget a member's phone. With `expected`, only the row read before
-   * (same phone, same write): one stored since is kept. False when nothing
-   * was deleted.
+   * Forget a member's phone. With `expected`, only the write read before
+   * (its `write_token`): one stored since is kept. False when nothing was
+   * deleted.
    */
-  deleteMemberPhone(
-    member: string,
-    expected?: Pick<MemberPhoneRow, "phone" | "updated_at" | "status">,
-  ): boolean {
+  deleteMemberPhone(member: string, expected?: Pick<MemberPhoneRow, "write_token">): boolean {
     if (!expected)
       return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;
+    if (!expected.write_token) return false;
     return (
-      this.db.run(
-        "DELETE FROM member_phones WHERE member = ? AND phone = ? AND updated_at = ? AND status = ?",
-        [member, expected.phone, expected.updated_at, expected.status],
-      ).changes === 1
+      this.db.run("DELETE FROM member_phones WHERE member = ? AND write_token = ?", [
+        member,
+        expected.write_token,
+      ]).changes === 1
     );
   }
 

@@ -363,7 +363,8 @@ export function updateBridgedCall(
       ["status_reason", patch.statusReason],
       ["duration_sec", patch.durationSec],
     ],
-    "",
+    // A late read of a live state never replaces an ended one.
+    patch.status !== undefined && !TERMINAL_STATUSES.has(patch.status) ? LIVE_ONLY : "",
   );
   write(
     [
@@ -387,6 +388,30 @@ export function updateBridgedCall(
     ],
     "AND discard_recording = 0",
   );
+}
+
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["ended", "failed"]);
+const LIVE_ONLY = "AND COALESCE(status, '') NOT IN ('ended', 'failed')";
+
+/**
+ * The member's leg as read before anyone was dialled: written only while no
+ * poll has claimed the call (`claimBridge`), so a stale read never ends or
+ * unrecords a call another poll has bridged.
+ */
+export function updateUnclaimedCall(
+  db: Database,
+  id: number,
+  patch: { status: BridgeCallStatus; statusReason?: string; transcriptStatus?: "none" },
+): void {
+  const cols: Array<[string, string]> = [["status", patch.status]];
+  if (patch.statusReason !== undefined) cols.push(["status_reason", patch.statusReason]);
+  if (patch.transcriptStatus !== undefined)
+    cols.push(["transcript_status", patch.transcriptStatus]);
+  db.prepare(
+    `UPDATE calls SET ${cols.map(([c]) => `${c} = ?`).join(", ")}
+      WHERE id = ? AND bridged_at IS NULL
+        ${TERMINAL_STATUSES.has(patch.status) ? "" : LIVE_ONLY}`,
+  ).run(...cols.map(([, v]) => v), id);
 }
 
 /** Claim a held call for dialling the prospect: true for exactly one caller. */
@@ -465,7 +490,7 @@ export function listBridgedCallsToAdvance(
 ): BridgedCall[] {
   const discardDue = "discard_recording = 1 AND (discard_next_at IS NULL OR discard_next_at <= ?)";
   const work = onlyDiscards
-    ? "discard_recording = 1"
+    ? `COALESCE(status, '') NOT IN ('ended', 'failed') AND discard_recording = 1 OR (${discardDue})`
     : `COALESCE(status, '') NOT IN ('ended', 'failed')
                OR (${discardDue})
                OR (transcript_status = 'pending' AND discard_recording = 0)
@@ -478,7 +503,7 @@ export function listBridgedCallsToAdvance(
           AND (${work})
         ORDER BY started_at ASC, id ASC LIMIT ?`,
     )
-    .all(...(onlyDiscards ? [sinceIso, limit] : [sinceIso, nowIso, limit])) as CallRow[];
+    .all(sinceIso, nowIso, limit) as CallRow[];
   // Ready soonest first: one that keeps failing is pushed behind the rest.
   const oldDiscards = db
     .query(

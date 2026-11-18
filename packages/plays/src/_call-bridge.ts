@@ -171,23 +171,27 @@ export async function verifyMemberPhone(
   // without a code: reserved before the provider is asked.
   if (!shared.reserveMemberPhone(member, phone))
     throw new CallBridgeRequestError("that number is another member's phone", 409);
+  // Every write below lands only on this reservation: never on a row written since.
+  const token = shared.memberPhone(member)?.write_token ?? "";
   try {
     const listed = await bridge.isVerified(phone);
-    // This member's own code was typed: the challenge they started is done.
-    if (listed && own?.phone === phone && own.status === "verifying") {
-      shared.setMemberPhone({
-        member,
-        phone,
-        status: "verified",
-        verifiedAt: new Date().toISOString(),
-      });
+    // This member's own code was typed for a challenge Verify started (it
+    // has a code); a bare reservation proves nothing.
+    if (listed && own?.phone === phone && own.status === "verifying" && own.validation_code) {
+      shared.setMemberPhone(
+        { member, phone, status: "verified", verifiedAt: new Date().toISOString() },
+        token,
+      );
       return memberPhoneView(email);
     }
     if (listed) await bridge.removeCallerId(phone);
     const { validationCode } = await bridge.verifyCallerId(phone);
-    shared.setMemberPhone({ member, phone, status: "verifying", validationCode });
+    shared.setMemberPhone({ member, phone, status: "verifying", validationCode }, token);
   } catch (err) {
-    shared.setMemberPhone({ member, phone, status: "failed", error: (err as Error).message });
+    shared.setMemberPhone(
+      { member, phone, status: "failed", error: (err as Error).message },
+      token,
+    );
     throw providerError(err);
   }
   logEvent("call.phone_verify_started", { member_set: email != null });
@@ -216,25 +220,28 @@ export async function checkMemberPhone(
   } catch (err) {
     throw providerError(err);
   }
-  // Only this member's own pending challenge: a failed row waits for a fresh Verify.
-  if (listed && row.status === "verifying") {
-    shared.setMemberPhone({
-      member,
-      phone: row.phone,
-      status: "verified",
-      verifiedAt: now.toISOString(),
-    });
+  // Only the challenge Verify started (verifying, with a code), and only if
+  // the row is still the one read before the provider was asked.
+  const token = row.write_token ?? "";
+  if (listed && row.status === "verifying" && row.validation_code) {
+    shared.setMemberPhone(
+      { member, phone: row.phone, status: "verified", verifiedAt: now.toISOString() },
+      token,
+    );
   } else if (
     !listed &&
     row.status === "verifying" &&
     now.getTime() - Date.parse(row.updated_at) > VERIFY_TIMEOUT_MS
   ) {
-    shared.setMemberPhone({
-      member,
-      phone: row.phone,
-      status: "failed",
-      error: "the code was not entered in time; press Verify again",
-    });
+    shared.setMemberPhone(
+      {
+        member,
+        phone: row.phone,
+        status: "failed",
+        error: "the code was not entered in time; press Verify again",
+      },
+      token,
+    );
   }
   return memberPhoneView(email);
 }
@@ -556,8 +563,9 @@ async function holdStep(
 ): Promise<void> {
   const ledger = getLedger();
   const id = call.view.id;
+  // Both only while no poll has claimed the call: a claimed one is that poll's to write.
   if (TERMINAL.has(state.status)) {
-    ledger.updateBridgedCall(id, {
+    ledger.updateUnclaimedCall(id, {
       status: state.status,
       statusReason: state.status === "failed" ? "your phone did not answer" : ENDED_BEFORE_DIAL,
       transcriptStatus: "none",
@@ -565,7 +573,7 @@ async function holdStep(
     return;
   }
   if (state.answeredBy == null) {
-    ledger.updateBridgedCall(id, { status: "ringing_founder" });
+    ledger.updateUnclaimedCall(id, { status: "ringing_founder" });
     return;
   }
   // Another poll owns the call now, and may have moved it on already.
@@ -837,14 +845,15 @@ async function discardStep(callId: number, bridge: CallBridge, now: Date): Promi
 export async function sweepBridgedCalls(
   opts: { bridge?: CallBridge | null; now?: Date } = {},
 ): Promise<{ checked: number; gaveUp: number }> {
-  const calls = callsOf(loadConfig());
-  if (!calls.bridge) return { checked: 0, gaveUp: 0 };
+  // The keys are enough: with Calls or the bridge off, declined recordings
+  // are still deleted (they must not stay on the provider) and nothing else moves.
   const bridge = bridgeFor(opts);
   if (!bridge) return { checked: 0, gaveUp: 0 };
+  const calls = callsOf(loadConfig());
+  const working = calls.enabled && calls.bridge != null;
   const now = opts.now ?? new Date();
   const ledger = getLedger();
-  // With Calls off, only declined recordings are still worked: they must not stay on the provider.
-  const gaveUp = calls.enabled
+  const gaveUp = working
     ? ledger.failStaleTranscripts(new Date(now.getTime() - TRANSCRIPT_GIVE_UP_MS).toISOString())
     : 0;
   const rows = ledger.listBridgedCallsToAdvance(
@@ -852,7 +861,7 @@ export async function sweepBridgedCalls(
     SWEEP_LIMIT,
     undefined,
     now.toISOString(),
-    !calls.enabled,
+    !working,
   );
   for (const row of rows) {
     try {

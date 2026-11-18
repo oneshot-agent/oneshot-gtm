@@ -185,6 +185,22 @@ export function panelCallId(
   return panel.noResume ? null : (resumableCall(calls, me, now)?.id ?? null);
 }
 
+/**
+ * Whether the panel is still finding out if a bridged call waits here to be
+ * logged: the history and who is signed in must both be known, whether or
+ * not bridging is on now. A call started here, or a tel: call, settles it.
+ */
+export function callLookupPending(input: {
+  startedId: number | null;
+  noResume: boolean;
+  historyKnown: boolean;
+  /** Who is signed in is known (always, in the demo, which has no members). */
+  memberKnown: boolean;
+}): boolean {
+  if (input.startedId != null || input.noResume) return false;
+  return !input.historyKnown || !input.memberKnown;
+}
+
 /** A bridged call with a recording not yet declined: its own state, whatever the workspace records now. */
 export function recordingDeletable(c: CallRecordView): boolean {
   return c.provider === "twilio" && c.transcriptStatus !== "none" && c.discard == null;

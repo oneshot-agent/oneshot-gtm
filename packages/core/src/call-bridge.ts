@@ -421,18 +421,27 @@ export class TwilioBridge implements CallBridge {
     return mapBridgeStatus(parent, child);
   }
 
-  /** `canceled` ends a call still ringing, `completed` one in progress; one already over is left alone. */
+  /**
+   * `canceled` ends a call still ringing, `completed` one in progress; one
+   * already over is left alone. A call answered between the read and the
+   * cancel refuses it: read again and end it as it is now.
+   */
   async hangUp(callSid: string): Promise<void> {
-    const parent = await this.call(callSid);
-    const status = RINGING.has(parent.status)
-      ? "canceled"
-      : parent.status === "in-progress"
-        ? "completed"
-        : null;
-    if (!status) return;
-    await this.request("POST", this.account(`Calls/${encodeURIComponent(callSid)}.json`), {
-      Status: status,
-    });
+    const end = (status: string) =>
+      RINGING.has(status) ? "canceled" : status === "in-progress" ? "completed" : null;
+    const first = end((await this.call(callSid)).status);
+    if (!first) return;
+    const post = (Status: string) =>
+      this.request("POST", this.account(`Calls/${encodeURIComponent(callSid)}.json`), { Status });
+    try {
+      await post(first);
+    } catch (err) {
+      if (err instanceof CallBridgeError && err.uncertain) throw err;
+      const now = end((await this.call(callSid)).status);
+      if (!now) return;
+      if (now === first) throw err;
+      await post(now);
+    }
   }
 
   async recording(callSid: string): Promise<BridgeRecording | null> {

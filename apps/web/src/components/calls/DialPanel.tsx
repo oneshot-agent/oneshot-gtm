@@ -18,6 +18,7 @@ import {
   bridgePollMs,
   bridgeStatusLine,
   callerLabel,
+  callLookupPending,
   commitmentsToSend,
   CONSENT_LINE,
   firstName,
@@ -210,13 +211,14 @@ export function DialPanel({
     refetchInterval: (q) => bridgePollMs(q.state.data),
   });
   const call = callId == null ? undefined : (live.data ?? resumed ?? undefined);
-  // A tel: call after a bridged one: a blank draft, so a save never reuses
-  // the bridged call's id or duration.
+  // A tel: call started here is the panel's call from now: no bridged call
+  // is resumed for it, even one the history has not shown yet. After a
+  // bridged one, a blank draft, so a save never reuses its id or duration.
   const startTel = (phone: string | null) => {
+    setNoResume(true);
     if (call) {
       setStartedId(null);
       setPinnedId(null);
-      setNoResume(true);
       dispatch({ kind: "reset", holdUntil: defaultHoldUntil() });
     }
     onStart(phone);
@@ -338,9 +340,14 @@ export function DialPanel({
           clientKey: saveKey,
         },
   );
-  // Until the history says whether a bridged call is waiting here, a save
-  // would log a separate tel: call next to it.
-  const checking = callsMe.data?.bridgeReady === true && history.data === undefined;
+  // A save before that would log a separate tel: call next to a waiting
+  // bridged one. A failed read of either holds too (Retry under calls).
+  const checking = callLookupPending({
+    startedId,
+    noResume,
+    historyKnown: history.data !== undefined,
+    memberKnown: IS_DEMO || me.data !== undefined,
+  });
   const holdSave = saveHeld(call, {
     starting,
     discarding: discard.isPending && discard.variables === call?.id,
@@ -536,7 +543,7 @@ export function DialPanel({
             {starting
               ? "starting the call…"
               : checking
-                ? history.error
+                ? history.error || me.error
                   ? "couldn't check for a call to log against; retry under calls"
                   : "checking for a call to log against…"
                 : holdSave
