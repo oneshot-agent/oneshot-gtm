@@ -58,7 +58,7 @@ In Google Cloud, enable the Gmail API and create an OAuth client with applicatio
 
 If Google rejects the redirect (`redirect_uri_mismatch` or a loopback-only redirect error), check that the URI matches exactly and that both saved credentials belong to the Web client. Google may leave you on its error page without returning to Setup; return manually after correcting the client and retry. A Desktop client cannot redirect to the member-facing hostname.
 
-The Desktop-client flow on the host machine at `localhost` or `127.0.0.1` is unchanged. See [Gmail setup](./sending.md#connecting-gmail-from-another-machine) for the two connection options.
+The workspace stores one Gmail client ID and secret pair, so saving the Web client's credentials also changes the client used by loopback Setup and the defaults for `gmail auth`. Register each host connection's exact loopback redirect URI on that same Web client too; otherwise Google rejects it. See [Gmail setup](./sending.md#connecting-gmail-from-another-machine) for the Setup callback path and the CLI's per-run callback port.
 
 ## How a request is judged
 

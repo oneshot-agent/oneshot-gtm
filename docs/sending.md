@@ -7,7 +7,7 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 ## Adding identities
 
 - **OneShot domain and mailbox.** Setup, or `identities add`. Pick an active address on a provisioned domain, or review and buy domain/address setup separately. Setup never sends an email. `domains list`, `pause` and `resume` manage them.
-- **Gmail or Workspace.** `gmail auth`, a one-time OAuth, or **Connect Gmail account** in Setup. The CLI and loopback Setup flow use a Google Cloud Desktop client with the Gmail API on. Setup from another machine needs a Web application client, as described below.
+- **Gmail or Workspace.** `gmail auth`, a one-time OAuth, or **Connect Gmail account** in Setup. Enable the Gmail API on your Google Cloud client. A Desktop client supports the CLI and loopback Setup; Setup from another machine needs a Web application client. With Web-client credentials, host connections also need registered loopback redirect URIs, as described below.
 - **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. oneshot-gtm sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
 `identities test-send <id> --to you@example.com --dry-run` shows what a test would send.
@@ -23,7 +23,12 @@ First configure [member access and an allowed HTTPS host](./members.md). Open th
 
 For `redirect_uri_mismatch` or an error saying the redirect must use loopback, register the exact URI and replace both credentials with the Web client's values, then retry. A Desktop client cannot use the remote hostname. Google can show this error without calling the app back; return to Setup yourself in that case. Callback errors that reach Setup explain the same fix.
 
-Connecting on the host machine through a loopback address, or through `gmail auth`, keeps the existing Desktop-client flow. Switching a workspace to Web-client credentials does not migrate previously connected mailboxes: reconnect them using that client.
+The workspace stores one `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` pair. After switching it to the Web client, loopback Setup uses that client too, and `gmail auth` defaults to those credentials. Register each loopback redirect you use on the same Web client's **Authorized redirect URIs**:
+
+- **Setup:** `<origin>/api/gmail/auth/callback`, with the exact scheme, loopback hostname (`localhost`, `127.0.0.1` or `[::1]`) and workspace port you open in the browser.
+- **`gmail auth`:** `http://127.0.0.1:<port>`, where the callback server chooses an ephemeral port on each run. Use the decoded `redirect_uri` from the consent URL printed by that run; register it and reopen that URL while the command is still waiting. Loopback Setup has a stable workspace port and avoids this per-run registration.
+
+Without these registrations, Google rejects the Web client's loopback redirect. Switching a workspace to Web-client credentials does not migrate previously connected mailboxes: reconnect them using that client.
 
 ## The rules
 
