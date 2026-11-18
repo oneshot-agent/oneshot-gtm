@@ -1448,7 +1448,10 @@ const activeQueueMoves = new Map<
     reserved: string;
     previous: Pick<QueueRow, "status" | "notes"> & {
       member: string | null;
-      pendingDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
+      pendingDecision?: Pick<
+        QueueRow,
+        "decision" | "decided_at" | "decided_by" | "decision_reason"
+      >;
     };
   }
 >();
