@@ -4,7 +4,11 @@ One workspace is one product: one voice, one ICP, one ledger, one sender pool. A
 
 Every install starts with one workspace named `default` at `~/.oneshot-gtm`.
 
-To add another from the dashboard, open the workspace switcher and choose **New workspace**. Enter 1–32 lowercase letters, digits or hyphens, starting with a letter or digit. Names must be unique. The dashboard creates its home and default profile, assigns a port, and opens a new tab once its server answers `/api/health`. Complete the new workspace's profile and keys in Setup; it does not copy the current workspace's settings or credentials.
+To add another from the dashboard, open the workspace switcher and choose **New workspace**. Enter 1–32 lowercase letters, digits or hyphens, starting with a letter or digit. Names must be unique. The dashboard creates its home and default profile, assigns a port, and opens a new tab once its server answers `/api/health` as that workspace. A server that answers on the port under a different name is never opened. Complete the new workspace's profile and keys in Setup; it does not copy the current workspace's settings or credentials.
+
+From a member's address (anything but `localhost` on the host machine) no tab opens. The switcher shows the assigned port and the command the host operator runs to serve it, then a link to the new workspace; see [serve each workspace port](./members.md#serve-each-workspace-port).
+
+The switcher and a queue move apply the same check: a workspace whose port answers as a different workspace shows as stopped, and starting it or moving a row to it is refused until that server is stopped. A dashboard from an older build does not name itself; it still counts as running.
 
 On macOS it writes and loads a launchd agent; on Linux it writes and enables a systemd user unit. When no user service manager is available, it starts an unsupervised server and warns that it won't survive a reboot. Services start at user login; see [background monitoring](./background-monitoring.md) for headless Linux startup.
 
