@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at e372e1b4.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at f352383b.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -37,43 +37,43 @@ const EXCLUDED = /(^|\/)(tests?|__tests__|fixtures?|vendor|dist|node_modules|mig
 const IGNORED = /eslint-(disable|enable)|@ts-(expect-error|ignore|nocheck)|\bnoqa\b|nosemgrep|type:\s*ignore|prettier-ignore|biome-ignore|(istanbul|c8) ignore|shellcheck (disable|source)|BEGIN GENERATED|END GENERATED|LOOKUPS:(START|END)|SPDX-License-Identifier|@license\b/i;
 
 type Kind = 'comment' | 'code' | 'skip';
+type Syntax = 'c' | 'hash' | 'shell';
 interface ScanState { block: boolean; doc: string | null; template: boolean }
 
-/** Unescaped backticks: an odd count opens or closes a template literal. */
-function backticks(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\') i++;
-    else if (s[i] === '`') n++;
-  }
-  return n;
-}
-
-/** Code after the block comment closes makes the line code. */
-function afterClose(s: string, end: number): Kind {
-  return s.slice(end + 2).trim() ? 'code' : 'comment';
-}
-
-function lineKind(ext: 'c' | 'hash', s: string, st: ScanState): Kind {
+function lineKind(ext: Syntax, s: string, st: ScanState): Kind {
   let kind: Kind;
   if (ext === 'c') {
-    if (st.template) {
-      if (backticks(s) % 2) st.template = false;
-      return 'code';
-    }
-    if (st.block) {
-      const end = s.indexOf('*/');
-      if (end >= 0) st.block = false;
-      kind = end >= 0 ? afterClose(s, end) : 'comment';
-    } else if (s.startsWith('/*')) {
-      const end = s.indexOf('*/', 2);
-      if (end < 0) st.block = true;
-      kind = end >= 0 ? afterClose(s, end) : 'comment';
-    } else if (s.startsWith('//') || s.startsWith('*')) {
-      kind = 'comment';
-    } else {
-      if (backticks(s) % 2) st.template = true;
-      kind = 'code';
+    kind = st.template ? 'code' : 'comment';
+    let prefix = '';
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (st.block) {
+        const end = s.indexOf('*/', i);
+        if (end < 0) break;
+        st.block = false;
+        prefix += ' ';
+        i = end + 1;
+      } else if (st.template) {
+        if (ch === '\\') i++;
+        else if (ch === '`') st.template = false;
+      } else if (ch === '/' && s[i + 1] === '/') {
+        break;
+      } else if (ch === '/' && s[i + 1] === '*') {
+        st.block = true;
+        i++;
+      } else if (i === 0 && ch === '*') {
+        break;
+      } else if (!/\s/.test(ch)) {
+        kind = 'code';
+        let end = -1;
+        if (ch === '`') st.template = true;
+        else if (ch === '"' || ch === "'") end = quoteEnd(s, i);
+        else if (ch === '/' && REGEX_BEFORE.test(prefix)) end = regexEnd(s, i);
+        if (end > i) {
+          prefix += s.slice(i, end);
+          i = end - 1;
+        } else prefix += ch;
+      } else prefix += ch;
     }
   } else if (st.doc) {
     // Python docstrings are strings, and some are behaviour (LangChain @tool).
@@ -125,11 +125,11 @@ function regexEnd(s: string, i: number): number {
  * A code line's code, and its comments as written: closed inline block comments and the trailing one.
  * Literals stay verbatim in the code, so `//` or `#` inside them is code and a change inside them is a code change.
  */
-function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: string } {
+function splitTrailing(ext: Syntax, s: string): { code: string; comment: string } {
   let code = '';
   const comments: string[] = [];
   const space = () => { if (code && !code.endsWith(' ')) code += ' '; };
-  let i = 0;
+  let i = 0, parameters = 0;
   while (i < s.length) {
     const ch = s[i];
     let end = -1;
@@ -146,7 +146,9 @@ function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: s
         }
         end = s.length;
       } else if (REGEX_BEFORE.test(code)) end = regexEnd(s, i);
-    } else if (ext === 'hash' && ch === '#' && /\s/.test(s[i - 1] ?? '')) break;
+    } else if (ext === 'shell' && ch === '$' && s[i + 1] === '{') parameters++;
+    else if (ext === 'shell' && ch === '}' && parameters) parameters--;
+    else if (ext !== 'c' && ch === '#' && !(ext === 'shell' && (parameters || s[i - 1] === '$'))) break;
     if (end > i) {
       code += s.slice(i, end);
       i = end;
@@ -162,9 +164,9 @@ function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: s
   return { code: code.trim(), comment: comments.join(' ') };
 }
 
-function kindOf(file: string | null): 'c' | 'hash' | null {
+function kindOf(file: string | null): Syntax | null {
   if (!file || EXCLUDED.test(file)) return null;
-  return C_LIKE.test(file) ? 'c' : HASH.test(file) ? 'hash' : null;
+  return C_LIKE.test(file) ? 'c' : HASH.test(file) ? file.endsWith('.py') ? 'hash' : 'shell' : null;
 }
 
 /** Measure the lines a `git diff -U0 -M` adds; removed lines only matter as the source of moved or edited comments. */
@@ -175,8 +177,21 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   const removed = new Map<string, number>();
   // Trailing comments of removed code lines, by file entry and code, to pair with a re-added line.
   const removedCode = new Map<string, string[]>();
+  const addedLines = new Map<string, number>();
+  const movedCode = new Map<string, number>();
   let removedComments = 0;
-  let inHunk = false, oldExt: 'c' | 'hash' | null = null, entry = 0;
+  let inHunk = false, oldExt: Syntax | null = null, entry = 0;
+  // Reserve exact moves before comment edits can consume another line's match.
+  for (const l of lines) {
+    if (l.startsWith('diff --git ')) { inHunk = false; entry++; }
+    else if (l.startsWith('@@ ')) inHunk = true;
+    else if (inHunk && l.startsWith('+')) {
+      const key = `${entry}\n${l.slice(1).trim()}`;
+      addedLines.set(key, (addedLines.get(key) ?? 0) + 1);
+    }
+  }
+  inHunk = false;
+  entry = 0;
   let oldState: ScanState = { block: false, doc: null, template: false };
   for (const l of lines) {
     if (l.startsWith('diff --git ')) { inHunk = false; oldExt = null; entry++; }
@@ -191,6 +206,13 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
       const kind = lineKind(oldExt, s, oldState);
       if (kind === 'comment') removedComments++;
       else if (kind === 'code' && plain) {
+        const exact = `${entry}\n${s}`;
+        const matches = addedLines.get(exact) ?? 0;
+        if (matches) {
+          addedLines.set(exact, matches - 1);
+          movedCode.set(exact, (movedCode.get(exact) ?? 0) + 1);
+          continue;
+        }
         const { code, comment } = splitTrailing(oldExt, s);
         const key = `${entry}\n${code}`;
         removedCode.set(key, [...(removedCode.get(key) ?? []), comment]);
@@ -199,7 +221,7 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   }
   let code = 0, comments = 0;
   const blocks: CommentBlock[] = [];
-  let file: string | null = null, ext: 'c' | 'hash' | null = null;
+  let file: string | null = null, ext: Syntax | null = null;
   let lineNo = 0, run: CommentBlock | null = null;
   let state: ScanState = { block: false, doc: null, template: false };
   inHunk = false;
@@ -234,6 +256,9 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
     if (kind === 'skip') continue;
     if (kind === 'code') {
       close();
+      const exact = `${entry}\n${s}`;
+      const matches = plain ? movedCode.get(exact) ?? 0 : 0;
+      if (matches) { movedCode.set(exact, matches - 1); code++; continue; }
       // Unchanged code whose trailing comment changed is a comment edit, not new code.
       const split = plain ? splitTrailing(ext, s) : null;
       const was = split ? removedCode.get(`${entry}\n${split.code}`) : undefined;
