@@ -1,3 +1,5 @@
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OneShotConfig } from "@oneshot-gtm/core";
 
@@ -33,6 +35,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+const { configDir } = await import("@oneshot-gtm/core");
 const { setup } = await import("../src/api/setup.ts");
 
 function req(body: unknown): Request {
@@ -752,4 +755,21 @@ it("checks a legacy domain when switching from Gmail to OneShot", async () => {
   current.sendingDomain = "unknown.email";
   expect((await post({ emailProvider: "oneshot" })).status).toBe(400);
   expect(saveConfigMock).not.toHaveBeenCalled();
+});
+
+it("rolls back the config audit entry when the file save fails", async () => {
+  const db = new Database(join(configDir(), "ledger.sqlite"));
+  try {
+    // A successful save initializes the store and proves it records an entry.
+    expect((await setup(req({ founderName: "Before" }))).status).toBe(200);
+    const before = db.query("SELECT * FROM config_changes").all();
+    expect(before.length).toBeGreaterThan(0);
+    saveConfigMock.mockImplementationOnce(() => {
+      throw new Error("config write failed");
+    });
+    await expect(setup(req({ founderName: "After" }))).rejects.toThrow("config write failed");
+    expect(db.query("SELECT * FROM config_changes").all()).toEqual(before);
+  } finally {
+    db.close();
+  }
 });

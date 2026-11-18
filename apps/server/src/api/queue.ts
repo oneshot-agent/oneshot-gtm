@@ -340,6 +340,7 @@ export function toView(
           sent: parsed.sent === true,
           receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
           dryRun: parsed.dryRun === true,
+          editedBy: typeof parsed.editedBy === "string" ? parsed.editedBy : null,
           draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : "",
           ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
           ...(typeof parsed.voiceKey === "string" && parsed.voiceKey
@@ -2110,6 +2111,7 @@ async function regenerateDraftInner(
     receiptIds: [],
     dryRun: true,
     draftedAt: new Date().toISOString(),
+    editedBy: opts.member ?? null,
     ...(angle ? { angle } : {}),
     ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
     // The voice card the draft was written with, so its version splits by voice.

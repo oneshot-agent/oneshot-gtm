@@ -1,0 +1,267 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Database } from "bun:sqlite";
+import { join } from "node:path";
+import {
+  configDir,
+  getLedger,
+  getSharedDb,
+  loadConfig,
+  saveConfig,
+  type QueueRow,
+} from "@oneshot-gtm/core";
+
+// Real request identity and workspace stores; only providers/background work are stubbed.
+vi.mock("@oneshot-gtm/find", async () => ({
+  ...(await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find")),
+  scheduleNewsfeedOnApproval: () => {},
+  ensureQueueRowOffer: async (row: QueueRow) => row,
+}));
+vi.mock("../src/api/queue-phone.ts", async () => ({
+  ...(await vi.importActual<typeof import("../src/api/queue-phone.ts")>(
+    "../src/api/queue-phone.ts",
+  )),
+  schedulePhoneOnApproval: () => {},
+}));
+vi.mock("@oneshot-gtm/plays", async () => ({
+  ...(await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays")),
+  sendDraftedEmail: async () => ({ sent: true, receiptIds: [] }),
+  withOfferAngles: async (offer: unknown) => offer,
+}));
+vi.mock("../src/api/_play-dispatch.ts", () => ({
+  dispatchPlay: async () => [
+    { subject: "Reply", body: "Useful reply", flags: [], sent: false, receiptIds: [] },
+  ],
+}));
+vi.mock("../src/api/workspace.ts", async () => ({
+  ...(await vi.importActual<typeof import("../src/api/workspace.ts")>("../src/api/workspace.ts")),
+  resolveOtherWorkspace: () => ({ ok: true }),
+  ensureWorkspaceRunning: async () => ({ ok: true, port: 3999 }),
+}));
+const queue = await import("../src/api/queue.ts");
+const { setup } = await import("../src/api/setup.ts");
+const { setCadenceRoute } = await import("../src/api/plays.ts");
+const { saveDraftRoute } = await import("../src/api/inbox.ts");
+const answers = await import("../src/api/code-answers.ts");
+const { queueOfferRoute } = await import("../src/api/queue-offer.ts");
+const { cadenceOfferRoute } = await import("../src/api/cadence-offer.ts");
+const { defaultSequence, offerIsCurrent, offerHoldsSend } = await import("@oneshot-gtm/plays");
+const member = "mia@example.com";
+const owner = "owner@example.com";
+const host = "gtm.example.ts.net";
+let serial = 0;
+const req = (body: unknown = {}, path = "/api/queue", who = member) =>
+  new Request(`https://${host}${path}`, {
+    method: "POST",
+    headers: { host, "tailscale-user-login": who, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+const params = (id: number) => ({ id: String(id) });
+const ledger = getLedger();
+function read(sql: string, ...args: Array<string | number>) {
+  const db = new Database(join(configDir(), "ledger.sqlite"), { readonly: true });
+  try {
+    return db.query(sql).all(...args) as Array<Record<string, unknown>>;
+  } finally {
+    db.close();
+  }
+}
+function row(community = false) {
+  return ledger.enqueueTarget({
+    playName: community ? "community-reply" : "show-hn",
+    channel: community ? "hacker-news" : "email",
+    dedupeKey: `member-${++serial}`,
+    source: "manual",
+    payload: community
+      ? {
+          platform: "hacker-news",
+          threadId: String(serial),
+          postUrl: `https://news.ycombinator.com/item?id=${serial}`,
+          postTitle: "Which CRM?",
+          handle: "buyer",
+          publishedAt: "2026-11-18",
+          supportingText: "Which CRM supports CSV?",
+          retrievedAt: "2026-11-18",
+        }
+      : { name: "Ada", email: `ada${serial}@example.com` },
+  })!;
+}
+function draft(id: number) {
+  ledger.setQueueDraft({
+    id,
+    draft: {
+      subject: "Reply",
+      body: "Useful reply",
+      flags: [],
+      sent: false,
+      receiptIds: [],
+      dryRun: true,
+    },
+  });
+}
+beforeEach(() => {
+  getSharedDb().addMember({ email: owner, role: "owner" });
+  getSharedDb().addMember({ email: member, role: "member" });
+  getSharedDb().allowHost(host);
+  saveConfig({ ...loadConfig(), productBrief: "Tools for planning work." });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+it("approve and reject store the requester, ignoring a body-supplied member", async () => {
+  const id = row();
+  expect((await queue.approveQueueRoute(req({ member: owner }), params(id))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({ decided_by: "human", decided_by_member: member });
+  expect((await queue.rejectQueueRoute(req({}, "/api/queue", owner), params(id))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({ decision: "reject", decided_by_member: owner });
+  expect(queue.toView(ledger.getQueueRow(id)!)).toMatchObject({ decidedByMember: owner });
+});
+it("approve all stamps only the matching pending rows", async () => {
+  const id = row();
+  const other = row(true);
+  expect((await queue.approveAllRoute(req({ play: "show-hn" }))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    decided_by: "human_bulk",
+    decided_by_member: member,
+  });
+  expect(ledger.getQueueRow(other)?.decided_by_member).toBeNull();
+});
+it("move records the requester and failed handover restores through the guarded writer", async () => {
+  const id = row();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ queueId: 7 })),
+  );
+  expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({ status: "rejected", decided_by_member: member });
+  const failed = row();
+  ledger.setQueueStatus({ id: failed, status: "approved" });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: "refused" }, { status: 409 })),
+  );
+  expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(failed))).status).toBe(
+    409,
+  );
+  expect(ledger.getQueueRow(failed)).toMatchObject({
+    status: "approved",
+    decided_by_member: member,
+  });
+});
+it("send draft stores the sender even when another member approved", async () => {
+  const id = row();
+  ledger.setQueueStatus({ id, status: "approved", member: owner });
+  draft(id);
+  expect((await queue.sendDraftRoute(req({ confirmStale: true }), params(id))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    status: "sent",
+    decided_by: "human",
+    decided_by_member: member,
+  });
+  expect((await queue.approveQueueRoute(req(), params(id))).status).toBe(409);
+  expect(ledger.getQueueRow(id)?.decided_by_member).toBe(member);
+});
+it("mark sent records the member once; a retry cannot replace the sender", async () => {
+  const id = row(true);
+  ledger.setQueueStatus({ id, status: "approved", member: owner });
+  draft(id);
+  expect((await queue.markSentRoute(req(), params(id))).status).toBe(200);
+  expect((await queue.markSentRoute(req({}, "/api/queue", owner), params(id))).status).toBe(200);
+  expect(ledger.getQueueRow(id)).toMatchObject({ status: "sent", decided_by_member: member });
+  expect(ledger.listSequenceEventsForProspect(ledger.getQueueRow(id)!.prospect_id!)).toHaveLength(
+    1,
+  );
+});
+it("regenerate stamps the saved draft without changing its approver", async () => {
+  const id = row(true);
+  ledger.setQueueStatus({ id, status: "approved", member: owner });
+  expect((await queue.regenerateDraftRoute(req(), params(id))).status).toBe(200);
+  const saved = ledger.getQueueRow(id)!;
+  expect(JSON.parse(saved.last_draft_json!)).toMatchObject({ editedBy: member });
+  expect(saved.decided_by_member).toBe(owner);
+});
+it("queue and cadence offer edits retain the member and remain protected from machine rewriting", async () => {
+  const id = row();
+  expect((await queueOfferRoute(req({ offer: "Plan tomorrow's work." }), params(id))).status).toBe(
+    200,
+  );
+  const offer = JSON.parse(ledger.getQueueRow(id)!.payload_json).offer;
+  expect(offer.editedBy).toBe(member);
+  expect(offerIsCurrent(offer, "changed-input")).toBe(true);
+  expect(offerHoldsSend({ ...offer, relevance: "weak" })).toBe(false);
+  const prospectId = ledger.upsertProspect({ email: `cadence${serial}@example.com`, name: "Ada" });
+  ledger.enrollCadence({ prospectId, playName: "show-hn", nextDueAt: new Date().toISOString() });
+  expect(
+    (
+      await cadenceOfferRoute(
+        req({ offer: "Plan next week's work." }, "/api/cadence?play=show-hn"),
+        params(prospectId),
+      )
+    ).status,
+  ).toBe(200);
+  expect(JSON.parse(ledger.getCadence(prospectId, "show-hn")!.offer_json!).offer.editedBy).toBe(
+    member,
+  );
+});
+it("code answer approval and dismissal store the requesting member", async () => {
+  for (const action of ["approve", "dismiss"] as const) {
+    const id = ledger.codeAnswers.capture({
+      question: `${action}: how does the queue work?`,
+      threadKey: action,
+    })!.record.id;
+    ledger.codeAnswers.recordDerive(id, {
+      status: "pending",
+      answer: "It holds drafts for review.",
+      files: [],
+      commit: "test-commit",
+      promptVersion: "test",
+      digest: "test",
+    });
+    const response =
+      action === "approve"
+        ? await answers.approveCodeAnswerRoute(req(), { id })
+        : answers.dismissCodeAnswerRoute(req(), { id });
+    expect(response.status).toBe(200);
+    expect(read("SELECT decided_by FROM code_answers WHERE id = ?", id)).toEqual([
+      { decided_by: member },
+    ]);
+  }
+});
+it("inbox autosave records the most recent editor", async () => {
+  const body = {
+    threadKey: "member-thread",
+    inboundEmailId: "message",
+    toEmail: "ada@example.com",
+    subject: "Hi",
+    body: "Thanks for asking.",
+  };
+  expect((await saveDraftRoute(req(body))).status).toBe(200);
+  expect(read("SELECT edited_by FROM inbox_drafts WHERE thread_key = ?", body.threadKey)).toEqual([
+    { edited_by: member },
+  ]);
+  expect((await saveDraftRoute(req(body, "/api/inbox", owner))).status).toBe(200);
+  expect(read("SELECT edited_by FROM inbox_drafts WHERE thread_key = ?", body.threadKey)).toEqual([
+    { edited_by: owner },
+  ]);
+});
+it("setup and each play config save append member, section and time; invalid saves append nothing", async () => {
+  const start = new Date().toISOString();
+  expect((await setup(req({ founderName: "Mia" }))).status).toBe(200);
+  const play = "new-business";
+  const days = defaultSequence(play)!.steps.map((_, i) => i + 1);
+  for (const body of [{ directMail: null }, { days }, { days: null }]) {
+    expect((await setCadenceRoute(req(body), { name: play })).status).toBe(200);
+  }
+  const audit = read("SELECT member, section, changed_at FROM config_changes ORDER BY id");
+  expect(audit.map((r) => [r.member, r.section])).toEqual([
+    [member, "setup"],
+    [member, "plays.new-business.directMail"],
+    [member, "plays.new-business.cadence"],
+    [member, "plays.new-business.cadence"],
+  ]);
+  expect(
+    audit.every(
+      (r) => String(r.changed_at) >= start && String(r.changed_at) <= new Date().toISOString(),
+    ),
+  ).toBe(true);
+  expect((await setCadenceRoute(req({ days: [-1] }), { name: play })).status).toBe(400);
+  expect(read("SELECT id FROM config_changes")).toHaveLength(4);
+});
