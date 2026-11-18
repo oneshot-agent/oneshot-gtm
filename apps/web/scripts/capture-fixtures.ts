@@ -35,12 +35,13 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { MembersView } from "@oneshot-gtm/shared-types";
 import { fixturePath } from "../src/api/fixturePath.ts";
 import { DEMO_QUEUE_LIMIT } from "../src/lib/queue-helpers.ts";
 
 const PORT = process.env["CAPTURE_PORT"] ?? "3141";
 const API = `http://127.0.0.1:${PORT}/api`;
-const OUT = join(import.meta.dir, "..", "fixtures");
+const OUT = join(import.meta.dirname, "..", "fixtures");
 
 /** What every absolute path in a captured response is rewritten to. */
 const PLACEHOLDER_HOME = "/home/founder/.oneshot-gtm";
@@ -266,6 +267,26 @@ function scrubText(text: string, demoHome: string): string {
   return out;
 }
 
+export async function captureBody(url: string, demoHome: string): Promise<unknown> {
+  // A reused demo home can retain real members and allowed hosts after reseeding.
+  if (url === "/members") {
+    const currentMember = {
+      email: "mira@tracepoint.dev",
+      name: "Mira Vance",
+      role: "owner" as const,
+    };
+    return {
+      members: [{ ...currentMember, addedAt: "2026-01-01T00:00:00.000Z" }],
+      allowedHosts: [],
+      currentMember,
+    } satisfies MembersView;
+  }
+  const res = await fetch(API + url);
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
+  const body: unknown = JSON.parse(scrubText(await res.text(), demoHome));
+  return url === "/workspace" ? scrubWorkspace(body) : body;
+}
+
 // the walk
 
 async function main(): Promise<void> {
@@ -300,14 +321,7 @@ async function main(): Promise<void> {
     if (url == null || seen.has(url)) continue;
     seen.add(url);
 
-    const res = await fetch(API + url);
-    if (!res.ok) {
-      console.error(`  ${res.status} ${url}`);
-      process.exit(1);
-    }
-
-    let body: unknown = JSON.parse(scrubText(await res.text(), demoHome));
-    if (url === "/workspace") body = scrubWorkspace(body);
+    const body = await captureBody(url, demoHome);
 
     const file = join(OUT, fixturePath(url));
     await mkdir(dirname(file), { recursive: true });
@@ -378,4 +392,4 @@ async function guard(): Promise<void> {
   }
 }
 
-await main();
+if (import.meta.main) await main();
