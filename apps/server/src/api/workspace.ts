@@ -37,14 +37,11 @@ function boundPort(): number {
 }
 
 /**
- * Who answered a workspace's port. `/api/health` names the workspace its
- * server acts as, so a different dashboard on the same port is told apart
- * from the one asked for:
- *  - `verified`: the answer named this workspace.
- *  - `unknown`: a 2xx answer without a name, which is what a server from a
- *    build before health carried one sends. Still running, as it always was,
+ * Who answered a workspace's port, by the name its `/api/health` carries:
+ *  - `verified`: it named this workspace.
+ *  - `unknown`: a 2xx answer with no name, as older builds send. Running,
  *    but never proof of identity.
- *  - `other`: the answer named a different workspace (`answeredAs`).
+ *  - `other`: it named a different workspace (`answeredAs`).
  *  - `stopped`: no answer within ~300ms, or a non-2xx one.
  */
 export type WorkspaceProbe =
