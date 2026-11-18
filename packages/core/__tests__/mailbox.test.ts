@@ -556,6 +556,35 @@ describe("mailbox sync", () => {
       "smartlead:bad@example.com",
     ]);
   });
+  it("syncs only the listed mailbox, counts its messages without loading them, and waits a minute after the sync ends", async () => {
+    // Ids no other test syncs: the throttle is module state.
+    const a = {
+      id: "smartlead:only-a@example.com",
+      address: "only-a@example.com",
+      provider: "smartlead",
+    };
+    const b = {
+      id: "smartlead:only-b@example.com",
+      address: "only-b@example.com",
+      provider: "smartlead",
+    };
+    mocks.identities = [a, b];
+    mocks.mails = [{ uid: 1, source: source("only-first") }];
+    const all = vi.spyOn(ledger.mailboxes, "all");
+
+    await listMailboxInbox(b.id);
+    expect(mocks.open).toHaveBeenCalledTimes(1);
+    expect(mailboxHealth().find((h) => h.identityId === b.id)?.messages).toBe(1);
+    expect(mailboxHealth().find((h) => h.identityId === a.id)?.status).toBe("disconnected");
+    expect(all).not.toHaveBeenCalled();
+
+    await listMailboxInbox(b.id);
+    expect(mocks.open).toHaveBeenCalledTimes(1);
+    const finished = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(finished + 60_001);
+    await listMailboxInbox(b.id);
+    expect(mocks.open).toHaveBeenCalledTimes(2);
+  });
   it("discovers newly registered identities without fixed workspace names", async () => {
     mocks.identities = [];
     await syncSmartleadMailboxes(true);
