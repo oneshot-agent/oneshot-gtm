@@ -63,6 +63,8 @@ function useSequenceOfferChange(c: CadenceView) {
       void qc.invalidateQueries({ queryKey: ["cadence-drafts", c.prospectId, c.playName] });
       // A LinkedIn close shown ahead restates the offer.
       void qc.invalidateQueries({ queryKey: ["cadence-sequence", c.prospectId, c.playName] });
+      // A call brief restates the offer too (the server writes a new one on its next read).
+      void qc.invalidateQueries({ queryKey: ["call-brief"] });
       if (result.redrafted === null) toast.success("offer saved · the next email restates it");
       else if (result.redrafted) toast.success("offer saved · next step redrafted, not sent");
       else

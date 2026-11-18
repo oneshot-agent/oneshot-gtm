@@ -11,6 +11,9 @@ import {
 } from "@oneshot-gtm/core";
 import {
   awayNote,
+  CALL_STEP_NOT_SENT,
+  PREVIEW_STEP_MOVED,
+  callStepIsNext,
   cadenceDraftIsStale,
   cadenceHold,
   cadenceSequence,
@@ -611,13 +614,20 @@ export async function previewCadenceStepRoute(
         draftedAt: preview.draftedAt,
         stepLabel: preview.stepLabel,
         isBreakup: preview.isBreakup,
+        // A call step's preview is its brief: the dial panel reads it whole.
+        ...(preview.payload?.kind === "call"
+          ? { kind: "call", brief: preview.payload.brief, toPhone: preview.payload.toPhone }
+          : {}),
       },
       200,
       req,
     );
   } catch (err) {
     const msg = (err as Error).message ?? "preview failed";
-    const status = msg.startsWith("no cadence") || msg.startsWith("cadence is") ? 409 : 500;
+    const status =
+      msg.startsWith("no cadence") || msg.startsWith("cadence is") || msg === PREVIEW_STEP_MOVED
+        ? 409
+        : 500;
     return jsonResponse({ error: msg }, status, req);
   }
 }
@@ -659,6 +669,13 @@ export async function sendCadenceStepRoute(
   const ledger = getLedger();
   try {
     const draft = ledger.getCadenceDraft(parsed);
+    // Nothing is sent for a call: the founder logs it on /calls.
+    if (
+      (draft?.payload as { kind?: unknown } | null | undefined)?.kind === "call" ||
+      callStepIsNext(parsed.prospectId, parsed.playName)
+    ) {
+      return jsonResponse({ error: CALL_STEP_NOT_SENT }, 409, req);
+    }
     if (!draft) {
       return jsonResponse({ error: "no persisted preview — click Preview first" }, 409, req);
     }
@@ -797,6 +814,11 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   const skipped: Array<BatchItem & { reason: string }> = [];
   const keyOf = safeKeyer();
   for (const item of items) {
+    // A call step is never sent; the founder logs it on /calls.
+    if (callStepIsNext(item.prospectId, item.playName)) {
+      skipped.push({ ...item, reason: CALL_STEP_NOT_SENT });
+      continue;
+    }
     const hold = cadenceHoldFor(item);
     if (hold) {
       skipped.push({ ...item, reason: awayNote(hold) });
@@ -821,7 +843,9 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
           skipped.length === items.length
             ? skipped.every((s) => s.reason === STALE_DRAFT_REASON)
               ? `every selected row's ${STALE_DRAFT_REASON}`
-              : "every selected row is away or stale: re-preview, or send each on its own to confirm"
+              : skipped.every((s) => s.reason === CALL_STEP_NOT_SENT)
+                ? `every selected row is a call step: ${CALL_STEP_NOT_SENT}`
+                : "every selected row is away, stale or a call: re-preview, or send each on its own to confirm"
             : "no claimable rows — all selected are already sending",
         ...(skipped.length > 0 ? { skipped } : {}),
       },

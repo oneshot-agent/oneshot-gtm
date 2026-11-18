@@ -5,6 +5,12 @@ import type {
   DomainPurchaseView,
 } from "@oneshot-gtm/shared-types";
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
+import type {
+  CallBrief,
+  CallListResponse,
+  CallRecordView,
+  LogCallRequest,
+} from "@oneshot-gtm/shared-types";
 import type { CodeAnswer, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
 import type { LinkedInReadsView, ReadProfileResult } from "@oneshot-gtm/shared-types";
@@ -179,6 +185,21 @@ export interface LinkedInLoginLink {
   setupUrlExpiresAt: string | null;
   status: string;
   expiresAt: string | null;
+}
+
+/** The dialler's settings as /api/setup reports them. */
+export interface CallsSettingsView {
+  enabled: boolean;
+  /** Where the call step goes in new email cadences; null = Calls page only. */
+  cadenceStep: { position: number; delayDays: number; holdDays?: number } | null;
+  window: { start: string; end: string; weekdays?: boolean };
+  /** Phase 2: ringing the founder's phone. Null = tel: links only. */
+  bridge: {
+    provider: "twilio";
+    founderPhone: string;
+    callerId: string;
+    record?: boolean;
+  } | null;
 }
 
 export const api = {
@@ -469,7 +490,10 @@ export const api = {
           writer?: "template" | "model";
           templates?: Partial<Record<LinkedInTemplateStep, string>>;
         };
+        calls?: Partial<CallsSettingsView>;
       };
+      /** The dialler's settings with defaults filled in; absent on older servers. */
+      calls?: CallsSettingsView;
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
       // Optional: older servers and the demo fixture predate it; the card
@@ -527,6 +551,18 @@ export const api = {
         }
     >("/setup/linkedin-login/state"),
   meetings: () => getJson<MeetingsResult>("/meetings"),
+  // The dialler: who to call, the brief to read, and the outcome the founder logs.
+  calls: () => getJson<CallListResponse>("/calls"),
+  callBrief: (prospectId: number, opts: { playName?: string | null; regenerate?: boolean } = {}) =>
+    postJson<{ brief: CallBrief }>("/calls/brief", {
+      prospectId,
+      ...(opts.playName ? { playName: opts.playName } : {}),
+      ...(opts.regenerate ? { regenerate: true } : {}),
+    }),
+  logCall: (prospectId: number, req: LogCallRequest) =>
+    postJson<{ call: CallRecordView }>(`/prospects/${prospectId}/call`, req),
+  prospectCalls: (prospectId: number) =>
+    getJson<{ calls: CallRecordView[] }>(`/prospects/${prospectId}/calls`),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),
   confirmMeetingMatch: (req: ConfirmMeetingMatchRequest) =>

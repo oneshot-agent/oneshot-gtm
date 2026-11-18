@@ -180,6 +180,205 @@ describe("shared person identity with workspace memberships", () => {
       shared.close();
     }
   });
+  it("a do-not-contact call or an unsubscribe reply holds every verified address of the person", () => {
+    beta.upsertProspect({
+      email: "old@example.test",
+      linkedin_url: "https://linkedin.com/in/opted-out",
+    });
+    const alphaId = alpha.upsertProspect({
+      email: "new@example.test",
+      linkedin_url: "https://linkedin.com/in/opted-out",
+    });
+    expect(alpha.contactSuppressionFor("old@example.test")).toBeNull();
+    alpha.insertCall({
+      prospectId: alphaId,
+      startedAt: "2026-11-17T10:00:00.000Z",
+      outcome: "do_not_contact",
+    });
+    expect(alpha.contactSuppressionFor("old@example.test")).toEqual({
+      kind: "unsubscribe",
+      received_at: "2026-11-17T10:00:00.000Z",
+    });
+    // A reply recorded against the person, from their other address.
+    const other = beta.upsertProspect({
+      email: "b-new@example.test",
+      linkedin_url: "https://linkedin.com/in/replied-out",
+    });
+    const replied = alpha.upsertProspect({
+      email: "b-old@example.test",
+      linkedin_url: "https://linkedin.com/in/replied-out",
+    });
+    expect(beta.getProspectById(other)?.shared_person_id).toBe(
+      alpha.getProspectById(replied)?.shared_person_id,
+    );
+    alpha.recordInboxReply({
+      id: "u1",
+      threadKey: "t",
+      prospectId: replied,
+      fromEmail: "b-old@example.test",
+      body: "remove me",
+      receivedAt: "2026-11-16T10:00:00.000Z",
+      kind: "unsubscribe",
+    });
+    expect(alpha.contactSuppressionFor("b-new@example.test")).toMatchObject({
+      kind: "unsubscribe",
+    });
+    // A dead mailbox holds that address only, never the person's others.
+    const bounced = beta.upsertProspect({
+      email: "c-new@example.test",
+      linkedin_url: "https://linkedin.com/in/mailbox-gone",
+    });
+    const gone = alpha.upsertProspect({
+      email: "c-old@example.test",
+      linkedin_url: "https://linkedin.com/in/mailbox-gone",
+    });
+    expect(beta.getProspectById(bounced)?.shared_person_id).toBe(
+      alpha.getProspectById(gone)?.shared_person_id,
+    );
+    alpha.recordInboxReply({
+      id: "g1",
+      threadKey: "t2",
+      prospectId: gone,
+      fromEmail: "c-new@example.test",
+      body: "mailbox does not exist",
+      receivedAt: "2026-11-16T11:00:00.000Z",
+      kind: "auto_permanent",
+    });
+    expect(alpha.contactSuppressionFor("c-new@example.test")).toMatchObject({
+      kind: "auto_permanent",
+    });
+    expect(alpha.contactSuppressionFor("c-old@example.test")).toBeNull();
+    // An address nobody knows is not held.
+    expect(alpha.contactSuppressionFor("stranger@example.test")).toBeNull();
+  });
+  /** People with two rows each, made before the registry: the backfill binds each pair to one person. */
+  function aliasLedger(people: string[]): { ledger: Ledger; rows: Array<[number, number]> } {
+    const path = join(root, "aliases.sqlite");
+    const legacy = new Ledger(path);
+    const rows = people.map((who): [number, number] => {
+      const linkedin_url = `https://linkedin.com/in/${who}`;
+      return [
+        legacy.upsertProspect({ email: `${who}-1@example.test`, linkedin_url }),
+        legacy.upsertProspect({ email: `${who}-2@example.test`, linkedin_url }),
+      ];
+    });
+    legacy.close();
+    const ledger = new Ledger(path, { sharedPeoplePath: join(root, "shared.sqlite") });
+    for (const [first, second] of rows) {
+      expect(ledger.getProspectById(first)?.shared_person_id).toBeTruthy();
+      expect(ledger.getProspectById(second)?.shared_person_id).toBe(
+        ledger.getProspectById(first)?.shared_person_id,
+      );
+    }
+    return { ledger, rows };
+  }
+  it("an opt-out on one local row of a person holds their other rows here (legacy aliases)", () => {
+    const { ledger, rows } = aliasLedger(["replied", "triaged", "called"]);
+    const [[a1, a2], [b1, b2], [c1, c2]] = rows as [
+      [number, number],
+      [number, number],
+      [number, number],
+    ];
+    try {
+      expect(ledger.findProspectByEmail("replied-2@example.test")?.id).toBe(a2);
+      ledger.recordInboxReply({
+        id: "a1",
+        threadKey: "t",
+        prospectId: a1,
+        fromEmail: "replied-1@example.test",
+        body: "remove me",
+        receivedAt: "2026-11-16T10:00:00.000Z",
+        kind: "unsubscribe",
+      });
+      expect(ledger.contactSuppressionFor("replied-2@example.test")).toMatchObject({
+        kind: "unsubscribe",
+      });
+      // An opt-out the sentiment triage read (intent), on the person's other row.
+      ledger.recordInboxReply({
+        id: "b1",
+        threadKey: "t2",
+        prospectId: b2,
+        fromEmail: "triaged-2@example.test",
+        body: "please stop",
+        receivedAt: "2026-11-16T11:00:00.000Z",
+        kind: "human",
+      });
+      ledger.setInboxReplyIntent("b1", "unsubscribe", null);
+      ledger.insertCall({
+        prospectId: c2,
+        startedAt: "2026-11-17T10:00:00.000Z",
+        outcome: "do_not_contact",
+      });
+      for (const id of [a1, a2, b1, b2, c1, c2]) expect(ledger.callAllowed(id)).toBe(false);
+      expect(ledger.callAllowedIds([a1, a2, b1, b2, c1, c2])).toEqual(new Set());
+      // Someone with no shared link still matches by id and address only.
+      const solo = ledger.upsertProspect({ email: "solo@example.test" });
+      expect(ledger.callAllowed(solo)).toBe(true);
+      expect(ledger.callAllowedIds([solo])).toEqual(new Set([solo]));
+    } finally {
+      ledger.close();
+    }
+  });
+  it("a wrong number logged on one row of a person is never offered on their other row", () => {
+    const { ledger, rows } = aliasLedger(["dialled"]);
+    const [[first, second]] = rows as [[number, number]];
+    try {
+      ledger.insertCall({
+        prospectId: first,
+        startedAt: "2026-11-17T10:00:00.000Z",
+        outcome: "wrong_number",
+        phone: "+15126531187",
+      });
+      expect(ledger.wrongNumbersFor([first, second])).toEqual(
+        new Map([
+          [first, new Set(["+15126531187"])],
+          [second, new Set(["+15126531187"])],
+        ]),
+      );
+    } finally {
+      ledger.close();
+    }
+  });
+  it("a wrong number is cleared from the shared person too, but a replacement there stays", () => {
+    const linkedin_url = "https://linkedin.com/in/wrong-number";
+    const a = alpha.upsertProspect({ email: "wn@example.test", linkedin_url });
+    const b = beta.upsertProspect({
+      email: "wn@example.test",
+      linkedin_url,
+      phone: "(512) 653-1187",
+    });
+    expect(alpha.getProspectById(a)?.phone).toBe("(512) 653-1187");
+    expect(alpha.clearProspectPhone(a, "+15126531187")).toBe(true);
+    expect(alpha.getProspectById(a)?.phone).toBeNull();
+    expect(alpha.phoneForCall(a).phone).toBeNull();
+    expect(beta.getProspectById(b)?.phone).toBeNull();
+    // A replacement saved on the person since the call is kept.
+    const person = alpha.getProspectById(a)!.shared_person_id!;
+    const registry = new Database(join(root, "shared.sqlite"));
+    registry.run("UPDATE shared_people SET phone = ? WHERE id = ?", ["+15126539999", person]);
+    registry.close();
+    alpha.clearProspectPhone(a, "+15126531187");
+    expect(alpha.getProspectById(a)?.phone).toBe("+15126539999");
+  });
+  it("the call phone readers see a phone the shared person gained elsewhere", () => {
+    const a = alpha.upsertProspect({
+      email: "caller@example.test",
+      linkedin_url: "https://linkedin.com/in/caller",
+    });
+    expect(alpha.phoneForCall(a).phone).toBeNull();
+    // Another workspace finds the same person's number.
+    beta.upsertProspect({
+      email: "caller@example.test",
+      linkedin_url: "https://linkedin.com/in/caller",
+      phone: "+15126531187",
+    });
+    expect(alpha.getProspectById(a)?.phone).toBe("+15126531187");
+    expect(alpha.phoneForCall(a).phone).toBe("+15126531187");
+    expect(alpha.listCallCandidates({ limit: 10 })).toMatchObject([
+      { prospectId: a, prospectPhone: "+15126531187" },
+    ]);
+  });
+
   it("keeps each workspace's original finder profile provenance", () => {
     const a = beta.upsertProspect({
       email: "same@example.test",

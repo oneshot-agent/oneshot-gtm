@@ -578,6 +578,53 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "target_queue", "sent_by_member", "TEXT");
     },
   },
+  {
+    // The dialler (ledger-calls.ts): one row per call. `provider` is 'tel'
+    // (nothing recorded) or 'twilio' (a bridged call: its SIDs, transcript and
+    // suggested outcome). `outcome` is a `CallOutcome`, NULL until logged;
+    // `reply_intent` the reply label it counts as. `phone` is the number
+    // dialled, kept after a wrong-number clears the prospect's. `client_key`
+    // is the dashboard's id for one save, so a retry writes one row.
+    // `call_briefs` caches the brief for someone outside a cadence, so
+    // reopening them pays nothing.
+    version: 27,
+    name: "calls",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS calls (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          prospect_id        INTEGER NOT NULL,
+          play_name          TEXT,
+          started_at         TEXT NOT NULL,
+          duration_sec       INTEGER,
+          outcome            TEXT,
+          reply_intent       TEXT,
+          note               TEXT,
+          phone              TEXT,
+          provider           TEXT NOT NULL DEFAULT 'tel',
+          provider_call_sid  TEXT,
+          client_key         TEXT,
+          recording_sid      TEXT,
+          transcript_status  TEXT NOT NULL DEFAULT 'none',
+          transcript_json    TEXT,
+          summary_json       TEXT,
+          created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_calls_prospect ON calls(prospect_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_client_key ON calls(client_key)
+          WHERE client_key IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS call_briefs (
+          prospect_id  INTEGER PRIMARY KEY,
+          play_name    TEXT,
+          brief_json   TEXT NOT NULL,
+          brief_at     TEXT NOT NULL,
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        );
+      `);
+    },
+  },
 ];
 
 /**

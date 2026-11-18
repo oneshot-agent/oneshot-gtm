@@ -28,9 +28,14 @@ export function cadenceSelection(
   const previewable = stoppable.filter(
     (c) => c.nextStepChannel !== "direct_mail" && c.nextStepLabel != null,
   );
+  // A call step previews its brief but is never sent: the founder logs it
+  // from /calls, so a batch Send leaves it out (the server refuses it too).
   const ready = previewable.filter(
     (c) =>
-      c.nextStepDraft != null && c.nextStepDraft.flags.length === 0 && !isHeldElsewhere(c, nowMs),
+      c.nextStepChannel !== "call" &&
+      c.nextStepDraft != null &&
+      c.nextStepDraft.flags.length === 0 &&
+      !isHeldElsewhere(c, nowMs),
   );
   // An out-of-office holds the step: a batch skips it (the server does too),
   // and the selection bar says how many it skipped. So does a draft written

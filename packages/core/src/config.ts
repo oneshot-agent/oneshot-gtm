@@ -16,6 +16,7 @@ import { safeParseJsonRecord } from "./json.ts";
 import {
   LINKEDIN_TEMPLATE_SLOTS,
   OFFER_CHECKS,
+  type CallsConfig,
   type LinkedInTemplates,
   type LinkedInWriter,
   type OfferAnchor,
@@ -391,6 +392,91 @@ export function learningExpireAfterDaysOf(cfg: { learning?: unknown }): number {
   return typeof raw === "number" && Number.isInteger(raw) && raw > 0
     ? raw
     : DEFAULT_LEARNING_EXPIRE_AFTER_DAYS;
+}
+
+/** Days an unlogged due call step waits before the sweep skips it. */
+export const DEFAULT_CALL_HOLD_DAYS = 3;
+
+/** The longest call-step delay or hold: past it a due date is no schedule at all. */
+export const MAX_CALL_STEP_DAYS = 365;
+
+/** The call window when `calls.window` is unset: the recipient's 09:00–17:00 on weekdays. */
+export const DEFAULT_CALL_WINDOW = { start: "09:00", end: "17:00", weekdays: true } as const;
+
+/** `calls` with every default filled, as the cadence, the Calls page and the CLI read it. */
+export interface ResolvedCalls {
+  enabled: boolean;
+  cadenceStep: { position: number; delayDays: number; holdDays: number } | null;
+  window: { start: string; end: string; weekdays: boolean };
+  bridge: NonNullable<CallsConfig["bridge"]> | null;
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * The workspace's `calls` as every reader takes it. Only `enabled: true`
+ * turns it on. A call step needs a whole position of 2 or more and a whole
+ * delay of 0 to `MAX_CALL_STEP_DAYS`, else it reads as none; `holdDays` must
+ * be a whole number of 1 to that, else the default. A window needs two HH:MM times
+ * with the start first, else the default. A bridge needs both numbers.
+ */
+export function callsOf(cfg: { calls?: unknown }): ResolvedCalls {
+  const raw =
+    cfg.calls && typeof cfg.calls === "object" ? (cfg.calls as Record<string, unknown>) : {};
+  const step =
+    raw["cadenceStep"] && typeof raw["cadenceStep"] === "object"
+      ? (raw["cadenceStep"] as Record<string, unknown>)
+      : null;
+  const position = step?.["position"];
+  const delayDays = step?.["delayDays"];
+  const holdDays = step?.["holdDays"];
+  const cadenceStep =
+    step &&
+    typeof position === "number" &&
+    Number.isInteger(position) &&
+    position >= 2 &&
+    typeof delayDays === "number" &&
+    Number.isInteger(delayDays) &&
+    delayDays >= 0 &&
+    delayDays <= MAX_CALL_STEP_DAYS
+      ? {
+          position,
+          delayDays,
+          holdDays:
+            typeof holdDays === "number" &&
+            Number.isInteger(holdDays) &&
+            holdDays > 0 &&
+            holdDays <= MAX_CALL_STEP_DAYS
+              ? holdDays
+              : DEFAULT_CALL_HOLD_DAYS,
+        }
+      : null;
+  const w =
+    raw["window"] && typeof raw["window"] === "object"
+      ? (raw["window"] as Record<string, unknown>)
+      : null;
+  const start = w?.["start"];
+  const end = w?.["end"];
+  const window =
+    typeof start === "string" && typeof end === "string" && HHMM.test(start) && HHMM.test(end)
+      ? start < end
+        ? { start, end, weekdays: w?.["weekdays"] !== false }
+        : { ...DEFAULT_CALL_WINDOW }
+      : { ...DEFAULT_CALL_WINDOW, ...(w?.["weekdays"] === false ? { weekdays: false } : {}) };
+  const b =
+    raw["bridge"] && typeof raw["bridge"] === "object"
+      ? (raw["bridge"] as Record<string, unknown>)
+      : null;
+  const bridge =
+    b &&
+    b["provider"] === "twilio" &&
+    typeof b["founderPhone"] === "string" &&
+    b["founderPhone"].trim() &&
+    typeof b["callerId"] === "string" &&
+    b["callerId"].trim()
+      ? (b as unknown as NonNullable<CallsConfig["bridge"]>)
+      : null;
+  return { enabled: raw["enabled"] === true, cadenceStep, window, bridge };
 }
 
 /** Who writes LinkedIn copy: only the exact string `model` turns templates off. */

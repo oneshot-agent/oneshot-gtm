@@ -1,7 +1,9 @@
 import {
+  callsOf,
   getLedger,
   dailySpendStatus,
   DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
+  MAX_CALL_STEP_DAYS,
   loadConfig,
   saveConfig,
   saveSecrets,
@@ -346,6 +348,116 @@ export async function configLinkedInInviteExpiry(valueArg?: string): Promise<voi
   }
   saveConfig({ ...cfg, linkedin: { ...cfg.linkedin, inviteExpiryDays: days } });
   ok(`a connection request still unsent ${days} days after it fell due ends its cadence`);
+}
+
+/**
+ * A whole-number argument, `min` to `max`; `fallback` when it was left out.
+ * Decimal digits only, so "3abc", "1e3", "0x10" and "2.0" are refused rather
+ * than saved as numbers, and a value past a safe integer is refused too.
+ */
+function whole(
+  raw: string | undefined,
+  min: number,
+  what: string,
+  fallback?: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  if (raw === undefined && fallback !== undefined) return fallback;
+  const digits = raw?.trim() ?? "";
+  const n = Number(digits);
+  if (!/^\d+$/.test(digits) || !Number.isSafeInteger(n) || n < min || n > max) {
+    throw new Error(
+      `invalid ${what} '${raw ?? ""}' — pass a whole number, ${min} or more${max < Number.MAX_SAFE_INTEGER ? ` and ${max} at most` : ""}`,
+    );
+  }
+  return n;
+}
+
+/**
+ * Show or set the dialler (`calls`); off by default. Subcommands: `on|off`,
+ * `step <position> [delay] [hold]` (position counts the first email as 1),
+ * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`. Anything but whole
+ * numbers is refused rather than saved, and `bridge` is never touched here.
+ */
+export async function configCalls(action?: string, args: string[] = []): Promise<void> {
+  header("Calls");
+  const cfg = loadConfig();
+  const current = cfg.calls ?? { enabled: false };
+
+  if (action === undefined) {
+    const calls = callsOf(cfg);
+    note(calls.enabled ? "on: the Calls page is shown" : "off: no call step, no Calls page");
+    note(
+      calls.cadenceStep
+        ? `call step at position ${calls.cadenceStep.position} of new email cadences, ${calls.cadenceStep.delayDays} days after the touch before it; skipped after ${calls.cadenceStep.holdDays} days unlogged`
+        : "no call step in cadences (the Calls page only)",
+    );
+    note(
+      `call window ${calls.window.start}–${calls.window.end} their time, ${calls.window.weekdays ? "weekdays" : "every day"}`,
+    );
+    note(calls.bridge ? `rings ${calls.bridge.founderPhone} first` : "Call opens a tel: link");
+    note(
+      c.dim(
+        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day]",
+      ),
+    );
+    return;
+  }
+
+  if (action === "on" || action === "off") {
+    saveConfig({ ...cfg, calls: { ...current, enabled: action === "on" } });
+    ok(
+      action === "on"
+        ? "calls on for this workspace (a cadence already running keeps its plan)"
+        : "calls off for this workspace",
+    );
+    return;
+  }
+
+  if (action === "step") {
+    if (args[0] === "off") {
+      saveConfig({ ...cfg, calls: { ...current, cadenceStep: null } });
+      ok("no call step in new cadences — the Calls page only");
+      return;
+    }
+    const position = whole(args[0], 2, "position");
+    const delayDays = whole(args[1], 0, "delay", 3, MAX_CALL_STEP_DAYS);
+    const holdDays = whole(
+      args[2],
+      1,
+      "hold",
+      current.cadenceStep?.holdDays ?? 3,
+      MAX_CALL_STEP_DAYS,
+    );
+    saveConfig({ ...cfg, calls: { ...current, cadenceStep: { position, delayDays, holdDays } } });
+    ok(
+      `new email cadences get a call at position ${position}, ${delayDays} days after the touch before it; skipped after ${holdDays} days unlogged`,
+    );
+    return;
+  }
+
+  if (action === "window") {
+    const m = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/.exec(args[0] ?? "");
+    const days = args[1];
+    if (!m || `${m[1]}:${m[2]}` >= `${m[3]}:${m[4]}`) {
+      throw new Error(`invalid window '${args[0] ?? ""}' — pass HH:MM-HH:MM, the start first`);
+    }
+    if (days !== undefined && days !== "weekdays" && days !== "every-day") {
+      throw new Error(`invalid days '${days}' — pass weekdays or every-day`);
+    }
+    const window = {
+      start: `${m[1]}:${m[2]}`,
+      end: `${m[3]}:${m[4]}`,
+      weekdays: days === undefined ? (current.window?.weekdays ?? true) : days === "weekdays",
+    };
+    saveConfig({ ...cfg, calls: { ...current, window } });
+    ok(
+      `calls ${window.start}–${window.end} the prospect's time, ${window.weekdays ? "weekdays" : "every day"}`,
+    );
+    return;
+  }
+
+  throw new Error(`unknown action '${action}' — pass on, off, step or window`);
 }
 
 const X_TRIGGER = "x-reposters";

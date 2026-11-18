@@ -41,6 +41,7 @@ import {
   configLinkedInInvites,
   configLinkedInInviteTimeout,
   configLinkedInInviteExpiry,
+  configCalls,
   configTelemetry,
   configXEngine,
   configLinkedInSession,
@@ -440,6 +441,12 @@ config
     "Show or set the days a due LinkedIn connection request may stay unsent before its cadence ends without it (positive integer; 'off', the default, waits)",
   )
   .action(runOrFail((days?: string) => configLinkedInInviteExpiry(days)));
+config
+  .command("calls [action] [values...]")
+  .description(
+    "Show or set the dialler: 'on' or 'off'; 'step <position> [delay] [hold]' puts a call in new email cadences (the first email is 1), 'step off' removes it; 'window <09:00-17:00> [weekdays|every-day]' sets the prospect's local hours",
+  )
+  .action(runOrFail((action?: string, values?: string[]) => configCalls(action, values ?? [])));
 
 const linkedin = program.command("linkedin").description("LinkedIn outreach safety");
 linkedin

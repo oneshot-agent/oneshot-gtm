@@ -143,6 +143,13 @@ export class SharedPeople {
           .query(`UPDATE shared_people SET ${field}=? WHERE id=?`)
           .run(patch[field]!.trim(), id);
   }
+  /** Clear the person's number while it is still `phone`, as stored: a replacement saved since stays. */
+  clearPhone(id: string, phone: string): boolean {
+    return (
+      this.db.query("UPDATE shared_people SET phone=NULL WHERE id=? AND phone=?").run(id, phone)
+        .changes > 0
+    );
+  }
   close(): void {
     this.db.close();
   }

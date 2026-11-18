@@ -148,6 +148,29 @@ import {
   outcomesByPlay as outOutcomesByPlay,
   recordOutcome as outRecordOutcome,
 } from "./ledger-outcomes.ts";
+import {
+  callAllowed as callsCallAllowed,
+  callByClientKey as callsCallByClientKey,
+  updateCallStepEvent as callsUpdateCallStepEvent,
+  callAllowedIds as callsCallAllowedIds,
+  clearProspectPhone as callsClearProspectPhone,
+  callPhone as callsCallPhone,
+  getCall as callsGetCall,
+  getCallBrief as callsGetCallBrief,
+  insertCall as callsInsertCall,
+  lastCallsFor as callsLastCallsFor,
+  lastTouchFor as callsLastTouchFor,
+  listCallCandidates as callsListCallCandidates,
+  listCallsForProspect as callsListCallsForProspect,
+  phoneForCall as callsPhoneForCall,
+  wrongNumbersFor as callsWrongNumbersFor,
+  recordCallChannelEvent as callsRecordCallChannelEvent,
+  saveCallBrief as callsSaveCallBrief,
+  setCallOutcome as callsSetCallOutcome,
+  type CallCandidate,
+} from "./ledger-calls.ts";
+import type { CallRecordView } from "@oneshot-gtm/shared-types";
+import { normalizePhone } from "./phone-timezone.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { LearningStore } from "./learning-store.ts";
 import { CodeAnswerStore } from "./code-answers-store.ts";
@@ -821,8 +844,10 @@ export class Ledger {
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
-  }): void {
-    cadSetCadenceDraft(this.db, this.drafts, input);
+    /** Store only while the cadence is still on this step of this enrolment (ledger-cadence.ts). */
+    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+  }): boolean {
+    return cadSetCadenceDraft(this.db, this.drafts, input);
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {
@@ -1444,9 +1469,26 @@ export class Ledger {
    * sentiment-triaged `intent` (issue #480) reads 'unsubscribe' is reported
    * here as 'unsubscribe' too (issue #666), since callers use this value to
    * choose between an "unsubscribed" and a "bounced" outcome.
+   *
+   * An opt-out (an unsubscribe reply, a call logged do-not-contact) is the
+   * person's: it holds every verified address `findProspectByEmail` resolves
+   * to them, and every local row of that person. A dead mailbox
+   * (auto_permanent) holds only the address it came from.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
-    return delivContactSuppressionFor(this.db, email);
+    return delivContactSuppressionFor(this.db, email, this.personProspectIds(email));
+  }
+
+  /**
+   * The local prospect rows an address belongs to: the one it resolves to
+   * and, in the shared registry, every other row of the same person (legacy
+   * aliases keep their own rows and emails in one workspace).
+   */
+  private personProspectIds(email: string): number[] {
+    const found = this.findProspectByEmail(email);
+    if (!found) return [];
+    if (!this.people) return [found.id];
+    return [...new Set([found.id, ...this.prospects.samePersonIds(found.id)])];
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
@@ -1866,9 +1908,126 @@ export class Ledger {
     prospectId: number;
     playName: string;
     repliedAt?: string | null;
-    channel?: "email" | "linkedin";
+    channel?: "email" | "linkedin" | "call";
   }): boolean {
     return cadMarkLatestStepReplied(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#insertCall */
+  insertCall(input: Parameters<typeof callsInsertCall>[1]): number {
+    return callsInsertCall(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#setCallOutcome */
+  setCallOutcome(input: Parameters<typeof callsSetCallOutcome>[1]): boolean {
+    return callsSetCallOutcome(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#callByClientKey */
+  callByClientKey(clientKey: string): CallRecordView | null {
+    return callsCallByClientKey(this.db, clientKey);
+  }
+
+  /** @see ledger-calls.ts#updateCallStepEvent */
+  updateCallStepEvent(input: Parameters<typeof callsUpdateCallStepEvent>[1]): string | null {
+    return callsUpdateCallStepEvent(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#getCall */
+  getCall(id: number): CallRecordView | null {
+    return callsGetCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#listCallsForProspect */
+  listCallsForProspect(prospectId: number): CallRecordView[] {
+    return callsListCallsForProspect(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#lastCallsFor */
+  lastCallsFor(prospectIds: readonly number[]): ReturnType<typeof callsLastCallsFor> {
+    return callsLastCallsFor(this.db, prospectIds);
+  }
+
+  /** @see ledger-calls.ts#recordCallChannelEvent */
+  recordCallChannelEvent(input: Parameters<typeof callsRecordCallChannelEvent>[1]): void {
+    callsRecordCallChannelEvent(this.db, input);
+  }
+
+  /**
+   * @see ledger-calls.ts#clearProspectPhone. The shared person's number goes
+   * too while it is still the wrong one, or the next refresh would copy it
+   * back onto this row.
+   */
+  clearProspectPhone(
+    prospectId: number,
+    wrongPhone: string | null,
+    defaultCountry?: string,
+  ): boolean {
+    const local = callsClearProspectPhone(this.db, prospectId, wrongPhone, defaultCountry);
+    const sharedId = this.people && this.getProspectById(prospectId)?.shared_person_id;
+    const stored = sharedId ? this.people!.get(sharedId)?.phone : null;
+    const wrong = normalizePhone(wrongPhone, defaultCountry);
+    const shared =
+      !!sharedId &&
+      !!stored &&
+      !!wrong &&
+      normalizePhone(stored, defaultCountry) === wrong &&
+      this.people!.clearPhone(sharedId, stored);
+    return local || shared;
+  }
+
+  /** @see ledger-calls.ts#callPhone */
+  callPhone(callId: number): string | null {
+    return callsCallPhone(this.db, callId);
+  }
+
+  /** @see ledger-calls.ts#wrongNumbersFor */
+  wrongNumbersFor(
+    prospectIds: readonly number[],
+    defaultCountry?: string,
+  ): Map<number, Set<string>> {
+    return callsWrongNumbersFor(this.db, prospectIds, defaultCountry);
+  }
+
+  /** @see ledger-calls.ts#phoneForCall */
+  phoneForCall(prospectId: number, defaultCountry?: string): ReturnType<typeof callsPhoneForCall> {
+    // The phone `getProspectById` shows: a shared person's number found in
+    // another workspace is copied to this row first (a version check when
+    // nothing changed).
+    this.refreshSharedPeople();
+    return callsPhoneForCall(this.db, prospectId, defaultCountry);
+  }
+
+  /** @see ledger-calls.ts#getCallBrief */
+  getCallBrief(prospectId: number): ReturnType<typeof callsGetCallBrief> {
+    return callsGetCallBrief(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#saveCallBrief */
+  saveCallBrief(input: Parameters<typeof callsSaveCallBrief>[1]): void {
+    callsSaveCallBrief(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#listCallCandidates */
+  listCallCandidates(opts: Parameters<typeof callsListCallCandidates>[1]): CallCandidate[] {
+    // As `phoneForCall`: the rows carry their shared people's phones.
+    this.refreshSharedPeople();
+    return callsListCallCandidates(this.db, opts);
+  }
+
+  /** @see ledger-calls.ts#callAllowed */
+  callAllowed(prospectId: number): boolean {
+    return callsCallAllowed(this.db, prospectId);
+  }
+
+  /** @see ledger-calls.ts#callAllowedIds */
+  callAllowedIds(prospectIds: readonly number[]): Set<number> {
+    return callsCallAllowedIds(this.db, prospectIds);
+  }
+
+  /** @see ledger-calls.ts#lastTouchFor */
+  lastTouchFor(prospectIds: readonly number[]): Map<number, string> {
+    return callsLastTouchFor(this.db, prospectIds);
   }
 
   /** @see ledger-cadence.ts#recordCadenceReply */

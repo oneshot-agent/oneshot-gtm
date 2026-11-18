@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { Database } from "bun:sqlite";
-import { contactAllowedClause, isProspectOptedOut } from "../src/contact-optout.ts";
+import {
+  contactAllowedClause,
+  contactAllowedSetClause,
+  isProspectOptedOut,
+} from "../src/contact-optout.ts";
 
 let db: Database;
 beforeEach(() => {
@@ -92,4 +96,75 @@ it("supports ledgers with inbox_replies but no intent column (pre-#480)", () => 
 it("supports older ledgers without reply classification tables", () => {
   db.exec("DROP TABLE inbox_replies; DROP TABLE mailbox_messages; DROP TABLE cadence_state");
   expect(isProspectOptedOut(db, 1)).toBe(false);
+});
+
+// The set form (the Calls page, over every prospect) must allow exactly whom
+// the per-prospect form allows, for every opt-out source.
+it.each([
+  [
+    "inbox kind by prospect",
+    "INSERT INTO inbox_replies (prospect_id, from_email, kind) VALUES (1, 'x@example.com', 'unsubscribe')",
+  ],
+  [
+    "inbox kind by email",
+    "INSERT INTO inbox_replies (prospect_id, from_email, kind) VALUES (NULL, 'PERSON@example.com', 'unsubscribe')",
+  ],
+  [
+    "inbox intent",
+    "INSERT INTO inbox_replies (prospect_id, from_email, kind, intent) VALUES (1, 'person@example.com', 'human', 'unsubscribe')",
+  ],
+  ["cadence unsubscribed", "INSERT INTO cadence_state VALUES (1, 'unsubscribed')"],
+  [
+    "mailbox by prospect",
+    `INSERT INTO mailbox_messages VALUES (1, 'inbound', '{"kind":"unsubscribe","from":"x@example.com"}')`,
+  ],
+  [
+    "mailbox by email",
+    `INSERT INTO mailbox_messages VALUES (NULL, 'inbound', '{"kind":"unsubscribe","from":"Person@Example.com"}')`,
+  ],
+  [
+    "outbound mailbox is not an opt-out",
+    `INSERT INTO mailbox_messages VALUES (1, 'outbound', '{"kind":"unsubscribe"}')`,
+  ],
+  [
+    "a human reply is not an opt-out",
+    "INSERT INTO inbox_replies (prospect_id, from_email, kind) VALUES (1, 'person@example.com', 'human')",
+  ],
+])("the set clause matches the per-prospect clause: %s", (_label, insert) => {
+  db.exec("INSERT INTO prospects VALUES (3, NULL)");
+  db.exec(insert);
+  const allowed = (clause: string) =>
+    db.query(`SELECT p.id FROM prospects p WHERE ${clause} ORDER BY p.id`).all();
+  expect(allowed(contactAllowedSetClause(db))).toEqual(allowed(contactAllowedClause(db)));
+});
+
+it("the set clause supports older ledgers without the opt-out tables", () => {
+  db.exec("DROP TABLE inbox_replies; DROP TABLE mailbox_messages; DROP TABLE cadence_state");
+  expect(
+    db.query(`SELECT p.id FROM prospects p WHERE ${contactAllowedSetClause(db)}`).all(),
+  ).toEqual([{ id: 1 }, { id: 2 }]);
+});
+
+// Two rows of one shared person (legacy aliases): a synced opt-out on one,
+// by its row or by its address alone, holds the other.
+it.each([
+  [
+    "mailbox by prospect",
+    `INSERT INTO mailbox_messages VALUES (1, 'inbound', '{"kind":"unsubscribe","from":"x@example.com"}')`,
+  ],
+  [
+    "mailbox by email",
+    `INSERT INTO mailbox_messages VALUES (NULL, 'inbound', '{"kind":"unsubscribe","from":"Person@Example.com"}')`,
+  ],
+])("a synced opt-out holds every row of the shared person: %s", (_label, insert) => {
+  db.exec(`
+    ALTER TABLE prospects ADD COLUMN shared_person_id TEXT;
+    UPDATE prospects SET shared_person_id = 'person-a' WHERE id = 1;
+    INSERT INTO prospects VALUES (3, 'person-alias@example.com', 'person-a'), (4, 'solo@example.com', NULL);
+  `);
+  db.exec(insert);
+  const allowed = (clause: string) =>
+    db.query(`SELECT p.id FROM prospects p WHERE ${clause} ORDER BY p.id`).all();
+  expect(allowed(contactAllowedClause(db))).toEqual([{ id: 2 }, { id: 4 }]);
+  expect(allowed(contactAllowedSetClause(db))).toEqual([{ id: 2 }, { id: 4 }]);
 });

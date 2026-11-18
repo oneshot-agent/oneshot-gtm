@@ -1059,7 +1059,7 @@ export function signatureDirective(): string {
 }
 
 /** Where a VOICE block lands; each surface gets its own budget line. */
-export type VoiceSurface = "intro" | "followup" | "breakup" | "reply";
+export type VoiceSurface = "intro" | "followup" | "breakup" | "reply" | "call";
 
 /** The card is cut here before it reaches a prompt; the CLI warns past it. */
 export const VOICE_CARD_MAX_CHARS = 1500;
@@ -1076,6 +1076,7 @@ const VOICE_BUDGET: Record<VoiceSurface, string> = {
     "VOICE BUDGET: at most ONE deflating line in the whole email, never in the CTA; never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
   breakup:
     "VOICE BUDGET: no aphorism in a breakup. Use one brief closing line in the founder's register. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
+  call: "VOICE BUDGET: this is spoken, so the card sets the register, not the punctuation: short sentences the founder would say out loud. Never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one. Preserve proper nouns and the product name exactly as given.",
   reply:
     "VOICE BUDGET: at most ONE deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes); never an aphorism, slogan or general saying. Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
 };

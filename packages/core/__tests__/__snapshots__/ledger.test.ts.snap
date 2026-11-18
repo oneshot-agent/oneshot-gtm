@@ -28,6 +28,25 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_calls_client_key",
+      "sql": "CREATE UNIQUE INDEX idx_calls_client_key ON calls(client_key)
+          WHERE client_key IS NOT NULL",
+      "tbl_name": "calls",
+      "type": "index",
+    },
+    {
+      "name": "idx_calls_outcome",
+      "sql": "CREATE INDEX idx_calls_outcome ON calls(outcome)",
+      "tbl_name": "calls",
+      "type": "index",
+    },
+    {
+      "name": "idx_calls_prospect",
+      "sql": "CREATE INDEX idx_calls_prospect ON calls(prospect_id, started_at)",
+      "tbl_name": "calls",
+      "type": "index",
+    },
+    {
       "name": "idx_canary_created",
       "sql": "CREATE INDEX idx_canary_created ON canary_results(created_at DESC)",
       "tbl_name": "canary_results",
@@ -449,6 +468,43 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         PRIMARY KEY (prospect_id, play_name)
       )",
       "tbl_name": "cadence_state",
+      "type": "table",
+    },
+    {
+      "name": "call_briefs",
+      "sql": "CREATE TABLE call_briefs (
+          prospect_id  INTEGER PRIMARY KEY,
+          play_name    TEXT,
+          brief_json   TEXT NOT NULL,
+          brief_at     TEXT NOT NULL,
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        )",
+      "tbl_name": "call_briefs",
+      "type": "table",
+    },
+    {
+      "name": "calls",
+      "sql": "CREATE TABLE calls (
+          id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+          prospect_id        INTEGER NOT NULL,
+          play_name          TEXT,
+          started_at         TEXT NOT NULL,
+          duration_sec       INTEGER,
+          outcome            TEXT,
+          reply_intent       TEXT,
+          note               TEXT,
+          phone              TEXT,
+          provider           TEXT NOT NULL DEFAULT 'tel',
+          provider_call_sid  TEXT,
+          client_key         TEXT,
+          recording_sid      TEXT,
+          transcript_status  TEXT NOT NULL DEFAULT 'none',
+          transcript_json    TEXT,
+          summary_json       TEXT,
+          created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+        )",
+      "tbl_name": "calls",
       "type": "table",
     },
     {

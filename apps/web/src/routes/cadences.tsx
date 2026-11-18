@@ -1,9 +1,10 @@
 import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
+import { CallStepActions } from "../components/calls/CallStepActions.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ChevronDown,
   CircleStop,
@@ -11,6 +12,7 @@ import {
   Loader2,
   MailX,
   MessageCircle,
+  Phone,
   RotateCw,
   Send,
   Trophy,
@@ -200,6 +202,7 @@ function CadencesPage() {
     refetchInterval: 15_000,
   });
   const cadenceNavigate = Route.useNavigate();
+  const navigate = useNavigate();
   const clearSinceRun = (): void => {
     // validateSearch's return type makes `sinceRun` a required (if undefined)
     // key, so `{}` doesn't typecheck: spell the cleared filter out.
@@ -303,8 +306,10 @@ function CadencesPage() {
       }
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
+      // A call step's preview is its brief, which may carry no lint flags.
+      const flagCount = data.flags?.length ?? 0;
       toast.success(
-        `drafted next step · ${vars.playName}${data.flags.length > 0 ? ` (${data.flags.length} flag(s))` : ""}`,
+        `drafted next step · ${vars.playName}${flagCount > 0 ? ` (${flagCount} flag(s))` : ""}`,
       );
     },
     onError: (err) => toast.error(`preview failed: ${err.message}`),
@@ -1098,15 +1103,20 @@ function CadencesPage() {
                         ? draft
                           ? "Regenerating…"
                           : "Generating…"
-                        : draft
-                          ? "Regenerate draft"
-                          : "Generate draft"}
+                        : c.nextStepChannel === "call"
+                          ? draft
+                            ? "Regenerate brief"
+                            : "Preview brief"
+                          : draft
+                            ? "Regenerate draft"
+                            : "Generate draft"}
                     </Button>
                   ) : null;
                 const sendButton =
                   c.status === "active" &&
                   c.nextStepLabel != null &&
-                  c.nextStepChannel !== "direct_mail" ? (
+                  c.nextStepChannel !== "direct_mail" &&
+                  c.nextStepChannel !== "call" ? (
                     <Button
                       variant={sendDisabled ? "ghost" : "receipt"}
                       size="sm"
@@ -1149,6 +1159,29 @@ function CadencesPage() {
                             {c.businessAddress ? "Review mail" : "Add business address"}
                           </Button>
                           {skipMailButton}
+                          {stopButton}
+                        </>
+                      }
+                    />
+                  ) : c.status === "active" && c.nextStepChannel === "call" ? (
+                    // The founder places the call: no Send. The brief and the
+                    // outcome live on /calls.
+                    <LetterEmpty
+                      note={`Next step is a call${c.nextStepLabel ? ` · ${c.nextStepLabel}` : ""}.${draft ? " Brief ready." : ""}`}
+                      actions={
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() =>
+                              void navigate({
+                                to: "/calls",
+                                search: { prospect: c.prospectId, play: c.playName },
+                              })
+                            }
+                          >
+                            <Phone size={11} /> Open call
+                          </Button>
+                          {regenerateButton}
                           {stopButton}
                         </>
                       }
@@ -1381,6 +1414,22 @@ function CadencesPage() {
                           )}
                           {c.status === "active" &&
                             (() => {
+                              // A call is placed from /calls, never sent from here.
+                              if (c.nextStepChannel === "call")
+                                return (
+                                  <CallStepActions
+                                    expanded={expandedKeys.has(key)}
+                                    stopDisabled={stop.isPending || c.isSending}
+                                    onOpenCall={() =>
+                                      void navigate({
+                                        to: "/calls",
+                                        search: { prospect: c.prospectId, play: c.playName },
+                                      })
+                                    }
+                                    onToggle={() => toggleExpanded(key)}
+                                    onStop={() => openStopModal([c])}
+                                  />
+                                );
                               if (c.nextStepChannel === "direct_mail")
                                 return (
                                   <>

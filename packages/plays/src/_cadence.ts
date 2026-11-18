@@ -2,6 +2,7 @@ import type {
   CadenceLinkedInTouch,
   CadenceSequenceView,
   CadenceUpcomingStep,
+  CallBrief,
   DraftAngleChoice,
 } from "@oneshot-gtm/shared-types";
 import {
@@ -82,9 +83,13 @@ import {
   sliceText,
   linkedinTemplatesOf,
   linkedinWriterOf,
+  callsOf,
+  defaultPhoneCountry,
+  DEFAULT_CALL_HOLD_DAYS,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
+import { callBriefText, callStepPayload } from "./_calls.ts";
 import {
   agedEvidence,
   companyTheyRun,
@@ -255,6 +260,14 @@ export type StepPayload =
    * to the first message, due at once.
    */
   | { kind: "linkedin_connected"; readAt: string }
+  /**
+   * A call the founder places (never an AI voice; that is `voice`): its brief,
+   * the number (E.164; empty when none is known yet) and the prospect's local
+   * time when it was written. Never dispatched: the outcome the founder logs
+   * on the Calls page moves the cadence on (`recordCall`). `offerKey` names
+   * the offer the brief restates, so a replaced offer makes it stale.
+   */
+  | { kind: "call"; toPhone: string; brief: CallBrief; localTime?: string; offerKey?: string }
   | {
       kind: "voice";
       objective: string;
@@ -267,7 +280,7 @@ interface SequenceStep {
   id?: string;
   /** Days after enrollment (step 0 was the original send). step 1 is the first follow-up. */
   dayOffset: number;
-  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin";
+  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin" | "call";
   /** When true, an inbound reply at any time stops the cadence. */
   breakOnReply: boolean;
   /** Builder returns null to skip this step gracefully. */
@@ -520,6 +533,32 @@ function mailStep(dayOffset: number): SequenceStep {
   };
 }
 
+/** The id of the call step in a plan (`calls.cadenceStep`). */
+export const CALL_STEP_ID = "call";
+
+/** A preview finished after its cadence moved on; nothing was stored. */
+export const PREVIEW_STEP_MOVED =
+  "cadence changed while the preview was written; refresh and retry";
+
+/** Why Send refuses a call step: nothing is sent, the founder logs the call. */
+export const CALL_STEP_NOT_SENT = "A call step is logged from the Calls page";
+
+/**
+ * The founder's call (`calls.cadenceStep`), mirroring `mailStep`: placed in
+ * new plans only, resolved by channel from a saved one. Its builder writes the
+ * brief (a preview); the step itself is never dispatched.
+ */
+function callStep(playName: string, dayOffset: number): SequenceStep {
+  return {
+    id: CALL_STEP_ID,
+    dayOffset,
+    channel: "call",
+    breakOnReply: true,
+    label: "Call",
+    builder: (ctx) => callStepPayload(ctx, playName),
+  };
+}
+
 export function sequencePlan(seq: Sequence): CadencePlanStep[] {
   return seq.steps.map((s, i) => ({
     id: s.id ?? `base:${i + 1}`,
@@ -609,9 +648,32 @@ export function effectiveSequence(
   const carriesOn = enrolled
     ? (savedPlan?.some((entry) => entry.id === CONTINUATION_INVITE_ID) ?? false)
     : newCadenceCarriesOn(base, cfg, continuation);
+  // The founder's call, from the live settings for new plans only. A cadence
+  // already enrolled keeps what its saved plan has, even on a rebuild (a mail
+  // setting change): no call is added to one in flight, and a saved call
+  // keeps its place and delay whatever the call settings say now.
+  const calls = callsOf(cfg);
+  const call =
+    !enrolled && calls.enabled && calls.cadenceStep && (cadenceChannel ?? "email") === "email"
+      ? calls.cadenceStep
+      : null;
+  const savedCallIndex =
+    enrolled && savedPlan ? savedPlan.findIndex((e) => e.channel === "call") : -1;
+  const savedCall =
+    savedPlan && savedCallIndex >= 0
+      ? {
+          dayOffset: savedPlan[savedCallIndex]!.dayOffset,
+          // The steps before it, nearest first.
+          before: savedPlan
+            .slice(0, savedCallIndex)
+            .map((e) => e.id)
+            .toReversed(),
+        }
+      : null;
   if (
     prospectId === undefined &&
     !mail &&
+    !call &&
     !conditional &&
     !carriesOn &&
     (!override || override.length !== base.steps.length)
@@ -636,6 +698,7 @@ export function effectiveSequence(
         playName,
         steps: saved.map((entry) => {
           if (entry.channel === "direct_mail") return mailStep(entry.dayOffset);
+          if (entry.channel === "call") return callStep(playName, entry.dayOffset);
           const step =
             registered.find((s) => s.id === entry.id) ?? tail.find((s) => s.id === entry.id);
           if (!step) throw new Error(`Saved cadence step ${entry.id} is no longer registered`);
@@ -666,9 +729,39 @@ export function effectiveSequence(
     });
   if (mail && eligible)
     steps.splice(Math.min(mail.position - 2, steps.length), 0, mailStep(mail.delayDays));
+  // Spliced in after the letter, so its position counts every step before it,
+  // the letter included. Never after a final breakup email: the breakup
+  // stays the step the sequence ends on (`isBreakupStepAt`), so a call set
+  // past it goes just before it.
+  if (call)
+    steps.splice(
+      callIndexBeforeBreakup(steps, Math.min(Math.max(call.position - 2, 0), steps.length)),
+      0,
+      callStep(playName, call.delayDays),
+    );
+  else if (savedCall) {
+    // Right after the nearest step before it in the saved plan that is still
+    // in it, so a letter added or removed around it does not move it past an
+    // email; first when none is left.
+    const after = savedCall.before
+      .map((id) => steps.findIndex((s) => s.id === id))
+      .find((i) => i >= 0);
+    const at = after === undefined ? 0 : after + 1;
+    steps.splice(callIndexBeforeBreakup(steps, at), 0, callStep(playName, savedCall.dayOffset));
+  }
   // Last: the email steps come first, then the LinkedIn continuation.
   if (carriesOn) steps.push(...tail);
   return { playName, steps };
+}
+
+/**
+ * Where a call step may be spliced into a plan's steps (before the LinkedIn
+ * continuation is appended): `at`, or before a last email labelled breakup.
+ */
+function callIndexBeforeBreakup(steps: readonly SequenceStep[], at: number): number {
+  const last = steps.length - 1;
+  const final = steps[last];
+  return final?.channel === "email" && isBreakupLabel(final.label) ? Math.min(at, last) : at;
 }
 
 /** Capture before a configuration write; preserve completed prefixes and any existing mailpiece. */
@@ -944,7 +1037,7 @@ interface WalkResult {
  * Stop a prospect's live cadences after an opt-out reply label (REPLY_INTENTS
  * `optOut`, i.e. `unsubscribe`). Idempotent; returns the number stopped.
  */
-function stopCadencesForOptOut(prospectId: number): number {
+export function stopCadencesForOptOut(prospectId: number): number {
   const ledger = getLedger();
   let stopped = 0;
   for (const cad of ledger.listCadencesForProspect(prospectId)) {
@@ -1598,8 +1691,11 @@ export async function advanceCadence(
   // gate knows email identities only, so a LinkedIn step is still considered
   // (LinkedIn has its own caps, and a step over them defers on its own).
   const noEmailCapacity = !opts.dryRun && due.length > 0 && !hasAnySendCapacity();
-  const isLinkedInStep = (cad: (typeof due)[number]): boolean =>
-    nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id)?.channel === "linkedin";
+  // A call step sends no email either: it only waits for the founder or skips.
+  const isLinkedInStep = (cad: (typeof due)[number]): boolean => {
+    const channel = nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id)?.channel;
+    return channel === "linkedin" || channel === "call";
+  };
   const heldForCapacity = noEmailCapacity ? due.filter((cad) => !isLinkedInStep(cad)) : [];
   for (const cad of heldForCapacity) {
     result.details.push({
@@ -1958,6 +2054,12 @@ export async function runCadenceStepForProspect(
           : `step ${nextIndex} already sent — reconciled (advanced without re-send)`,
     };
   }
+
+  // The founder's call is never dispatched: logging its outcome on the Calls
+  // page moves the cadence on (`recordCall`). Here it only waits, or, with no
+  // usable number, calls off, or `holdDays` gone by unlogged, is skipped so
+  // the emails carry on.
+  if (step.channel === "call") return awaitCallStep(opts, seq, stepEntryIndex, step, cadence, cfg);
 
   // A step on a channel this person has no address for is skipped AND the
   // cadence moves on. Leaving it due re-drafted (and re-paid) it every run.
@@ -2387,7 +2489,27 @@ export async function previewCadenceStep(input: {
   }
   const step = seq.steps[stepEntryIndex];
   if (!step) throw new Error("step undefined");
-  const missing = missingAddress(step.channel, cadence);
+  // The draft is stored only if the cadence is still on this step when the
+  // (paid, slow) completion returns: the same index, enrolment and plan step.
+  const guarded = {
+    ...input,
+    ...(typeof cadence.enrolled_at === "string"
+      ? {
+          expect: {
+            currentStep: cadence.current_step,
+            enrolledAt: cadence.enrolled_at,
+            stepId: step.id ?? `base:${nextIndex}`,
+          },
+        }
+      : {}),
+  };
+  // A call's brief is worth reading before a number is found (Find phone),
+  // but not for someone the Calls page would not list. Reported only.
+  if (step.channel === "call") {
+    const refused = callRefusal(input.prospectId, cadence.prospect_email, cfg);
+    if (refused) return { skipped: true, message: refused };
+  }
+  const missing = step.channel === "call" ? null : missingAddress(step.channel, cadence);
   const continuationInvite =
     step.channel === "linkedin" &&
     step.id === CONTINUATION_INVITE_ID &&
@@ -2420,7 +2542,7 @@ export async function previewCadenceStep(input: {
     // Sending this records the connection and brings the first message forward.
     const connection = knownConnection(cadence.prospect_linkedin_url);
     if (connection) {
-      return storePreview(input, cfg, seq, stepEntryIndex, step, {
+      return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
         subject: KNOWN_CONNECTION_SUBJECT,
         body: `Already connected: skipping the connection request (profile read ${knownConnectionDay(connection)}). The first message comes next.`,
         flags: [],
@@ -2499,7 +2621,7 @@ export async function previewCadenceStep(input: {
       step: nextIndex,
       reason: derived.reason,
     });
-    return storePreview(input, cfg, seq, stepEntryIndex, step, {
+    return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
       subject: "",
       body: "",
       flags: [NO_OFFER_FLAG],
@@ -2542,7 +2664,9 @@ export async function previewCadenceStep(input: {
         ? "LinkedIn message"
         : built.kind === "linkedin_invite"
           ? `LinkedIn connection request · ${built.note.length}/${LINKEDIN_NOTE_HARD_LIMIT} characters`
-          : "(non-email step)";
+          : built.kind === "call"
+            ? "Call brief"
+            : "(non-email step)";
   const body =
     built.kind === "email"
       ? built.body
@@ -2554,7 +2678,9 @@ export async function previewCadenceStep(input: {
             ? built.message
             : built.kind === "voice"
               ? built.objective
-              : "";
+              : built.kind === "call"
+                ? callBriefText(built.brief)
+                : "";
   // Opener-frequency cap on top of the phrase lint: the phrase rules cannot
   // see that this play's last 40 sends all opened the same way. Scoped to the
   // same play + step because that is the population a reader would ever
@@ -2599,7 +2725,7 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
-  return storePreview(input, cfg, seq, stepEntryIndex, step, {
+  return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
     subject,
     body,
     flags,
@@ -2609,7 +2735,12 @@ export async function previewCadenceStep(input: {
 
 /** Persist a preview (`setCadenceDraft`) and return it as the route shows it. */
 function storePreview(
-  input: { prospectId: number; playName: string; rotateAngle?: boolean },
+  input: {
+    prospectId: number;
+    playName: string;
+    rotateAngle?: boolean;
+    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+  },
   cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,
   stepEntryIndex: number,
@@ -2619,7 +2750,8 @@ function storePreview(
   const ledger = getLedger();
   // The config it was written under: a later setup change makes it stale.
   const surface = cadenceDraftSurface(preview.payload);
-  ledger.setCadenceDraft({
+  const stored = ledger.setCadenceDraft({
+    ...(input.expect ? { expect: input.expect } : {}),
     prospectId: input.prospectId,
     playName: input.playName,
     draft: {
@@ -2633,6 +2765,8 @@ function storePreview(
     // its angle (`rotate`).
     discardReason: input.rotateAngle ? "rotate" : "regenerate",
   });
+  // Strictly false: a test double that returns nothing stores as before.
+  if (stored === false) throw new Error(PREVIEW_STEP_MOVED);
   const draft = ledger.getCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -2663,6 +2797,14 @@ export async function sendCadenceStep(input: {
 }): Promise<RunCadenceStepResult> {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
+  // The founder places the call; its stored preview is the brief. Refused
+  // with or without one, single or batch.
+  if (
+    (draft?.payload as { kind?: unknown } | null | undefined)?.kind === "call" ||
+    callStepIsNext(input.prospectId, input.playName)
+  ) {
+    throw new Error(CALL_STEP_NOT_SENT);
+  }
   if (!draft) throw new Error("no persisted preview — click Preview first");
   // The UI disables Send on a flagged draft; enforce the same rule here so a
   // direct API call cannot dispatch copy the lint held back.
@@ -3840,9 +3982,15 @@ function liveReadOf(
 /** Why this person can't be reached on the step's channel, or null when they can. */
 function missingAddress(
   channel: SequenceStep["channel"],
-  cadence: { prospect_email: string | null; prospect_linkedin_url: string | null },
+  cadence: {
+    prospect_id: number;
+    prospect_email: string | null;
+    prospect_linkedin_url: string | null;
+  },
 ): string | null {
   if (channel === "email" && !cadence.prospect_email?.trim()) return "prospect has no email";
+  if (channel === "call" && !phoneForCall(cadence.prospect_id).phone)
+    return "prospect has no phone";
   if (
     channel === "linkedin" &&
     !(cadence.prospect_linkedin_url && canonicalLinkedInProfileKey(cadence.prospect_linkedin_url))
@@ -3944,6 +4092,126 @@ export function skipCadenceLinkedInSteps(input: {
   if (!seq || !step) return false;
   skipContinuation({ ...input, dryRun: false }, seq, cadence.current_step, step, input.reason);
   return true;
+}
+
+/**
+ * The number to call a prospect on (`Ledger.phoneForCall`): their own phone,
+ * else their queue row's, as E.164, reading national numbers in the
+ * workspace's country. Null `phone` when none parses.
+ */
+export function phoneForCall(
+  prospectId: number,
+  cfg: Pick<OneShotConfig, "timezone"> = loadConfig(),
+): { phone: string | null; raw: string | null; queueId: number | null } {
+  return getLedger().phoneForCall(prospectId, defaultPhoneCountry(cfg));
+}
+
+/**
+ * A due call step under the unattended runner. It never dials: it waits for
+ * the founder's outcome ("Call awaits the founder"). It is skipped, and the
+ * cadence moves on, when calls are off, when the person has no usable number,
+ * or once `holdDays` have passed since it came due with nothing logged.
+ */
+function awaitCallStep(
+  opts: RunCadenceStepOptions,
+  seq: Sequence,
+  stepEntryIndex: number,
+  step: SequenceStep,
+  cadence: CadenceWithProspect,
+  cfg: OneShotConfig,
+): RunCadenceStepResult {
+  const calls = callsOf(cfg);
+  const holdDays = calls.cadenceStep?.holdDays ?? DEFAULT_CALL_HOLD_DAYS;
+  const dueMs = cadence.next_due_at ? Date.parse(cadence.next_due_at) : Number.NaN;
+  const reason = !calls.enabled
+    ? "calls are off"
+    : missingAddress("call", cadence)
+      ? "prospect has no phone"
+      : Number.isFinite(dueMs) && Date.now() - dueMs >= holdDays * 24 * 3600 * 1000
+        ? `call not logged within ${holdDays} day${holdDays === 1 ? "" : "s"}`
+        : null;
+  if (!reason) {
+    return { action: "skipped", payload: null, receiptIds: [], note: "Call awaits the founder" };
+  }
+  if (!opts.dryRun) {
+    const ledger = getLedger();
+    // A skipped call's brief was never used: discard it with the skip.
+    ledger.transaction(() => {
+      ledger.recordSequenceEvent({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        stepIndex: stepEntryIndex + 1,
+        channel: "call",
+        status: "skipped",
+        metadata: { reason, label: step.label ?? null },
+      });
+      ledger.clearCadenceDraft({ prospectId: opts.prospectId, playName: opts.playName });
+      advanceOrComplete(opts, seq, stepEntryIndex);
+    });
+  }
+  return { action: "skipped", payload: null, receiptIds: [], note: `${reason} — call skipped` };
+}
+
+/**
+ * The call the founder logged was this cadence's due call step: record it
+ * done (a `sent` call event carrying the outcome) and move the cadence on
+ * exactly as a sent step does. False when the cadence's next step is not a
+ * call (nothing written).
+ */
+export function completeCallStep(input: {
+  prospectId: number;
+  playName: string;
+  metadata: Record<string, unknown>;
+  /** `replied`: the person answered and the cadence stops as replied; nothing advances. */
+  status?: "sent" | "replied";
+}): boolean {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(input.prospectId, input.playName);
+  if (!cadence || cadence.status !== "active") return false;
+  const seq = effectiveSequence(input.playName, input.prospectId);
+  const stepEntryIndex = cadence.current_step;
+  const step = seq?.steps[stepEntryIndex];
+  if (!seq || step?.channel !== "call") return false;
+  const stepIndex = stepEntryIndex + 1;
+  // The event and the advance it explains land together (a savepoint inside
+  // `recordCall`'s transaction).
+  ledger.transaction(() => {
+    if (!ledger.hasSentSequenceEvent(input.prospectId, input.playName, stepIndex)) {
+      ledger.recordSequenceEvent({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        stepIndex,
+        channel: "call",
+        status: "sent",
+        metadata: { label: step.label ?? null, ...input.metadata },
+      });
+    }
+    if (input.status !== "replied") advancePastSentStep(input, seq, stepEntryIndex, step);
+  });
+  return true;
+}
+
+/**
+ * Why this person may not be called, by the Calls page's gates (the company
+ * list, an opt-out on any channel, an ICP reject, a meeting held); null when
+ * they may.
+ */
+function callRefusal(prospectId: number, email: string | null, cfg: OneShotConfig): string | null {
+  const ledger = getLedger();
+  const list = doNotContactOf(cfg);
+  const blocked =
+    list.domains.length > 0 || list.companies.length > 0
+      ? doNotContactMatch(ledger.contactIdentityFor({ prospectId, email }), list)
+      : null;
+  if (blocked) return `not called: ${describeDoNotContact(blocked)}`;
+  return ledger.callAllowed(prospectId) ? null : "not called: they can't be contacted";
+}
+
+/** Whether the cadence's next step is the founder's call. */
+export function callStepIsNext(prospectId: number, playName: string): boolean {
+  const cadence = getLedger().getCadence(prospectId, playName);
+  if (!cadence || cadence.status !== "active") return false;
+  return nextStepInfo(playName, cadence.current_step, prospectId)?.channel === "call";
 }
 
 /** Advance past the current step, completing the cadence after the last one. */

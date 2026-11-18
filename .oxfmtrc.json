@@ -8,6 +8,7 @@
     "*.tsbuildinfo",
     "**/routeTree.gen.ts",
     "packages/prompts/**/*.md",
+    "packages/core/vendor/phone-timezones/phone-timezones.json",
     "scripts/comment-density.ts"
   ],
   "sortPackageJson": {}

@@ -137,7 +137,7 @@ export interface DealOutcomeRecord {
 export interface CadencePlanStep {
   id: string;
   dayOffset: number;
-  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin";
+  channel: "email" | "sms" | "voice" | "direct_mail" | "linkedin" | "call";
   label?: string;
 }
 
@@ -193,7 +193,16 @@ export interface SequenceEventRecord {
   prospect_id: number;
   play_name: string;
   step_index: number;
-  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail" | "reddit" | "hacker-news";
+  channel:
+    | "email"
+    | "sms"
+    | "voice"
+    | "linkedin"
+    | "x"
+    | "direct_mail"
+    | "call"
+    | "reddit"
+    | "hacker-news";
   status:
     | "queued"
     | "sent"
@@ -820,6 +829,48 @@ export interface OneShotConfig {
   learning?: {
     expireAfterDays?: number;
   };
+  /**
+   * The dialler: the founder calls prospects from the dashboard (never an AI
+   * voice; that is the `voice` step kind). Read through `callsOf`. Absent or
+   * `enabled: false` = off: no call step, no Calls page.
+   */
+  calls?: CallsConfig;
+}
+
+/**
+ * `OneShotConfig.calls`. Every key but `enabled` is optional; `callsOf` fills
+ * the defaults.
+ */
+export interface CallsConfig {
+  /** Default off. */
+  enabled: boolean;
+  /**
+   * Where the call step goes in NEW email plans, counted like
+   * `directMailMotions` positions (the first email is 1, so 2 is the first
+   * follow-up), due `delayDays` after the touch before it. An unlogged call is
+   * skipped `holdDays` (default 3) after it came due, so the emails carry on.
+   * Null or absent = the Calls page only. A plan already saved keeps what it
+   * has: turning this on never adds a call to a running cadence.
+   */
+  cadenceStep?: { position: number; delayDays: number; holdDays?: number } | null;
+  /** The recipient's local hours for a call; default 09:00–17:00 on weekdays. */
+  window?: { start: string; end: string; weekdays?: boolean };
+  /**
+   * The dashboard rings the founder's phone first, then dials the prospect
+   * (phase 2). Null or absent = `tel:` links only. Holds no secret: the
+   * provider keys live in the workspace's `.env`.
+   */
+  bridge?: {
+    provider: "twilio";
+    /** E.164: the phone that rings first. */
+    founderPhone: string;
+    /** What the prospect sees: a provider number or the founder's verified own mobile. */
+    callerId: string;
+    /** Default true: the transcript is the point. */
+    record?: boolean;
+    /** The provider's transcription service, created by `calls setup`. */
+    transcriptionServiceSid?: string;
+  } | null;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

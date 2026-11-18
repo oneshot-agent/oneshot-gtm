@@ -49,6 +49,7 @@ import {
   cadenceSequenceRoute,
 } from "./api/cadences.ts";
 import { cadenceOfferRoute } from "./api/cadence-offer.ts";
+import { callBriefRoute, listCallsRoute, logCallRoute, prospectCallsRoute } from "./api/calls.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
   archiveInboxConversationRoute,
@@ -203,6 +204,10 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/:id/stop", stopCadence),
   route("POST", "/api/cadences/:id/skip-mail", skipCadenceMailRoute),
   route("POST", "/api/cadences/skip-mail-batch", skipCadenceMailBatchRoute),
+  route("GET", "/api/calls", listCallsRoute),
+  route("POST", "/api/calls/brief", callBriefRoute),
+  route("POST", "/api/prospects/:id/call", logCallRoute),
+  route("GET", "/api/prospects/:id/calls", prospectCallsRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
   route("GET", "/api/prospects/:id/linkedin-friend", linkedInFriendRoute),
   route("POST", "/api/prospects/:id/linkedin-friend/draft", linkedInFriendDraftRoute),

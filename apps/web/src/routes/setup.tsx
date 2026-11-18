@@ -1,7 +1,7 @@
 import { NextStep } from "../components/home/NextStep.tsx";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useBlocker } from "@tanstack/react-router";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -9,6 +9,7 @@ import { Skeleton } from "../components/primitives/Skeleton.tsx";
 import { CredentialsSection } from "../components/setup/CredentialsSection.tsx";
 import { EmailTransportSection } from "../components/setup/EmailTransportSection.tsx";
 import { CalendarSection } from "../components/setup/CalendarSection.tsx";
+import { CallsSection } from "../components/setup/CallsSection.tsx";
 import { FounderSection } from "../components/setup/FounderSection.tsx";
 import { IcpSection } from "../components/setup/IcpSection.tsx";
 import { LlmSection } from "../components/setup/LlmSection.tsx";
@@ -27,6 +28,7 @@ import { WalletSection } from "../components/setup/WalletSection.tsx";
 import { storedXEngine, XSection } from "../components/setup/XSection.tsx";
 import { SECTIONS, type SectionId } from "../components/setup/constants.ts";
 import type { DirtyReporter, SetupStatus } from "../components/setup/types.ts";
+import { callsSettings } from "../lib/callSettings.ts";
 
 interface SetupSearch {
   /**
@@ -229,6 +231,7 @@ function Sections({
   const { cfg, sources } = status;
   const common = { cfg, sources, onDirtyChange };
   const isLegacyPool = status.identities?.[0]?.legacy ?? true;
+  const calls = useMemo(() => callsSettings(status), [status]);
   return (
     <>
       <FounderSection {...common} />
@@ -249,6 +252,7 @@ function Sections({
         onDirtyChange={onDirtyChange}
       />
       <CalendarSection {...common} identities={status.identities ?? []} />
+      <CallsSection calls={calls} onDirtyChange={onDirtyChange} />
       <ReviewQueueSection {...common} />
       <MembersSection onDirtyChange={onDirtyChange} />
       <TelemetrySection {...common} />
