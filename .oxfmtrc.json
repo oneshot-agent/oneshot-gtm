@@ -7,7 +7,8 @@
     "bun.lock",
     "*.tsbuildinfo",
     "**/routeTree.gen.ts",
-    "packages/prompts/**/*.md"
+    "packages/prompts/**/*.md",
+    "scripts/comment-density.ts"
   ],
   "sortPackageJson": {}
 }

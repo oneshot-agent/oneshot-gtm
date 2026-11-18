@@ -13,7 +13,10 @@ import type {
   LinkedInSyncStatus,
 } from "@oneshot-gtm/core";
 import { adoptLinkedInConnections, pendingLinkedInConnectionWallets } from "./linkedin-connect.ts";
-import { adoptPendingLinkedInReplacements } from "./linkedin-replacement.ts";
+import {
+  adoptPendingLinkedInReplacements,
+  pendingLinkedInReplacementWallets,
+} from "./linkedin-replacement.ts";
 import { callLinkedIn } from "./linkedin-client.ts";
 
 interface Progress {
@@ -50,7 +53,12 @@ async function capture(force: boolean) {
         owner,
         { kind: "accounts" },
       );
-      const unresolvedWallets = pendingLinkedInConnectionWallets();
+      // A login a member opened, to connect or to replace an account, may have produced
+      // an account this wallet now lists. Only its adoption knows whose it is.
+      const unresolvedWallets = new Set([
+        ...pendingLinkedInConnectionWallets(),
+        ...pendingLinkedInReplacementWallets(),
+      ]);
       for (const account of discovered.accounts) {
         if (
           store

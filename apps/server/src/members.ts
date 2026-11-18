@@ -1,4 +1,5 @@
 import { getSharedDb, logEvent } from "@oneshot-gtm/core";
+import type { LinkedInViewer } from "@oneshot-gtm/core";
 import type { CurrentMember } from "@oneshot-gtm/shared-types";
 
 /**
@@ -140,6 +141,33 @@ export function currentMember(req: Request): CurrentMember | null {
   const login = decodeIdentity(identity);
   const member = loggedShared("member", null, () => getSharedDb().activeMember(login));
   return member ? { email: member.email, name: member.name, role: member.role } : null;
+}
+
+/**
+ * Who a request reads the LinkedIn inbox as. An account is one person's
+ * identity: its threads and messages go only to the member who connected it.
+ * Accounts with no recorded member (connected before members existed, or
+ * found on the wallet by a sync) belong to the install's owner: the listed
+ * owner, or the local owner when none is listed. With no member listed at
+ * all, the one person using the install sees every account. A request that
+ * is nobody's, or a members list that cannot be read, sees only what is
+ * certainly its own.
+ */
+export function linkedInViewer(req: Request): LinkedInViewer {
+  const member = currentMember(req);
+  if (!member) return { email: null, installOwner: false };
+  const listed = loggedShared("members", null, () => {
+    const db = getSharedDb();
+    return { owner: db.ownerMember()?.email ?? null, count: db.listMembers().length };
+  });
+  if (!listed) return { email: member.email, installOwner: false };
+  return {
+    email: member.email,
+    installOwner: listed.owner ? member.email === listed.owner : member.email === null,
+    // Only the local owner of an install with no members. A member signed in through the
+    // tailnet has an email, so a members list read empty after theirs never makes them it.
+    onlyUser: listed.count === 0 && member.email === null,
+  };
 }
 
 /** True when the request's Host is one the dashboard answers on: loopback, or on the allowed list. */

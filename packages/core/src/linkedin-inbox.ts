@@ -55,6 +55,57 @@ export interface LinkedInAccountRecord {
   removedAt?: string;
   permissionUpgradeError?: string;
   previousAccountIds?: string[];
+  /**
+   * The member who connected the account, by email. Unset on an account
+   * connected before members existed, by an owner with no email, or found on
+   * the wallet by a sync: that account belongs to the install's owner.
+   */
+  ownerMember?: string | null;
+}
+/**
+ * Who is reading the inbox. A LinkedIn account is one person's identity, so a
+ * lookup given a viewer returns only the accounts that member connected, with
+ * their threads and messages. Background jobs pass no viewer and see every
+ * account.
+ */
+export interface LinkedInViewer {
+  /** The member's email. Null for the local owner of an install that lists no owner. */
+  email: string | null;
+  /** The install's owner also holds every account no member is recorded for. */
+  installOwner: boolean;
+  /** No member is listed: the one person using the install sees every account. */
+  onlyUser?: boolean;
+}
+/**
+ * Whether a viewer may read an account. A missing record proves nobody's
+ * ownership: what is still saved under its key (a review copy left behind when
+ * a replacement connection was merged into the original account) is refused to
+ * every member, the install's owner included.
+ */
+export function linkedInAccountVisible(
+  account: Pick<LinkedInAccountRecord, "ownerMember"> | null,
+  viewer?: LinkedInViewer,
+): boolean {
+  if (!viewer || viewer.onlyUser) return true;
+  if (!account) return false;
+  return account.ownerMember ? account.ownerMember === viewer.email : viewer.installOwner;
+}
+/**
+ * A replacement merge refused because the record it would move conversations
+ * from is not the destination owner's. Nothing was written; the replacement
+ * can be retried once the records agree.
+ */
+export class LinkedInReplacementOwnerMismatchError extends Error {
+  constructor(
+    readonly sourceKey: string,
+    readonly sourceOwner: string | null,
+    readonly destinationOwner: string | null,
+  ) {
+    super(
+      "The new LinkedIn connection's saved conversations do not belong to this account's owner, so they were not merged into it.",
+    );
+    this.name = "LinkedInReplacementOwnerMismatchError";
+  }
 }
 export interface LinkedInOwner {
   workspace: string;
@@ -217,17 +268,37 @@ export class LinkedInInboxStore {
   close() {
     this.db.close();
   }
-  accounts(): LinkedInAccountRecord[] {
-    return this.db
+  /** Every account, or with a viewer only the ones that member connected. */
+  accounts(viewer?: LinkedInViewer): LinkedInAccountRecord[] {
+    const all: LinkedInAccountRecord[] = this.db
       .query<{ data: string }, []>("SELECT data FROM accounts")
       .all()
       .map((r) => JSON.parse(r.data));
+    return viewer ? all.filter((a) => linkedInAccountVisible(a, viewer)) : all;
   }
-  account(key: string) {
-    return this.accounts().find((a) => a.key === key) ?? null;
+  account(key: string, viewer?: LinkedInViewer) {
+    return this.accounts(viewer).find((a) => a.key === key) ?? null;
+  }
+  /**
+   * Whether the viewer may read or act through this account. The yes/no a
+   * route needs to refuse another member's account without reading it.
+   */
+  visibleTo(accountKey: string, viewer?: LinkedInViewer): boolean {
+    return linkedInAccountVisible(this.account(accountKey), viewer);
+  }
+  /** The test `visibleTo` applies, with the accounts read once for a whole list. */
+  private visibility(viewer?: LinkedInViewer): (accountKey: string) => boolean {
+    if (!viewer || viewer.onlyUser) return () => true;
+    const accounts = new Map(this.accounts().map((a) => [a.key, a]));
+    return (accountKey) => linkedInAccountVisible(accounts.get(accountKey) ?? null, viewer);
   }
   saveAccount(a: LinkedInAccountRecord) {
-    const removedAt = this.account(a.key)?.removedAt ?? a.removedAt;
+    const saved = this.account(a.key);
+    // Whoever a record was first saved for stays its owner: a later save never
+    // drops or replaces them. A record saved with no member is the install
+    // owner's, so a member who connects that account afterwards does not claim it.
+    if (saved) a = { ...a, ownerMember: saved.ownerMember || undefined };
+    const removedAt = saved?.removedAt ?? a.removedAt;
     if (removedAt)
       a = { ...a, removedAt, account: { ...a.account, status: "revoked", allowed_actions: [] } };
     this.db
@@ -248,6 +319,23 @@ export class LinkedInInboxStore {
         if (previous.account.id === account.id) return;
         const discoveredKey = `${previous.wallet}:${account.id}`;
         const imported = this.threads(discoveredKey);
+        // A conversation never changes owner. Conversations move only from a record saved
+        // for the destination's owner; an unset owner is the install owner's, so it matches
+        // only another unset owner. History under a key with no record has no proven owner.
+        const source = this.account(discoveredKey);
+        const sourceOwner = source?.ownerMember || null;
+        const destinationOwner = previous.ownerMember || null;
+        const hasHistory =
+          imported.length > 0 ||
+          !!this.db
+            .query<{ one: number }, [string]>("SELECT 1 AS one FROM messages WHERE account_key=?")
+            .get(discoveredKey);
+        if (source ? sourceOwner !== destinationOwner : hasHistory)
+          throw new LinkedInReplacementOwnerMismatchError(
+            discoveredKey,
+            sourceOwner,
+            destinationOwner,
+          );
         if (imported.some((t) => t.owner?.manual))
           throw new Error(
             "Replacement already has manual assignments; review before merging accounts",
@@ -297,22 +385,32 @@ export class LinkedInInboxStore {
       .query("INSERT INTO progress VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data")
       .run(key, JSON.stringify(data));
   }
-  threads(accountKey?: string): LinkedInThreadRecord[] {
-    return (
+  /** Threads of one account or of all; with a viewer, only those on accounts that member connected. */
+  threads(accountKey?: string, viewer?: LinkedInViewer): LinkedInThreadRecord[] {
+    const all: LinkedInThreadRecord[] = (
       accountKey
         ? this.db
             .query<{ data: string }, [string]>("SELECT data FROM conversations WHERE account_key=?")
             .all(accountKey)
         : this.db.query<{ data: string }, []>("SELECT data FROM conversations").all()
     ).map((r) => JSON.parse(r.data));
+    if (!viewer) return all;
+    const visible = this.visibility(viewer);
+    return all.filter((t) => visible(t.accountKey));
   }
-  thread(key: string): LinkedInThreadRecord | null {
+  thread(key: string, viewer?: LinkedInViewer): LinkedInThreadRecord | null {
     const r = this.db
       .query<{ data: string }, [string]>("SELECT data FROM conversations WHERE key=?")
       .get(key);
-    return r ? JSON.parse(r.data) : null;
+    const t: LinkedInThreadRecord | null = r ? JSON.parse(r.data) : null;
+    return t && (!viewer || this.visibleTo(t.accountKey, viewer)) ? t : null;
   }
-  threadForConversation(accountKey: string, conversationId: string): LinkedInThreadRecord | null {
+  threadForConversation(
+    accountKey: string,
+    conversationId: string,
+    viewer?: LinkedInViewer,
+  ): LinkedInThreadRecord | null {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return null;
     const row = this.db
       .query<{ data: string }, [string, string]>(
         "SELECT data FROM conversations WHERE account_key=? AND json_extract(data,'$.conversation.id')=?",
@@ -324,7 +422,7 @@ export class LinkedInInboxStore {
         "SELECT thread_key FROM conversation_aliases WHERE account_key=? AND conversation_id=?",
       )
       .get(accountKey, conversationId);
-    return alias ? this.thread(alias.thread_key) : null;
+    return alias ? this.thread(alias.thread_key, viewer) : null;
   }
   saveConversation(
     accountKey: string,
@@ -409,7 +507,8 @@ export class LinkedInInboxStore {
       )
       .run(accountKey, identity.providerId, JSON.stringify(identity));
   }
-  allMessages(accountKey: string): LinkedInMessage[] {
+  allMessages(accountKey: string, viewer?: LinkedInViewer): LinkedInMessage[] {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return [];
     return this.db
       .query<{ data: string }, [string]>("SELECT data FROM messages WHERE account_key=?")
       .all(accountKey)
@@ -656,7 +755,8 @@ export class LinkedInInboxStore {
       })
       .immediate();
   }
-  messages(accountKey: string, conversationId: string): LinkedInMessage[] {
+  messages(accountKey: string, conversationId: string, viewer?: LinkedInViewer): LinkedInMessage[] {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return [];
     return this.db
       .query<{ data: string }, [string, string]>(
         "SELECT data FROM messages WHERE account_key=? AND conversation_id=?",

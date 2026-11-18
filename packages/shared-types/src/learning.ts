@@ -63,6 +63,12 @@ export interface LearningEvidenceSample {
 export interface LearningEvidence {
   refs: LearningEvidenceRef[];
   samples?: LearningEvidenceSample[];
+  /**
+   * Samples left out for the member reading: LinkedIn messages that are not
+   * on an account they connected. The rule and its counts are shared; the
+   * messages it was learned from are not.
+   */
+  withheld?: number;
   /** Named counts behind the proposal (decisions, outcomes, offered/sent/replied per angle). */
   counts?: Record<string, number>;
   /** How the evidence was selected or assigned (e.g. `fit`, `arm`, `reply`, `outcome`). */
