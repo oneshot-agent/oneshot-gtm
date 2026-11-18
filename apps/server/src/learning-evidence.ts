@@ -100,3 +100,12 @@ function prospectReplyVisible(
     (e) => e.source !== "oneshot-linkedin" || mine.some((k) => e.external_event_id.startsWith(k)),
   );
 }
+
+/**
+ * For a response that carries `evidenceFor` output. The same URL answers each
+ * member differently, so no browser or proxy cache may keep a copy of it.
+ */
+export function notStored(res: Response): Response {
+  res.headers.set("cache-control", "no-store");
+  return res;
+}

@@ -42,7 +42,7 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { currentMember, isAllowedOrigin, linkedInViewer } from "../members.ts";
 import { jsonResponse } from "../server.ts";
-import { evidenceFor } from "../learning-evidence.ts";
+import { evidenceFor, notStored } from "../learning-evidence.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import {
   startLinkedInBackfill,
@@ -833,7 +833,7 @@ export async function replyLearningRoute(req: Request) {
         })),
       pendingProposals: ledger.learning.list({ kind: "preference", status: "pending" }).length,
     };
-    return jsonResponse(status, 200, req);
+    return notStored(jsonResponse(status, 200, req));
   } catch (e) {
     return failure(req, e);
   }

@@ -13,7 +13,7 @@ import type {
   LearningProposalView,
   LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
-import { evidenceFor } from "../learning-evidence.ts";
+import { evidenceFor, notStored } from "../learning-evidence.ts";
 import { linkedInViewer } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
@@ -103,7 +103,7 @@ export function listLearningProposalsRoute(req: Request): Response {
       })
       .map((p) => withScopeLabel(req, ledger, p)),
   };
-  return jsonResponse(body, 200, req);
+  return notStored(jsonResponse(body, 200, req));
 }
 
 /**
@@ -139,7 +139,9 @@ function decisionResponse(
       ledger,
       decideLearning(ledger, params["id"] ?? "", action, value),
     );
-    return jsonResponse({ ok: true, proposal } satisfies LearningDecisionResult, 200, req);
+    return notStored(
+      jsonResponse({ ok: true, proposal } satisfies LearningDecisionResult, 200, req),
+    );
   } catch (e) {
     return jsonResponse(
       { error: (e as Error).message },
@@ -173,7 +175,7 @@ export function listLearningGuidanceRoute(req: Request): Response {
       .listGuidance(true)
       .map((g) => Object.assign({}, g, { evidence: evidenceFor(viewer, g.evidence) })),
   };
-  return jsonResponse(body, 200, req);
+  return notStored(jsonResponse(body, 200, req));
 }
 
 /** POST /api/learning/guidance/:id, body `{ enabled }`. */

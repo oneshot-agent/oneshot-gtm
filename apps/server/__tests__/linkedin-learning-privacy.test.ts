@@ -157,6 +157,8 @@ async function sendReply(member: string, id: string, n: number): Promise<string>
 /** Everything a response says, as the browser receives it. */
 const read = async <T>(res: Response): Promise<{ body: T; text: string }> => {
   expect(res.status).toBe(200);
+  // The same URL answers each member differently, so no cache may keep a copy.
+  expect(res.headers.get("cache-control")).toBe("no-store");
   const text = await res.text();
   return { body: JSON.parse(text) as T, text };
 };
