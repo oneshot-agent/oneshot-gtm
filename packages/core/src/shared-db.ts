@@ -1412,6 +1412,27 @@ export class SharedDb {
     }
   }
 
+  /** Change an active member's role without restoring a removed member. */
+  setMemberRole(email: string, role: MemberRole): boolean {
+    const normalized = normalizeMemberEmail(email);
+    if (!normalized) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.activeMember(normalized);
+      if (role !== "owner") this.assertNotLastOwner(existing);
+      const changed =
+        this.db.run("UPDATE members SET role = ? WHERE email = ? AND removed_at IS NULL", [
+          role,
+          normalized,
+        ]).changes === 1;
+      this.db.exec("COMMIT");
+      return changed;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   /** Mark an active member removed; refuse the last owner. False for an unknown or removed email. */
   removeMember(email: string): boolean {
     const normalized = normalizeMemberEmail(email);

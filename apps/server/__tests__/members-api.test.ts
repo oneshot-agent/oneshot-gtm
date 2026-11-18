@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
-import { getSharedDb } from "@oneshot-gtm/core";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { getSharedDb, SharedDb } from "@oneshot-gtm/core";
 import { buildFetchHandler } from "../src/server.ts";
 
 const handler = buildFetchHandler();
@@ -153,3 +153,26 @@ it.each(["x-forwarded-for", "x-forwarded-host", "forwarded", "tailscale-funnel-r
     expect(getSharedDb().listMembers()).toEqual(before);
   },
 );
+
+it("a role change cannot restore a target removed by another workspace after its active check", async () => {
+  const db = getSharedDb();
+  const other = new SharedDb(join(dir, "shared.sqlite"));
+  const activeMember = db.activeMember.bind(db);
+  let removed = false;
+  const spy = vi.spyOn(db, "activeMember").mockImplementation((email) => {
+    const active = activeMember(email);
+    if (email === member && !removed) {
+      removed = true;
+      expect(other.removeMember(member)).toBe(true);
+    }
+    return active;
+  });
+  try {
+    const response = await request("/api/members/role", { email: member, role: "owner" });
+    expect(response.status).toBe(404);
+    expect(activeMember(member)).toBeNull();
+  } finally {
+    spy.mockRestore();
+    other.close();
+  }
+});

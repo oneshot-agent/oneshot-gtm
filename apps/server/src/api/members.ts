@@ -49,11 +49,15 @@ async function mutate(req: Request, action: "add" | "remove" | "role"): Promise<
   }
   try {
     if (action === "remove") db.removeMember(email);
-    else {
+    else if (action === "role") {
+      if (!db.setMemberRole(email, body.role as "owner" | "member")) {
+        return jsonResponse({ error: "No active member with that email." }, 404, req);
+      }
+    } else {
       // Adding an existing email is safe to retry and preserves its role and name.
       db.addMember({
         email,
-        role: action === "role" ? (body.role as "owner" | "member") : (existing?.role ?? "member"),
+        role: existing?.role ?? "member",
       });
     }
   } catch (err) {
