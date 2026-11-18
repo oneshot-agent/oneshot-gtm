@@ -9,7 +9,8 @@ import { SectionShell } from "./SectionShell.tsx";
 import { useReportDirty, type DirtyReporter } from "./types.ts";
 
 type Change =
-  | { action: "add" | "remove"; email: string }
+  | { action: "add"; email: string }
+  | { action: "remove"; email: string }
   | { action: "role"; email: string; role: CurrentMember["role"] };
 
 export function MembersSection({ onDirtyChange }: { onDirtyChange: DirtyReporter }) {

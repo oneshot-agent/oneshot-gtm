@@ -1363,6 +1363,7 @@ export class SharedDb {
   /**
    * Add a member, or bring a removed one back. An active member keeps their row:
    * the role is set to what was asked, and the name only when one is given.
+   * Refuses to demote the last active owner.
    */
   addMember(input: { email: string; name?: string | null; role: MemberRole }): {
     member: Member;
@@ -1411,7 +1412,7 @@ export class SharedDb {
     }
   }
 
-  /** Mark an active member removed. False when no active member has the email. */
+  /** Mark an active member removed; refuse the last owner. False for an unknown or removed email. */
   removeMember(email: string): boolean {
     const normalized = normalizeMemberEmail(email);
     if (!normalized) return false;

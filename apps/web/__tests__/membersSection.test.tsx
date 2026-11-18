@@ -8,7 +8,10 @@ const owner = { email: "owner@example.com", name: "Olive", role: "owner" as cons
 const member = { email: "mia@example.com", name: "Mia", role: "member" as const };
 const addedAt = "2026-11-18T12:00:00.000Z";
 const view: MembersView = {
-  members: [owner, member].map((m) => ({ ...m, addedAt })),
+  members: [
+    { ...owner, addedAt },
+    { ...member, addedAt },
+  ],
   allowedHosts: ["gtm.example.ts.net"],
   currentMember: owner,
 };
