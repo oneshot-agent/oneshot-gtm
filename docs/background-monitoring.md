@@ -10,7 +10,7 @@ The [LinkedIn invite check](./linkedin.md) runs only in the dashboard server, no
 
 ## The dashboard as a service
 
-`ui --install-service` generates a service file that starts the dashboard at login and restarts it after a crash: a launchd agent on macOS, a systemd user unit on Linux. It prints the file; `--write` puts it in place. The workspace's name, home and port are read from the workspace the command runs in, so run it once per workspace.
+The dashboard workspace switcher's **New workspace** action installs and loads the new workspace's service automatically when a user service manager is available. Otherwise it warns that the server will not survive a reboot. For an existing or CLI-created workspace, `ui --install-service` generates a service file that starts the dashboard at login and restarts it after a crash: a launchd agent on macOS, a systemd user unit on Linux. It prints the file; `--write` puts it in place. The workspace's name, home and port are read from the workspace the command runs in, so run it once per workspace.
 
 ```bash
 oneshot-gtm ui --install-service                     # inspect the file

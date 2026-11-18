@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   activationHint,
   dashboardService,
@@ -14,6 +17,13 @@ import {
   serviceWritePath,
   SYSTEMD_UNIT,
 } from "../src/commands/install-service.ts";
+
+const registry = mkdtempSync(join(tmpdir(), "service-registry-"));
+vi.stubEnv("ONESHOT_GTM_WORKSPACES", registry);
+afterAll(() => {
+  vi.unstubAllEnvs();
+  rmSync(registry, { recursive: true, force: true });
+});
 
 // Fixed fake paths: snapshots must not depend on the machine running the
 // suite. These tests only render strings. They NEVER touch launchctl,

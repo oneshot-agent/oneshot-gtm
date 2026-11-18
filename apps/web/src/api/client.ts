@@ -71,6 +71,7 @@ import type {
   QueueRowDetail,
   WorkspaceInfo,
   CurrentMember,
+  WorkspaceCreateResult,
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
@@ -384,6 +385,7 @@ export const api = {
   // member Tailscale named.
   me: () => getJson<CurrentMember>("/me"),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
+  workspaceCreate: (name: string) => postJson<WorkspaceCreateResult>("/workspaces", { name }),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
       name,
