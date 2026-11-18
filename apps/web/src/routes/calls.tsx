@@ -13,7 +13,7 @@ import {
   canDial,
   findRow,
   localTimeNow,
-  newSaveKey,
+  saveKeyOf,
   nextRow,
   outcomeTitle,
   rowId,
@@ -81,10 +81,15 @@ export function CallsView({
   selectedPlay?: string;
   onOpen: (row: RowKey | null) => void;
 }) {
+  // Each row's next save id, kept here so a panel that remounts while its
+  // save runs retries with the same one; a logged save or a new call takes
+  // a new one.
+  const saveKeys = useRef(new Map<string, string>());
   // When Call was pressed, the number it dialled and the step the row was
   // on, per row (`rowId`), until that row's call is logged.
   const [started, setStarted] = useState<Record<string, CallTimer>>({});
-  const start = (row: CallListRow, phone: string | null) =>
+  const start = (row: CallListRow, phone: string | null) => {
+    saveKeys.current.delete(rowId(row));
     setStarted((s) => ({
       ...s,
       [rowId(row)]: {
@@ -95,14 +100,6 @@ export function CallsView({
         enrolledAt: row.enrolledAt,
       },
     }));
-  // Each row's next save id, kept here so a panel that remounts while its
-  // save runs retries with the same one; a logged save takes a new one.
-  const saveKeys = useRef(new Map<string, string>());
-  const saveKeyFor = (row: RowKey) => {
-    const id = rowId(row);
-    const key = saveKeys.current.get(id) ?? newSaveKey();
-    saveKeys.current.set(id, key);
-    return key;
   };
   // The call window is read on this clock, so a row turns callable (or not)
   // as a boundary passes, without waiting on the next poll.
@@ -225,7 +222,7 @@ export function CallsView({
               now={now}
               onRefresh={refresh}
               started={started[rowId(row)] ?? null}
-              saveKey={saveKeyFor(row)}
+              saveKey={saveKeyOf(saveKeys.current, row)}
               onStart={(phone) => start(row, phone)}
               onLogged={(logged, at, key) => {
                 setStarted((s) => timersAfterLog(s, { row: logged, at }));

@@ -23,6 +23,8 @@ import {
   newSaveKey,
   nextRow,
   OUTCOME_KEYS,
+  rowId,
+  saveKeyOf,
   stepOfLog,
   timerAfterLog,
   timersAfterLog,
@@ -509,6 +511,17 @@ describe("calls page: review fixes", () => {
     );
   });
 
+  it("a retry reuses its row's save id; a new call or a logged save takes a new one", () => {
+    const keys = new Map<string, string>();
+    const due = { prospectId: 1, playName: "post-funding" };
+    const first = saveKeyOf(keys, due);
+    expect(saveKeyOf(keys, due)).toBe(first);
+    expect(saveKeyOf(keys, { prospectId: 1, playName: "hiring" })).not.toBe(first);
+    // Call pressed again: the page drops the row's id, so the next save gets its own.
+    keys.delete(rowId(due));
+    expect(saveKeyOf(keys, due)).not.toBe(first);
+  });
+
   it("a log names the step the row was on when Call was pressed", () => {
     const now = row({ currentStep: 2, enrolledAt: "2026-11-12T10:00:00.000Z" });
     const timer = {
@@ -522,7 +535,7 @@ describe("calls page: review fixes", () => {
       currentStep: 1,
       enrolledAt: "2026-11-10T10:00:00.000Z",
     });
-    // Logged by hand, with no call started here: the row as it is now.
+    // Logged by hand, with no call started here: the row as the panel opened on it.
     expect(stepOfLog(null, now)).toEqual({
       currentStep: 2,
       enrolledAt: "2026-11-12T10:00:00.000Z",

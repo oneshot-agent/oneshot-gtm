@@ -283,12 +283,15 @@ export async function buildCallBrief(input: {
 
 /** The call step's builder: the brief, the number and their local time now. */
 export async function callStepPayload(ctx: CadenceContext, playName: string): Promise<StepPayload> {
+  const offer =
+    ctx.sequenceOffer !== undefined ? ctx.sequenceOffer : sequenceOffer(ctx.prospect, playName);
   const brief = await buildCallBrief({
     prospect: ctx.prospect,
     playName,
     cfg: ctx.cfg,
-    ...(ctx.sequenceOffer !== undefined ? { sequenceOffer: ctx.sequenceOffer } : {}),
+    sequenceOffer: offer,
   });
+  const offerKey = offerKeyOf(offer);
   const phone = phoneForCall(ctx.prospect.id, ctx.cfg).phone;
   const local = phone ? phoneLocalTime(phone, callsOf(ctx.cfg).window) : null;
   return {
@@ -296,14 +299,16 @@ export async function callStepPayload(ctx: CadenceContext, playName: string): Pr
     toPhone: phone ?? "",
     brief,
     ...(local?.localTime ? { localTime: local.localTime } : {}),
+    ...(offerKey ? { offerKey } : {}),
   };
 }
 
 /**
  * The brief the dial panel shows. For a cadence whose next step is a call,
  * its stored preview (written through the preview path when there is none,
- * or when `regenerate` asks for a new one). For anyone else, the brief cached
- * for them, written on demand once and again only on `regenerate`.
+ * when `regenerate` asks for a new one, or when the offer it restates was
+ * replaced since). For anyone else, the brief cached for them, written on
+ * demand once and again on `regenerate` or a replaced offer.
  */
 export async function callBriefFor(input: {
   prospectId: number;
@@ -316,7 +321,10 @@ export async function callBriefFor(input: {
   if (step) {
     const draft = ledger.getCadenceDraft({ prospectId: input.prospectId, playName: step });
     const stored = draft?.payload as StepPayload | undefined;
-    if (!input.regenerate && stored?.kind === "call") return stored.brief;
+    const prospect = ledger.getProspectById(input.prospectId);
+    const current = prospect ? offerKeyOf(sequenceOffer(prospect, step)) : null;
+    if (!input.regenerate && stored?.kind === "call" && (stored.offerKey ?? null) === current)
+      return stored.brief;
     const preview = await previewCadenceStep({ prospectId: input.prospectId, playName: step });
     if ("waiting" in preview || "skipped" in preview) throw new Error(preview.message);
     if (preview.payload.kind !== "call") throw new Error("the next step is no longer a call");

@@ -260,6 +260,16 @@ export function logCallRequest(
 }
 
 /**
+ * A row's save id: the one its last unfinished save used (a retry sends it
+ * again), else a new one. `keys` is the page's, by `rowId`.
+ */
+export function saveKeyOf(keys: Map<string, string>, row: RowKey): string {
+  const key = keys.get(rowId(row)) ?? newSaveKey();
+  keys.set(rowId(row), key);
+  return key;
+}
+
+/**
  * A new id for one save. `getRandomValues`, not `randomUUID`: the dashboard
  * may be served over plain http on a tailnet, where only the former exists.
  */
@@ -280,12 +290,15 @@ export interface CallTimer {
   enrolledAt?: string | null;
 }
 
-/** The step a log names: the one the row was on when Call was pressed, else the row's now. */
+/**
+ * The step a log names: the one the row was on when Call was pressed, else
+ * the one it was on when the panel opened (a refresh may have moved it since).
+ */
 export function stepOfLog(
   timer: Pick<CallTimer, "currentStep" | "enrolledAt"> | null | undefined,
-  row: Pick<CallListRow, "currentStep" | "enrolledAt">,
+  opened: Pick<CallListRow, "currentStep" | "enrolledAt">,
 ): { currentStep: number | null; enrolledAt: string | null } {
-  const from = timer ?? row;
+  const from = timer ?? opened;
   return { currentStep: from.currentStep ?? null, enrolledAt: from.enrolledAt ?? null };
 }
 

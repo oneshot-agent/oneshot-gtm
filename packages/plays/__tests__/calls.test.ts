@@ -829,6 +829,30 @@ describe("review fixes", () => {
     );
   });
 
+  it("a due call's stored brief is written again once its offer was replaced", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const offer = (text: string) =>
+      ledger.setCadenceOffer({
+        prospectId: id,
+        playName: PLAY,
+        offer: { offer: text, steps: "a list in a week" },
+        origin: "derived",
+      });
+    offer("Audit your renewals");
+    responses.push(BRIEF_JSON, BRIEF_JSON);
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(1);
+    offer("Cut one vendor this quarter");
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Cut one vendor this quarter");
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+  });
+
   it("a retried not_now keeps its hold deadline; a new date moves it", () => {
     callsOn();
     const id = enroll();

@@ -264,9 +264,10 @@ export type StepPayload =
    * A call the founder places (never an AI voice; that is `voice`): its brief,
    * the number (E.164; empty when none is known yet) and the prospect's local
    * time when it was written. Never dispatched: the outcome the founder logs
-   * on the Calls page moves the cadence on (`recordCall`).
+   * on the Calls page moves the cadence on (`recordCall`). `offerKey` names
+   * the offer the brief restates, so a replaced offer makes it stale.
    */
-  | { kind: "call"; toPhone: string; brief: CallBrief; localTime?: string }
+  | { kind: "call"; toPhone: string; brief: CallBrief; localTime?: string; offerKey?: string }
   | {
       kind: "voice";
       objective: string;

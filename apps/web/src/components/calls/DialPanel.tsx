@@ -122,6 +122,12 @@ export function DialPanel({
     holdUntil: defaultHoldUntil(),
   }));
   const startedAt = started?.at ?? null;
+  // The step the row was on when it was opened: what a log without a call
+  // started here names, whatever a refresh shows since.
+  const [opened] = useState(() => ({
+    currentStep: row.currentStep,
+    enrolledAt: row.enrolledAt,
+  }));
   const elapsed = useElapsed(startedAt);
 
   const brief = useQuery({
@@ -156,7 +162,7 @@ export function DialPanel({
     durationSec: startedAt != null ? elapsed : null,
     playName: row.playName,
     phone: dialledNumber(startedAt, started?.phone ?? null, row.phone),
-    ...stepOfLog(started, row),
+    ...stepOfLog(started, opened),
     clientKey: saveKey,
   });
   const submit = () => {
