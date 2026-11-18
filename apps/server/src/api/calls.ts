@@ -125,6 +125,13 @@ export async function logCallRoute(
     (typeof currentStep !== "number" || !Number.isInteger(currentStep) || currentStep < 0)
   )
     return jsonResponse({ error: "currentStep must be a step index" }, 400, req);
+  const enrolledAt = body["enrolledAt"];
+  if (
+    enrolledAt !== undefined &&
+    enrolledAt !== null &&
+    (typeof enrolledAt !== "string" || !enrolledAt || enrolledAt.length > 64)
+  )
+    return jsonResponse({ error: "enrolledAt must be the cadence's enrolment time" }, 400, req);
   const clientKey = body["clientKey"];
   if (
     clientKey !== undefined &&
@@ -141,6 +148,7 @@ export async function logCallRoute(
     ...(typeof holdUntil === "string" ? { holdUntil } : {}),
     ...(typeof phone === "string" && phone.trim() ? { phone } : {}),
     ...(currentStep !== undefined ? { currentStep: currentStep as number | null } : {}),
+    ...(typeof enrolledAt === "string" ? { enrolledAt } : {}),
     ...(typeof clientKey === "string" ? { clientKey } : {}),
   };
   try {

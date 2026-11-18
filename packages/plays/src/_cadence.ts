@@ -661,9 +661,12 @@ export function effectiveSequence(
   const savedCall =
     savedPlan && savedCallIndex >= 0
       ? {
-          index: savedCallIndex,
           dayOffset: savedPlan[savedCallIndex]!.dayOffset,
-          after: savedCallIndex > 0 ? savedPlan[savedCallIndex - 1]!.id : null,
+          // The steps before it, nearest first.
+          before: savedPlan
+            .slice(0, savedCallIndex)
+            .map((e) => e.id)
+            .toReversed(),
         }
       : null;
   if (
@@ -736,16 +739,13 @@ export function effectiveSequence(
       callStep(playName, call.delayDays),
     );
   else if (savedCall) {
-    // Right after the step it followed in the saved plan, so a letter added
-    // or removed around it does not move it past an email; at its saved index
-    // when that step is gone.
-    const after = savedCall.after === null ? -1 : steps.findIndex((s) => s.id === savedCall.after);
-    const at =
-      savedCall.after === null
-        ? 0
-        : after >= 0
-          ? after + 1
-          : Math.min(savedCall.index, steps.length);
+    // Right after the nearest step before it in the saved plan that is still
+    // in it, so a letter added or removed around it does not move it past an
+    // email; first when none is left.
+    const after = savedCall.before
+      .map((id) => steps.findIndex((s) => s.id === id))
+      .find((i) => i >= 0);
+    const at = after === undefined ? 0 : after + 1;
     steps.splice(callIndexBeforeBreakup(steps, at), 0, callStep(playName, savedCall.dayOffset));
   }
   // Last: the email steps come first, then the LinkedIn continuation.

@@ -239,6 +239,7 @@ export function logCallRequest(
     phone?: string | null;
     /** The row's `currentStep`: null on the call list, where no step is due. */
     currentStep?: number | null;
+    enrolledAt?: string | null;
     clientKey?: string;
   },
 ): LogCallRequest | null {
@@ -251,6 +252,7 @@ export function logCallRequest(
     ...(opts.playName ? { playName: opts.playName } : {}),
     ...(opts.phone ? { phone: opts.phone } : {}),
     ...(opts.currentStep !== undefined ? { currentStep: opts.currentStep } : {}),
+    ...(opts.enrolledAt ? { enrolledAt: opts.enrolledAt } : {}),
     ...(opts.clientKey ? { clientKey: opts.clientKey } : {}),
     ...(state.outcome === "not_now" && state.holdUntil ? { holdUntil: state.holdUntil } : {}),
   };

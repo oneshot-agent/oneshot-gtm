@@ -157,6 +157,7 @@ export function DialPanel({
     playName: row.playName,
     phone: dialledNumber(startedAt, dialledPhone, row.phone),
     currentStep: row.currentStep,
+    enrolledAt: row.enrolledAt,
     clientKey: saveKey,
   });
   const submit = () => {

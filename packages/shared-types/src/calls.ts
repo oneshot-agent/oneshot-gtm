@@ -68,6 +68,8 @@ export interface CallListRow {
   playName: string | null;
   /** That cadence's `current_step` when the row was read: a log completes only this step. Null on the call list. */
   currentStep: number | null;
+  /** That cadence's enrolment (`enrolled_at`) when the row was read; null on the call list. */
+  enrolledAt: string | null;
   /** "due" = a cadence call step is due now; "list" = anyone else with a number. */
   section: "due" | "list";
   /** Why this row ranks where it does ("replied: interested", "LinkedIn connected", …). */
@@ -126,6 +128,8 @@ export interface LogCallRequest {
    * due then, so none is completed. Absent: whichever call step is next.
    */
   currentStep?: number | null;
+  /** The enrolment that step belongs to: a log after a stop and re-enrol completes nothing. */
+  enrolledAt?: string;
   /** The dashboard's id for this save, the same on a retry: the server writes one call for it. */
   clientKey?: string;
 }
