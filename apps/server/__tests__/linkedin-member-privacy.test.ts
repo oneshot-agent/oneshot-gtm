@@ -302,3 +302,149 @@ describe("background jobs", () => {
     expect((await list(as(OWNER))).threads.map((t) => t.key)).toContain(oldThread);
   });
 });
+
+describe("a force reconnect whose new connection is adopted late", () => {
+  const AFTER = "A private note after mia signed in again";
+  const again = {
+    id: "mia2",
+    member_urn: "mia-urn",
+    display_name: "mia account",
+    status: "connected",
+    allowed_actions: ["read", "reply"],
+  };
+  const againThread = "linkedin:wallet:mia2:mia2-chat";
+  /** What the login answers when sync asks; a test moves it from pending to completed. */
+  let login: unknown;
+  beforeEach(async () => {
+    seedMembers();
+    const mia = store.account("wallet:mia")!;
+    store.saveAccount({ ...mia, account: { ...mia.account, member_urn: "mia-urn" } as never });
+    const known = ["olive", "old"].map((id) => store.account(`wallet:${id}`)!.account);
+    login = { status: "completed", account: again };
+    sdk.mockImplementation(async (_workspace, op) => {
+      if (op.kind === "revoke") return { status: "revoked", upstream_deleted: true };
+      if (op.kind === "connect")
+        return { intent_id: "intent-again", url: "https://example.com/in", expires_at: "later" };
+      if (op.kind === "connection") return login;
+      // The provider lists the new connection as soon as the login is done.
+      if (op.kind === "accounts") return { wallet: "wallet", accounts: [...known, again] };
+      if (op.kind === "status") return { sync_state: "complete", coverage: { complete: true } };
+      const mine = op.options?.accountId === "mia2";
+      if (op.kind === "conversations")
+        return {
+          conversations:
+            mine && !op.options.archived
+              ? [
+                  {
+                    id: "mia2-chat",
+                    attendees: [{ is_self: false, provider_id: "mia2-peer", name: "mia2 contact" }],
+                    attendees_synced: true,
+                    type: 0,
+                  },
+                ]
+              : [],
+          has_more: false,
+        };
+      if (op.kind === "messages")
+        return {
+          messages: mine
+            ? [
+                {
+                  id: "mia2-message",
+                  conversation_id: "mia2-chat",
+                  direction: "inbound",
+                  sender_provider_id: "mia2-peer",
+                  sender_name: "mia2 contact",
+                  text: AFTER,
+                  sent_at: "2026-11-02T10:00:00Z",
+                  attachments: [],
+                },
+              ]
+            : [],
+          has_more: false,
+        };
+      throw new Error(`Unexpected operation ${op.kind}`);
+    });
+    const started = await repliesLinkedInRoute(
+      post(as(MIA), { action: "force-reconnect", accountKey: "wallet:mia" }),
+    );
+    expect(started.status).toBe(200);
+  });
+  /** Every way the owner could read the conversation: the list, on either machine, and each route. */
+  async function refusedToOwner(key: string): Promise<void> {
+    for (const headers of [as(OWNER), local]) {
+      expect(JSON.stringify(await list(headers))).not.toContain(AFTER);
+      for (const [route, body] of [
+        [replyStateRoute, { action: "archive", observedReplyIds: ["mia2-message"] }],
+        [replyGenerateRoute, {}],
+        [replySendRoute, { check: true }],
+        [replyAssignRoute, { workspace: "default", prospectId: 1 }],
+      ] as const) {
+        const refused = await route(post(headers, { key, ...body }));
+        expect(refused.status).toBe(403);
+        expect(JSON.stringify(await refused.json())).not.toContain(AFTER);
+      }
+    }
+  }
+
+  it("keeps the new connection's messages with the member while another server holds the capture, and after the merge", async () => {
+    // Another server is capturing the account, so this one cannot merge yet.
+    const lease = review.claim("capture:wallet:mia")!;
+    await refreshLinkedInInbox(true);
+    expect(store.account("wallet:mia")?.account.id).toBe("mia");
+    expect(store.progress("replacement:wallet:mia")).toMatchObject({ stage: "awaiting_login" });
+    // Discovery and capture went on: the new connection was recorded and its messages collected.
+    expect(store.account("wallet:mia2")?.ownerMember).toBe(MIA);
+    expect(store.allMessages("wallet:mia2").map((m) => m.text)).toEqual([AFTER]);
+
+    const mia = await list(as(MIA));
+    expect(mia.threads.map((t) => t.key).toSorted()).toEqual([againThread, miaThread].toSorted());
+    expect(mia.accounts.find((a) => a.key === "wallet:mia2")).toMatchObject({ mine: true });
+    // Mia opened Replies, so the conversation is in the shared review store.
+    expect(review.get(againThread)?.messages[0]?.body).toBe(AFTER);
+    await refusedToOwner(againThread);
+    expect((await list(as(OWNER))).accounts.find((a) => a.key === "wallet:mia2")).toMatchObject({
+      mine: false,
+      ownerMember: MIA,
+    });
+
+    // The other server is done; the next sync merges the connection into Mia's account.
+    review.release("capture:wallet:mia", lease);
+    await refreshLinkedInInbox(true);
+    expect(store.account("wallet:mia")).toMatchObject({
+      ownerMember: MIA,
+      account: { id: "mia2" },
+    });
+    expect(store.account("wallet:mia2")).toBeNull();
+    expect(store.progress("replacement:wallet:mia")).toMatchObject({ stage: "complete" });
+    // The review copy saved under the merged-away account outlives it, and is nobody's to read.
+    expect(review.get(againThread)?.messages[0]?.body).toBe(AFTER);
+    await refusedToOwner(againThread);
+    // Mia reads the conversation on her account, where the merge put it.
+    const merged = await list(as(MIA));
+    expect(merged.threads.map((t) => t.key).toSorted()).toEqual(
+      ["linkedin:wallet:mia:mia2-chat", miaThread].toSorted(),
+    );
+    expect(JSON.stringify(merged)).toContain(AFTER);
+    await refusedToOwner("linkedin:wallet:mia:mia2-chat");
+  });
+
+  it("leaves a connection found before its login reads as finished to the adoption, never to the owner", async () => {
+    // Sync asked about the login just before Mia finished it; the wallet already lists the result.
+    login = { status: "pending" };
+    await refreshLinkedInInbox(true);
+    expect(store.account("wallet:mia2")).toBeNull();
+    expect(sdk.mock.calls.some(([, op]) => op.options?.accountId === "mia2")).toBe(false);
+    expect(JSON.stringify(await list(as(OWNER)))).not.toContain("mia2");
+
+    login = { status: "completed", account: again };
+    await refreshLinkedInInbox(true);
+    expect(store.account("wallet:mia")).toMatchObject({
+      ownerMember: MIA,
+      account: { id: "mia2" },
+    });
+    expect(store.allMessages("wallet:mia").map((m) => m.text)).toContain(AFTER);
+    expect(JSON.stringify(await list(as(OWNER)))).not.toContain(AFTER);
+    expect(JSON.stringify(await list(as(MIA)))).toContain(AFTER);
+  });
+});
