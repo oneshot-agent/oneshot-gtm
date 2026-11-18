@@ -82,6 +82,8 @@ describe("workspace switcher focus", () => {
 
     expect(nameField()).not.toBeNull();
     expect(document.activeElement).toBe(nameField());
+    // The form is outside the menu, wherever the menu's markup ends.
+    expect(nameField()!.closest("form")!.closest('[role="menu"]')).toBeNull();
   });
 
   it("focuses the name field again when the popover reopens on a kept draft", async () => {
