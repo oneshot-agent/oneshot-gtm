@@ -9,7 +9,10 @@ import type {
   CallBrief,
   CallListResponse,
   CallRecordView,
+  CallsMeResponse,
   LogCallRequest,
+  MemberPhoneView,
+  StartCallRequest,
 } from "@oneshot-gtm/shared-types";
 import type { CodeAnswer, SourceRepoTestResult } from "@oneshot-gtm/shared-types";
 import type { LinkedInMeasureView } from "@oneshot-gtm/shared-types";
@@ -165,6 +168,15 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** A DELETE; refused in demo mode like any other write. The body is read when there is one. */
+export async function deleteJson<T>(path: string): Promise<T | null> {
+  if (IS_DEMO) demoWrite(path);
+  const res = await fetch(BASE + path, { method: "DELETE" });
+  if (!res.ok) throw new Error(await errorMessage(res, path));
+  const text = await res.text();
+  return text ? (JSON.parse(text) as T) : null;
+}
+
 export interface LinkedInSessionOutcome {
   ok: boolean;
   loggedIn: boolean;
@@ -192,12 +204,14 @@ export interface CallsSettingsView {
   /** Where the call step goes in new email cadences; null = Calls page only. */
   cadenceStep: { position: number; delayDays: number; holdDays?: number } | null;
   window: { start: string; end: string; weekdays?: boolean };
-  /** Phase 2: ringing the founder's phone. Null = tel: links only. */
+  /**
+   * Phase 2: Call rings the member's own phone (verified per member, see
+   * `api.callsMe`). Null = tel: links only.
+   */
   bridge: {
     provider: "twilio";
-    founderPhone: string;
-    callerId: string;
     record?: boolean;
+    transcriptionServiceSid?: string;
   } | null;
 }
 
@@ -557,6 +571,14 @@ export const api = {
     postJson<{ call: CallRecordView }>(`/prospects/${prospectId}/call`, req),
   prospectCalls: (prospectId: number) =>
     getJson<{ calls: CallRecordView[] }>(`/prospects/${prospectId}/calls`),
+  // Bridged calls: this member's own phone rings first, then the prospect's.
+  callsMe: () => getJson<CallsMeResponse>("/calls/me"),
+  verifyPhone: (phone: string) => postJson<MemberPhoneView>("/calls/me/phone", { phone }),
+  checkPhone: () => postJson<MemberPhoneView>("/calls/me/phone/check", {}),
+  removePhone: () => deleteJson<unknown>("/calls/me/phone"),
+  startCall: (req: StartCallRequest) => postJson<CallRecordView>("/calls/start", req),
+  call: (id: number) => getJson<CallRecordView>(`/calls/${id}`),
+  hangUpCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/hangup`, {}),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),
   confirmMeetingMatch: (req: ConfirmMeetingMatchRequest) =>

@@ -622,6 +622,20 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Bridged calls (call-bridge.ts) and who made each call. `member` is the
+    // email of the member who placed or logged it, NULL for the install's
+    // unlisted local owner (and for calls logged before this). `status` is a
+    // bridged call's last-read state (shared-types CallRecordView.status);
+    // `transcript_sid` the provider's transcript, once one was asked for.
+    version: 28,
+    name: "calls-bridge",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "member", "TEXT");
+      addColumnIfMissing(db, "calls", "status", "TEXT");
+      addColumnIfMissing(db, "calls", "transcript_sid", "TEXT");
+    },
+  },
 ];
 
 /**

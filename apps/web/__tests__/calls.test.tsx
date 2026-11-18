@@ -218,10 +218,10 @@ describe("Calls page", () => {
     expect(page(data(), 1)).not.toContain("Save &amp; next");
   });
 
-  it("puts a disabled Ring my phone in the panel when the bridge is set", () => {
+  it("puts a Call button that rings your phone in the panel when the bridge is set", () => {
     const html = page(data({ dialMode: "bridge" }), 1);
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>.*Ring my phone/);
-    expect(html).toContain("Ringing your phone arrives with the call bridge");
+    expect(html).toMatch(/<button[^>]*title="Rings your phone, then theirs"[^>]*>.*Call<\/button>/);
+    expect(html).not.toContain("Ring my phone");
     expect(html).not.toContain("tel:");
   });
 });
@@ -452,6 +452,7 @@ describe("calls page: review fixes", () => {
           id: 1,
           prospectId: 2,
           playName: null,
+          member: null,
           startedAt: "2026-11-17T10:00:00Z",
           durationSec: 30,
           outcome: "voicemail",

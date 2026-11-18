@@ -4,11 +4,7 @@ import { configCalls } from "../src/commands/config.ts";
 
 describe("config calls", () => {
   it("switches calls, sets and removes the step, sets the window, and keeps a bridge", async () => {
-    const bridge = {
-      provider: "twilio" as const,
-      founderPhone: "+15550001111",
-      callerId: "+15550002222",
-    };
+    const bridge = { provider: "twilio" as const, transcriptionServiceSid: "GA1" };
     saveConfig({ ...loadConfig(), calls: { enabled: false, bridge } });
     await configCalls("on");
     expect(loadConfig().calls).toEqual({ enabled: true, bridge });
@@ -34,6 +30,14 @@ describe("config calls", () => {
     await configCalls();
     await configCalls("off");
     expect(loadConfig().calls).toMatchObject({ enabled: false, bridge });
+
+    await configCalls("record", ["off"]);
+    expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: false });
+    await configCalls("record", ["on"]);
+    expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: true });
+    await expect(configCalls("record", ["maybe"])).rejects.toThrow(/invalid record/);
+    saveConfig({ ...loadConfig(), calls: { enabled: true, bridge: null } });
+    await expect(configCalls("record", ["on"])).rejects.toThrow(/off for this workspace/);
   });
 
   it("takes decimal digits only for the step's numbers, zero where it is allowed", async () => {

@@ -32,7 +32,8 @@ describe("callsOf", () => {
       enabled: false,
       cadenceStep: null,
       window: { start: "09:00", end: "17:00", weekdays: true },
-      bridge: null,
+      // Absent = the defaults: the keys decide whether it can dial.
+      bridge: { provider: "twilio", record: true, transcriptionServiceSid: null },
     });
   });
 
@@ -43,14 +44,14 @@ describe("callsOf", () => {
           enabled: true,
           cadenceStep: { position: 3, delayDays: 2 },
           window: { start: "10:00", end: "16:30", weekdays: false },
-          bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
+          bridge: { provider: "twilio", record: false, transcriptionServiceSid: " GA1 " },
         },
       }),
     ).toEqual({
       enabled: true,
       cadenceStep: { position: 3, delayDays: 2, holdDays: DEFAULT_CALL_HOLD_DAYS },
       window: { start: "10:00", end: "16:30", weekdays: false },
-      bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
+      bridge: { provider: "twilio", record: false, transcriptionServiceSid: "GA1" },
     });
   });
 
@@ -60,13 +61,14 @@ describe("callsOf", () => {
         enabled: "yes",
         cadenceStep: { position: 1, delayDays: 2 },
         window: { start: "17:00", end: "09:00" },
-        bridge: { provider: "twilio", founderPhone: "" },
+        bridge: { provider: "other" },
       },
     });
     expect(out.enabled).toBe(false);
     expect(out.cadenceStep).toBeNull();
     expect(out.window).toEqual({ start: "09:00", end: "17:00", weekdays: true });
     expect(out.bridge).toBeNull();
+    expect(callsOf({ calls: { enabled: true, bridge: null } }).bridge).toBeNull();
   });
 });
 

@@ -372,11 +372,19 @@ describe("listCalls", () => {
     });
   });
 
-  it("dialMode is bridge only once a bridge is configured", () => {
-    callsOn(3, {
-      bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
-    });
-    expect(listCalls().dialMode).toBe("bridge");
+  it("dialMode is bridge only once the provider keys are set, and never with bridge: null", () => {
+    callsOn(3);
+    expect(listCalls().dialMode).toBe("tel");
+    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC1");
+    vi.stubEnv("TWILIO_API_KEY_SID", "SK1");
+    vi.stubEnv("TWILIO_API_KEY_SECRET", "secret");
+    try {
+      expect(listCalls().dialMode).toBe("bridge");
+      callsOn(3, { bridge: null });
+      expect(listCalls().dialMode).toBe("tel");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

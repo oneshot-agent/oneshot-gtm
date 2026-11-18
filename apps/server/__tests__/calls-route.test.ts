@@ -185,8 +185,7 @@ describe("cadence routes on a call step", () => {
 describe("mergeCalls", () => {
   const bridge = {
     provider: "twilio" as const,
-    founderPhone: "+15550001111",
-    callerId: "+15550002222",
+    transcriptionServiceSid: "GA1",
   };
 
   it("keeps the stored object, including a bridge, when untouched or partly changed", () => {
@@ -211,6 +210,18 @@ describe("mergeCalls", () => {
       enabled: true,
       cadenceStep: null,
     });
+    // record is the one bridge key the form sets; the rest is kept.
+    expect(mergeCalls({ record: false }, current)).toEqual({
+      enabled: false,
+      bridge: { ...bridge, record: false },
+    });
+    expect(mergeCalls({ record: true }, { enabled: true })).toEqual({
+      enabled: true,
+      bridge: { provider: "twilio", record: true },
+    });
+    expect(() => mergeCalls({ record: true }, { enabled: true, bridge: null })).toThrow(
+      SetupValidationError,
+    );
   });
 
   it.each([
@@ -220,6 +231,7 @@ describe("mergeCalls", () => {
     [{ cadenceStep: { position: 3, delayDays: 2, holdDays: 0 } }],
     [{ window: { start: "17:00", end: "09:00" } }],
     [{ window: { start: "9am", end: "5pm" } }],
+    [{ record: "no" }],
   ])("refuses %j", (incoming) => {
     expect(() => mergeCalls(incoming as never, undefined)).toThrow(SetupValidationError);
   });

@@ -1,17 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import type {
   CallBrief,
   CallListResponse,
   CallListRow,
   CallRecordView,
+  CurrentMember,
   LogCallRequest,
 } from "@oneshot-gtm/shared-types";
-import { Loader2, Phone, RotateCw } from "lucide-react";
+import { Loader2, Phone, PhoneOff, RotateCw } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { IS_DEMO } from "../../api/demo.ts";
+import {
+  bridgePollMs,
+  bridgeStatusLine,
+  callerLabel,
+  CONSENT_LINE,
+  firstName,
+  isLive,
+  resumableCall,
+  speakerLabel,
+  suggestedPick,
+  transcriptTurns,
+} from "../../lib/bridgeCall.ts";
 import { cn, timeAgo } from "../../lib/cn.ts";
 import {
+  canDial,
   defaultHoldUntil,
   dialKeyAction,
   dialReducer,
@@ -29,6 +45,7 @@ import { readOnly } from "../../lib/readOnly.ts";
 import { SheetHeading } from "../ledger/SheetHeading.tsx";
 import { Button, buttonStyles } from "../primitives/Button.tsx";
 import { Input, Textarea } from "../primitives/Field.tsx";
+import { callsMeKey } from "../setup/YourPhone.tsx";
 import { NoNumber } from "./NoNumber.tsx";
 
 export const briefKey = (row: Pick<CallListRow, "prospectId" | "playName">) => [
@@ -36,6 +53,7 @@ export const briefKey = (row: Pick<CallListRow, "prospectId" | "playName">) => [
   row.prospectId,
   row.playName,
 ];
+export const callKey = (id: number | null) => ["call", id];
 
 /**
  * Log one call and move on: posts the outcome, then opens the next row in
@@ -73,6 +91,10 @@ export function dialledNumber(
  * The open row: the brief to read, Call, the outcome keys, a note, and
  * Save & next. One panel per prospect (keyed by the page), so nothing typed
  * for one person carries over to the next.
+ *
+ * With the bridge, Call rings the member's own phone and then the
+ * prospect's; the panel follows the call live, then fills in the outcome and
+ * note the transcript suggests. Nothing is logged until Save.
  */
 export function DialPanel({
   row,
@@ -135,6 +157,67 @@ export function DialPanel({
     queryKey: ["prospect-calls", row.prospectId],
     queryFn: () => api.prospectCalls(row.prospectId),
   });
+  // Same key as the header's, so the history can say "you".
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, enabled: !IS_DEMO });
+  const callsMe = useQuery({
+    queryKey: callsMeKey,
+    queryFn: api.callsMe,
+    retry: false,
+    staleTime: 60_000,
+    enabled: !IS_DEMO,
+  });
+
+  // The bridged call on this panel: the one Call started here, else an
+  // unlogged one from the history (a reload, or someone opened mid-call).
+  const bridged = dialMode === "bridge";
+  const [startedId, setStartedId] = useState<number | null>(null);
+  const [ringPhone, setRingPhone] = useState<string | null>(null);
+  const resumed = bridged && startedId == null ? resumableCall(history.data?.calls) : null;
+  const callId = startedId ?? resumed?.id ?? null;
+  const live = useQuery({
+    queryKey: callKey(callId),
+    queryFn: () => api.call(callId!),
+    enabled: callId != null,
+    refetchInterval: (q) => bridgePollMs(q.state.data),
+  });
+  const call = live.data ?? resumed ?? undefined;
+  const callLive = isLive(call);
+  const connectedSec = useElapsed(useConnectedAt(call));
+
+  const ring = useMutation({
+    mutationFn: () =>
+      api.startCall({
+        prospectId: row.prospectId,
+        ...(row.playName ? { playName: row.playName } : {}),
+      }),
+    onSuccess: (c) => {
+      qc.setQueryData(callKey(c.id), c);
+      setStartedId(c.id);
+      setRingPhone(row.phone);
+    },
+  });
+  const hangUp = useMutation({
+    mutationFn: (id: number) => api.hangUpCall(id),
+    onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
+    onError: (err) => toast.error(`couldn't hang up · ${err.message}`),
+  });
+  // Once it ends, the history shows it; the suggestion fills an untouched panel once.
+  useEffect(() => {
+    if (call?.status === "ended" || call?.status === "failed")
+      void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
+  }, [call?.status, qc, row.prospectId]);
+  const suggestedFor = useRef<number | null>(null);
+  const suggestion = suggestedPick(call?.suggestion ?? null);
+  const suggestionCallId = call?.suggestion ? call.id : null;
+  useEffect(() => {
+    if (suggestionCallId == null || suggestedFor.current === suggestionCallId) return;
+    const pick = suggestedPick(call?.suggestion ?? null);
+    if (!pick) return;
+    suggestedFor.current = suggestionCallId;
+    dispatch({ kind: "suggest", ...pick });
+    // Applied once per call, when its suggestion first arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestionCallId]);
 
   const save = useMutation({
     mutationFn: ({ req }: { req: LogCallRequest; timer: number | null }) =>
@@ -148,13 +231,26 @@ export function DialPanel({
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
   });
-  const request = logCallRequest(state, {
-    durationSec: startedAt != null ? elapsed : null,
-    playName: row.playName,
-    phone: dialledNumber(startedAt, dialledPhone, row.phone),
-  });
+  const request = logCallRequest(
+    state,
+    bridged && call
+      ? {
+          durationSec: call.durationSec,
+          playName: row.playName,
+          phone: ringPhone,
+          callId: call.id,
+        }
+      : {
+          durationSec: startedAt != null ? elapsed : null,
+          playName: row.playName,
+          phone: dialledNumber(startedAt, dialledPhone, row.phone),
+        },
+  );
+  // A call still ringing or connected is logged once it ends (a read that
+  // keeps failing doesn't hold Save).
+  const holdSave = callLive && !live.error;
   const submit = () => {
-    if (request && !save.isPending) save.mutate({ req: request, timer: startedAt });
+    if (request && !holdSave && !save.isPending) save.mutate({ req: request, timer: startedAt });
   };
 
   // Digits pick an outcome, Enter saves. The latest submit, without re-binding.
@@ -174,6 +270,13 @@ export function DialPanel({
 
   const localTime = localTimeNow(row.local, now);
   const flags = brief.data?.flags ?? [];
+  const noteSuggested =
+    suggestion != null && suggestion.note !== "" && state.note === suggestion.note;
+  const needsPhone =
+    !bridged &&
+    callsMe.data?.bridgeReady === true &&
+    callsMe.data.phone.status !== "verified" &&
+    row.phone != null;
 
   return (
     <div className="flex flex-col gap-5 rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep/50 p-5">
@@ -194,17 +297,51 @@ export function DialPanel({
               {formatDuration(elapsed)}
             </span>
           )}
-          <CallControl
-            row={row}
-            dialMode={dialMode}
-            window={callWindow}
-            now={now}
-            onStart={onStart}
-            onRefresh={onRefresh}
-            className="h-8 px-3 text-[13px]"
-          />
+          {!callLive && (
+            <CallControl
+              row={row}
+              dialMode={dialMode}
+              window={callWindow}
+              now={now}
+              onStart={onStart}
+              onRefresh={onRefresh}
+              onRing={() => ring.mutate()}
+              ringing={ring.isPending}
+              className="h-8 px-3 text-[13px]"
+            />
+          )}
         </div>
       </div>
+      {needsPhone && (
+        <div className="-mt-3 text-[12px] text-ink-faint">
+          To have Call ring your own phone and record a transcript, verify it in{" "}
+          <Link to="/setup" hash="calls" className="text-ink-cream underline underline-offset-2">
+            Setup
+          </Link>
+          .
+        </div>
+      )}
+      {bridged && ring.error && (
+        <div className="-mt-3 text-[12px] text-[color:var(--ink-blocked-2)]" role="alert">
+          {ring.error.message}
+        </div>
+      )}
+
+      {bridged && call && (
+        <section>
+          <SheetHeading label="call" />
+          <BridgeCallView
+            call={call}
+            first={firstName(mask("name", row.name))}
+            record={callsMe.data?.record ?? call.transcriptStatus !== "none"}
+            connectedSec={connectedSec}
+            hangingUp={hangUp.isPending}
+            onHangUp={() => hangUp.mutate(call.id)}
+            pollError={live.error}
+            masked={masked}
+          />
+        </section>
+      )}
 
       <section>
         <SheetHeading
@@ -252,6 +389,11 @@ export function DialPanel({
             >
               <kbd className="font-mono text-[10px] opacity-60">{o.key}</kbd>
               {o.title}
+              {suggestion?.outcome === o.outcome && (
+                <span className="font-mono text-[9.5px] uppercase tracking-[0.1em] opacity-70">
+                  suggested
+                </span>
+              )}
             </Button>
           ))}
         </div>
@@ -266,20 +408,32 @@ export function DialPanel({
             />
           </label>
         )}
-        <Textarea
-          className="mt-3"
-          placeholder="Note"
-          aria-label="Note"
-          value={state.note}
-          onChange={(e) => dispatch({ kind: "note", note: e.target.value })}
-        />
+        {noteSuggested && masked ? (
+          // The suggested note restates the call: privacy mode hides it, as it hides the transcript.
+          <div className="mt-3 text-[12px] text-ink-faint">
+            Suggested note hidden while privacy mode is on.
+          </div>
+        ) : (
+          <Textarea
+            className="mt-3"
+            placeholder="Note"
+            aria-label="Note"
+            value={state.note}
+            onChange={(e) => dispatch({ kind: "note", note: e.target.value })}
+          />
+        )}
+        {suggestion && (state.outcome === suggestion.outcome || noteSuggested) && (
+          <div className="mt-1.5 text-[11.5px] text-ink-spend-2">
+            Suggested from the call. Check it, change anything that's wrong, then save.
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[11px] text-ink-faint">
-            1–0 pick · ↵ save · ⌘↵ from the note
+            {holdSave ? "save once the call ends" : "1–0 pick · ↵ save · ⌘↵ from the note"}
           </span>
           <Button
             size="sm"
-            disabled={!request || save.isPending}
+            disabled={!request || holdSave || save.isPending}
             onClick={submit}
             title={next ? "Log this call and open the next one" : "Log this call"}
             {...readOnly}
@@ -298,6 +452,7 @@ export function DialPanel({
           error={history.error}
           onRetry={() => void history.refetch()}
           masked={masked}
+          me={me.data}
         />
       </section>
     </div>
@@ -310,9 +465,10 @@ function PrivacyHidden() {
 }
 
 /**
- * The prospect's calls, newest first. A failed read with nothing cached says
- * so with Retry; "No calls logged yet." only after a read that found none.
- * Notes are free text about the person: hidden in privacy mode.
+ * The prospect's calls, newest first, with who placed each one. A failed
+ * read with nothing cached says so with Retry; "No calls logged yet." only
+ * after a read that found none. Notes and transcripts are about the person:
+ * hidden in privacy mode.
  */
 export function CallHistory({
   calls,
@@ -320,26 +476,51 @@ export function CallHistory({
   error,
   onRetry,
   masked,
+  me,
 }: {
   calls: CallRecordView[] | undefined;
   isLoading: boolean;
   error: Error | null;
   onRetry: () => void;
   masked: boolean;
+  /** The signed-in member, so their own calls read "you"; undefined before /api/me answers. */
+  me?: CurrentMember | null;
 }) {
+  const mask = useMask();
   if (calls && calls.length > 0)
     return (
       <ul className="flex flex-col gap-1.5 text-[12px] text-ink-cream-2">
-        {calls.map((c) => (
-          <li key={c.id}>
-            <span className="font-mono text-[11px] text-ink-muted">{timeAgo(c.startedAt)}</span>{" "}
-            {outcomeTitle(c.outcome)}
-            {c.durationSec != null && (
-              <span className="text-ink-muted"> · {formatDuration(c.durationSec)}</span>
-            )}
-            {c.note && !masked && <span className="text-ink-muted"> · {c.note}</span>}
-          </li>
-        ))}
+        {calls.map((c) => {
+          const who = callerLabel(c.member ?? null, me);
+          const hasTranscript = c.transcriptStatus === "ready" && (c.transcript?.length ?? 0) > 0;
+          return (
+            <li key={c.id}>
+              <span className="font-mono text-[11px] text-ink-muted">{timeAgo(c.startedAt)}</span>{" "}
+              {c.outcome == null && c.provider === "twilio"
+                ? "Not logged yet"
+                : outcomeTitle(c.outcome)}
+              {c.durationSec != null && (
+                <span className="text-ink-muted"> · {formatDuration(c.durationSec)}</span>
+              )}
+              <span className="text-ink-muted">
+                {" "}
+                · by {who === c.member ? mask("email", who) : who}
+              </span>
+              {c.note && !masked && <span className="text-ink-muted"> · {c.note}</span>}
+              {hasTranscript &&
+                (masked ? (
+                  <span className="text-ink-faint"> · transcript hidden</span>
+                ) : (
+                  <details className="mt-1">
+                    <summary className="cursor-pointer text-[11.5px] text-ink-muted">
+                      Transcript
+                    </summary>
+                    <TranscriptView transcript={c.transcript!} className="mt-2" />
+                  </details>
+                ))}
+            </li>
+          );
+        })}
       </ul>
     );
   if (!calls && error)
@@ -359,9 +540,9 @@ export function CallHistory({
 }
 
 /**
- * Call, as the workspace can place it: a tel: link today; with the bridge
- * configured, the button that will ring the founder's phone. Outside their
- * call window it is replaced by the hint.
+ * Call, as the member can place it: a tel: link, or with their phone
+ * verified, the button that rings it and then the prospect (the panel only:
+ * it needs `onRing`). Outside their call window it is replaced by the hint.
  */
 export function CallControl({
   row,
@@ -370,6 +551,8 @@ export function CallControl({
   now,
   onStart,
   onRefresh,
+  onRing,
+  ringing = false,
   className,
 }: {
   row: Pick<CallListRow, "phone" | "local">;
@@ -378,21 +561,29 @@ export function CallControl({
   now: Date;
   onStart: (phone: string | null) => void;
   onRefresh: () => void;
+  /** Bridge mode: ring the member's phone, then this number. */
+  onRing?: () => void;
+  ringing?: boolean;
   className?: string;
 }) {
   if (!row.phone) return null;
   const hint = windowHint(row, callWindow, now);
   if (hint) return <span className="font-mono text-[11px] text-ink-faint">{hint}</span>;
   if (dialMode === "bridge") {
+    if (!onRing) return null;
     return (
-      <span className="flex flex-col items-end gap-1">
-        <Button size="sm" disabled>
-          <Phone size={11} /> Ring my phone
-        </Button>
-        <span className="text-[11px] text-ink-faint">
-          Ringing your phone arrives with the call bridge
-        </span>
-      </span>
+      <Button
+        size="sm"
+        variant="receipt"
+        disabled={ringing}
+        // Checked again on the clock as it is now, as the tel: link is.
+        onClick={() => (canDial(row, callWindow, new Date()) ? onRing() : onRefresh())}
+        title="Rings your phone, then theirs"
+        className={className}
+        {...readOnly}
+      >
+        {ringing ? <Loader2 size={11} className="animate-spin" /> : <Phone size={11} />} Call
+      </Button>
     );
   }
   return (
@@ -453,6 +644,150 @@ function BriefView({ brief, flags }: { brief: CallBrief; flags: string[] }) {
       {brief.gatekeeper && briefBlock("Gatekeeper", brief.gatekeeper)}
     </div>
   );
+}
+
+/**
+ * A bridged call as it happens: where it is, a timer once connected, Hang
+ * up, and the consent line while it records. After it ends: the transcript
+ * once it lands, and what the call suggests (its outcome and note are
+ * already picked in the panel below, for the member to confirm).
+ */
+export function BridgeCallView({
+  call,
+  first,
+  record,
+  connectedSec,
+  hangingUp,
+  onHangUp,
+  pollError,
+  masked,
+}: {
+  call: CallRecordView;
+  /** The prospect's first name, as the page shows it (masked in privacy mode). */
+  first: string;
+  record: boolean;
+  connectedSec: number;
+  hangingUp: boolean;
+  onHangUp: () => void;
+  pollError: Error | null;
+  masked: boolean;
+}) {
+  const live = isLive(call);
+  const s = call.suggestion;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[13.5px] text-ink-cream" aria-live="polite">
+          {live && call.status !== "connected" && (
+            <Loader2 size={12} className="animate-spin text-ink-muted" />
+          )}
+          {bridgeStatusLine(call.status, first)}
+          {call.status === "connected" && (
+            <span className="font-mono text-[13px] text-ink-cream" aria-label="call time">
+              {formatDuration(connectedSec)}
+            </span>
+          )}
+          {call.status === "ended" && call.durationSec != null && (
+            <span className="font-mono text-[12px] text-ink-muted">
+              {formatDuration(call.durationSec)}
+            </span>
+          )}
+        </div>
+        {live && (
+          <Button size="sm" variant="danger" disabled={hangingUp} onClick={onHangUp} {...readOnly}>
+            {hangingUp ? <Loader2 size={11} className="animate-spin" /> : <PhoneOff size={11} />}{" "}
+            Hang up
+          </Button>
+        )}
+      </div>
+      {pollError && (
+        <div className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
+          couldn't read the call · {pollError.message}
+        </div>
+      )}
+      {live && record && (
+        <div className="rounded-[var(--radius-sm)] border border-ink-rule px-3 py-2 text-[12.5px] text-ink-cream-2">
+          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+            Say this first, the call is recorded
+          </div>
+          <div className="mt-1 font-prose text-[13.5px] text-ink-cream">“{CONSENT_LINE}”</div>
+        </div>
+      )}
+      {!live && call.transcriptStatus === "pending" && (
+        <div className="flex items-center gap-2 text-[12px] text-ink-muted">
+          <Loader2 size={12} className="animate-spin" /> Transcript on its way. You can pick the
+          outcome now, or wait for the suggestion.
+        </div>
+      )}
+      {!live && call.transcriptStatus === "failed" && (
+        <div className="text-[12px] text-ink-muted">
+          The transcript didn't come through. Pick the outcome yourself.
+        </div>
+      )}
+      {!live && s && (
+        <div className="text-[12.5px] text-ink-cream-2">
+          <span className="text-ink-spend-2">Suggested:</span> {outcomeTitle(s.outcome)}
+          {!masked && s.commitments.length > 0 && (
+            <div className="mt-1">
+              <span className="text-ink-muted">You promised: </span>
+              {s.commitments.join("; ")}
+            </div>
+          )}
+        </div>
+      )}
+      {!live &&
+        call.transcriptStatus === "ready" &&
+        call.transcript &&
+        (masked ? <PrivacyHidden /> : <TranscriptView transcript={call.transcript} />)}
+    </div>
+  );
+}
+
+/** Both sides of the call, You and Them, one paragraph per turn. */
+export function TranscriptView({
+  transcript,
+  className,
+}: {
+  transcript: NonNullable<CallRecordView["transcript"]>;
+  className?: string;
+}) {
+  const turns = transcriptTurns(transcript);
+  if (turns.length === 0)
+    return <div className="text-[12px] text-ink-faint">Nothing was said on the recording.</div>;
+  return (
+    <dl
+      className={cn(
+        "flex max-h-80 flex-col gap-2 overflow-y-auto font-prose text-[13px] leading-[1.55]",
+        className,
+      )}
+    >
+      {turns.map((t) => (
+        <div key={`${t.speaker}-${t.startSec}`} className="grid grid-cols-[3.25rem_1fr] gap-2">
+          <dt
+            className={cn(
+              "font-mono text-[10.5px] uppercase tracking-[0.1em] leading-[1.9]",
+              t.speaker === "founder" ? "text-ink-faint" : "text-ink-cream-2",
+            )}
+          >
+            {speakerLabel(t.speaker)}
+          </dt>
+          <dd className={t.speaker === "founder" ? "text-ink-muted" : "text-ink-cream"}>
+            {t.text}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** When this call was first seen connected (ms); null until then and after it ends. */
+function useConnectedAt(call: Pick<CallRecordView, "id" | "status"> | undefined): number | null {
+  const [seen, setSeen] = useState<{ id: number; at: number } | null>(null);
+  const connected = call?.status === "connected";
+  useEffect(() => {
+    if (connected && call && seen?.id !== call.id) setSeen({ id: call.id, at: Date.now() });
+  }, [connected, call, seen]);
+  return connected && seen?.id === call?.id ? (seen?.at ?? null) : null;
 }
 
 /** Seconds since `startedAt`, ticking once a second; 0 before a call starts. */

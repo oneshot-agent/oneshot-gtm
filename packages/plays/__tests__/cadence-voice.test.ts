@@ -46,6 +46,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
       recentSentEmailBodies: () => [],
       getCadence: () => ({ current_step: 0, status: "active" }),
+      listCallsForProspect: () => [],
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
       // The intro's sent queue row, which the follow-up edge angle is chosen from.
       latestSentQueuePayload: () => sentPayload,

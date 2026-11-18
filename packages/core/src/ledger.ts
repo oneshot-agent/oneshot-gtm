@@ -153,6 +153,10 @@ import {
   callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
   callPhone as callsCallPhone,
+  failStaleTranscripts as callsFailStaleTranscripts,
+  getBridgedCall as callsGetBridgedCall,
+  listBridgedCallsToAdvance as callsListBridgedCallsToAdvance,
+  updateBridgedCall as callsUpdateBridgedCall,
   getCall as callsGetCall,
   getCallBrief as callsGetCallBrief,
   insertCall as callsInsertCall,
@@ -1911,6 +1915,29 @@ export class Ledger {
   /** @see ledger-calls.ts#getCall */
   getCall(id: number): CallRecordView | null {
     return callsGetCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#getBridgedCall */
+  getBridgedCall(id: number): ReturnType<typeof callsGetBridgedCall> {
+    return callsGetBridgedCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#updateBridgedCall */
+  updateBridgedCall(id: number, patch: Parameters<typeof callsUpdateBridgedCall>[2]): void {
+    callsUpdateBridgedCall(this.db, id, patch);
+  }
+
+  /** @see ledger-calls.ts#listBridgedCallsToAdvance */
+  listBridgedCallsToAdvance(
+    sinceIso: string,
+    limit: number,
+  ): ReturnType<typeof callsListBridgedCallsToAdvance> {
+    return callsListBridgedCallsToAdvance(this.db, sinceIso, limit);
+  }
+
+  /** @see ledger-calls.ts#failStaleTranscripts */
+  failStaleTranscripts(beforeIso: string): number {
+    return callsFailStaleTranscripts(this.db, beforeIso);
   }
 
   /** @see ledger-calls.ts#listCallsForProspect */

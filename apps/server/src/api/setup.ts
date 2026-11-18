@@ -923,11 +923,14 @@ const whole = (v: unknown, min: number) => typeof v === "number" && Number.isInt
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
- * `bridge` (set by `calls setup`, never by this form) survives a Setup save.
- * Each key present replaces the stored one; `cadenceStep: null` removes the
- * step (the Calls page only). A position under 2 (the first email is 1), a
- * negative or fractional delay, a hold under a day, or a window that is not
- * two HH:MM times with the start first is a 400.
+ * `bridge` survives a Setup save. Bridged calls need no setting here (the
+ * provider keys live in `.env`, each member's phone in the shared database);
+ * `record` is the one bridge key this form sets, and a bridge switched off
+ * (`bridge: null`, edited in config.json) stays off. Each key present
+ * replaces the stored one; `cadenceStep: null` removes the step (the Calls
+ * page only). A position under 2 (the first email is 1), a negative or
+ * fractional delay, a hold under a day, a window that is not two HH:MM times
+ * with the start first, or `record` that is not a boolean is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],
@@ -990,6 +993,15 @@ export function mergeCalls(
       end: w.end,
       ...(w.weekdays !== undefined ? { weekdays: w.weekdays } : {}),
     };
+  }
+  if (incoming.record !== undefined) {
+    if (typeof incoming.record !== "boolean")
+      throw new SetupValidationError("calls.record must be true or false");
+    if (next.bridge === null)
+      throw new SetupValidationError(
+        "bridged calls are off for this workspace (calls.bridge is null in config.json)",
+      );
+    next.bridge = { ...next.bridge, provider: "twilio", record: incoming.record };
   }
   return next;
 }

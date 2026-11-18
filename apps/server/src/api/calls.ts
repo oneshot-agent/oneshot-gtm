@@ -12,13 +12,23 @@
  */
 import { callsOf, getLedger, loadConfig } from "@oneshot-gtm/core";
 import {
+  CallBridgeRequestError,
   CallLogError,
   PREVIEW_STEP_MOVED,
   callBriefFor,
+  callsMe,
+  checkMemberPhone,
+  hangUpBridgedCall,
   listCalls,
+  memberCanBridge,
   recordCall,
+  refreshBridgedCall,
+  removeMemberPhone,
+  startBridgedCall,
+  verifyMemberPhone,
 } from "@oneshot-gtm/plays";
 import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
+import { currentMember } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
 /** Longest note kept on a call. */
@@ -28,7 +38,10 @@ const MAX_PHONE_CHARS = 64;
 
 export function listCallsRoute(req: Request): Response {
   try {
-    return jsonResponse(listCalls(), 200, req);
+    const out = listCalls();
+    const member = currentMember(req);
+    const bridged = out.dialMode === "bridge" && member != null && memberCanBridge(member.email);
+    return jsonResponse({ ...out, dialMode: bridged ? "bridge" : "tel" }, 200, req);
   } catch (err) {
     return jsonResponse({ error: (err as Error).message ?? "calls failed" }, 500, req);
   }
@@ -132,7 +145,8 @@ export async function logCallRoute(
     ...(typeof phone === "string" && phone.trim() ? { phone } : {}),
   };
   try {
-    return jsonResponse({ call: recordCall(prospectId, request) }, 200, req);
+    const member = currentMember(req)?.email ?? null;
+    return jsonResponse({ call: recordCall(prospectId, request, new Date(), member) }, 200, req);
   } catch (err) {
     if (err instanceof CallLogError) return jsonResponse({ error: err.message }, err.status, req);
     return jsonResponse({ error: (err as Error).message ?? "logging the call failed" }, 500, req);
@@ -143,4 +157,109 @@ export function prospectCallsRoute(req: Request, params: Record<string, string>)
   const prospectId = prospectIdOf(params["id"]);
   if (prospectId == null) return jsonResponse({ error: "bad id" }, 400, req);
   return jsonResponse({ calls: getLedger().listCallsForProspect(prospectId) }, 200, req);
+}
+
+// Bridged calls (docs/calls.md): every route acts for the requesting member,
+// so a request that is nobody's is refused even past the server's own gate.
+
+function memberOf(req: Request): { email: string | null } | Response {
+  const member = currentMember(req);
+  return member
+    ? { email: member.email }
+    : jsonResponse({ error: "sign in as a member to use calls" }, 403, req);
+}
+
+function bridgeError(req: Request, err: unknown, fallback: string): Response {
+  if (err instanceof CallBridgeRequestError)
+    return jsonResponse({ error: err.message }, err.status, req);
+  return jsonResponse({ error: (err as Error).message ?? fallback }, 500, req);
+}
+
+export function callsMeRoute(req: Request): Response {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  return jsonResponse(callsMe(member.email), 200, req);
+}
+
+export async function verifyPhoneRoute(req: Request): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const body = await jsonBody(req);
+  if (body instanceof Response) return body;
+  const phone = body["phone"];
+  if (typeof phone !== "string" || !phone.trim() || phone.length > MAX_PHONE_CHARS)
+    return jsonResponse({ error: "phone required" }, 400, req);
+  try {
+    return jsonResponse(await verifyMemberPhone(member.email, phone), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "verifying the phone failed");
+  }
+}
+
+export async function checkPhoneRoute(req: Request): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  try {
+    return jsonResponse(await checkMemberPhone(member.email), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "checking the phone failed");
+  }
+}
+
+export function removePhoneRoute(req: Request): Response {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  return jsonResponse(removeMemberPhone(member.email), 200, req);
+}
+
+export async function startCallRoute(req: Request): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const body = await jsonBody(req);
+  if (body instanceof Response) return body;
+  const prospectId = prospectIdOf(body["prospectId"]);
+  if (prospectId == null) return jsonResponse({ error: "prospectId required" }, 400, req);
+  const playName = body["playName"];
+  if (playName !== undefined && playName !== null && typeof playName !== "string")
+    return jsonResponse({ error: "playName must be a string" }, 400, req);
+  try {
+    const call = await startBridgedCall({
+      prospectId,
+      playName: typeof playName === "string" ? playName : null,
+      member: member.email,
+    });
+    return jsonResponse(call, 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "starting the call failed");
+  }
+}
+
+export async function getCallRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const id = prospectIdOf(params["id"]);
+  if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
+  try {
+    return jsonResponse(await refreshBridgedCall(id), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "reading the call failed");
+  }
+}
+
+export async function hangUpCallRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const id = prospectIdOf(params["id"]);
+  if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
+  try {
+    return jsonResponse(await hangUpBridgedCall(id), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "hanging up failed");
+  }
 }

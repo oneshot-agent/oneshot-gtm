@@ -49,7 +49,19 @@ import {
   cadenceSequenceRoute,
 } from "./api/cadences.ts";
 import { cadenceOfferRoute } from "./api/cadence-offer.ts";
-import { callBriefRoute, listCallsRoute, logCallRoute, prospectCallsRoute } from "./api/calls.ts";
+import {
+  callBriefRoute,
+  callsMeRoute,
+  checkPhoneRoute,
+  getCallRoute,
+  hangUpCallRoute,
+  listCallsRoute,
+  logCallRoute,
+  prospectCallsRoute,
+  removePhoneRoute,
+  startCallRoute,
+  verifyPhoneRoute,
+} from "./api/calls.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
   archiveInboxConversationRoute,
@@ -205,6 +217,13 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/skip-mail-batch", skipCadenceMailBatchRoute),
   route("GET", "/api/calls", listCallsRoute),
   route("POST", "/api/calls/brief", callBriefRoute),
+  route("GET", "/api/calls/me", callsMeRoute),
+  route("POST", "/api/calls/me/phone", verifyPhoneRoute),
+  route("DELETE", "/api/calls/me/phone", removePhoneRoute),
+  route("POST", "/api/calls/me/phone/check", checkPhoneRoute),
+  route("POST", "/api/calls/start", startCallRoute),
+  route("GET", "/api/calls/:id", getCallRoute),
+  route("POST", "/api/calls/:id/hangup", hangUpCallRoute),
   route("POST", "/api/prospects/:id/call", logCallRoute),
   route("GET", "/api/prospects/:id/calls", prospectCallsRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
@@ -560,7 +579,7 @@ function corsHeaders(req: Request): Record<string, string> {
   }
   return {
     "Access-Control-Allow-Origin": origin || "http://127.0.0.1",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "content-type",
     Vary: "Origin",
   };

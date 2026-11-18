@@ -140,10 +140,16 @@ export interface DialState {
 export type DialAction =
   | { kind: "pick"; outcome: CallOutcome }
   | { kind: "note"; note: string }
-  | { kind: "hold"; holdUntil: string };
+  | { kind: "hold"; holdUntil: string }
+  /** The transcript's suggestion: fills only a panel the member hasn't touched. */
+  | { kind: "suggest"; outcome: CallOutcome; note: string };
 
 export function dialReducer(state: DialState, action: DialAction): DialState {
   if (action.kind === "pick") return { ...state, outcome: action.outcome };
+  if (action.kind === "suggest")
+    return state.outcome == null && !state.note.trim()
+      ? { ...state, outcome: action.outcome, note: action.note }
+      : state;
   if (action.kind === "note") return { ...state, note: action.note };
   return { ...state, holdUntil: action.holdUntil };
 }
@@ -198,7 +204,9 @@ function isInteractive(target: EventTarget | null): boolean {
  * on. Typing in the note keeps its keys, and a focused button or link keeps
  * its own Enter; ⌘/Ctrl+Enter saves from anywhere.
  */
-export function dialKeyAction(e: DialKeyEvent): DialAction | { kind: "save" } | null {
+export function dialKeyAction(
+  e: DialKeyEvent,
+): Extract<DialAction, { kind: "pick" }> | { kind: "save" } | null {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return { kind: "save" };
   if (inEditable(e.target) || e.metaKey || e.ctrlKey || e.altKey) return null;
   if (e.key === "Enter") return isInteractive(e.target) ? null : { kind: "save" };
@@ -209,12 +217,19 @@ export function dialKeyAction(e: DialKeyEvent): DialAction | { kind: "save" } | 
 /** The body Save posts: the note trimmed, the hold date only for Not now. */
 export function logCallRequest(
   state: DialState,
-  opts: { durationSec?: number | null; playName?: string | null; phone?: string | null },
+  opts: {
+    durationSec?: number | null;
+    playName?: string | null;
+    phone?: string | null;
+    /** The bridged call this logs against. */
+    callId?: number | null;
+  },
 ): LogCallRequest | null {
   if (!state.outcome) return null;
   const note = state.note.trim();
   return {
     outcome: state.outcome,
+    ...(opts.callId != null ? { callId: opts.callId } : {}),
     ...(note ? { note } : {}),
     ...(opts.durationSec != null ? { durationSec: Math.round(opts.durationSec) } : {}),
     ...(opts.playName ? { playName: opts.playName } : {}),

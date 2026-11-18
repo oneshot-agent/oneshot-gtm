@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import type { CallsSettingsView } from "../../api/client.ts";
 import { Checkbox, Field, Input } from "../primitives/Field.tsx";
+import { YourPhone } from "./YourPhone.tsx";
 import {
   callSectionErrors,
   callSectionRequest,
@@ -11,9 +12,9 @@ import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
 
 /**
- * The dialler: the Calls page, a call step in new email cadences, and the
- * hours to call in. The bridge that rings the founder's phone is read-only
- * here until it ships.
+ * The dialler: the Calls page, a call step in new email cadences, the
+ * hours to call in, and the signed-in member's own phone, which Call rings
+ * first once it is verified.
  */
 export function CallsSection({
   calls,
@@ -34,7 +35,6 @@ export function CallsSection({
     latest.current = s.values;
   }, [s.values]);
   const v = s.values;
-  const bridge = calls.bridge;
 
   return (
     <SectionShell
@@ -98,18 +98,7 @@ export function CallsSection({
         checked={v.weekdays}
         onChange={(e) => s.set("weekdays", e.target.checked)}
       />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label="Your phone">
-          <Input value={bridge?.founderPhone ?? ""} placeholder="not set" disabled />
-        </Field>
-        <Field label="Caller ID">
-          <Input value={bridge?.callerId ?? ""} placeholder="not set" disabled />
-        </Field>
-      </div>
-      <p className="text-[12px] text-ink-faint">
-        Ringing your phone from the dashboard needs the call bridge. Until then, Call opens your
-        phone app.
-      </p>
+      <YourPhone />
     </SectionShell>
   );
 }

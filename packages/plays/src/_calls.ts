@@ -34,6 +34,7 @@ import {
   phoneLocalTime,
   pickCallPhone,
   productBriefText,
+  twilioKeysFromEnv,
   type CallCandidate,
   type OneShotConfig,
   type ProspectRecord,
@@ -457,6 +458,7 @@ export function recordCall(
   prospectId: number,
   req: LogCallRequest,
   now: Date = new Date(),
+  member: string | null = null,
 ): CallRecordView {
   const ledger = getLedger();
   const outcome: CallOutcome = req.outcome;
@@ -472,7 +474,7 @@ export function recordCall(
   // One transaction: the call row, its touch and what the outcome does to
   // the cadences land together, or none of them does.
   const { callId, stepPlay } = ledger.inTransaction(() =>
-    applyCallOutcome(prospectId, req, { outcome, note, durationSec, cfg, now }),
+    applyCallOutcome(prospectId, req, { outcome, note, durationSec, cfg, now, member }),
   );
   logEvent("call.logged", { prospect_id: prospectId, outcome, cadence_step: stepPlay != null });
   return ledger.getCall(callId)!;
@@ -488,10 +490,11 @@ function applyCallOutcome(
     durationSec: number | null;
     cfg: OneShotConfig;
     now: Date;
+    member: string | null;
   },
 ): { callId: number; stepPlay: string | null } {
   const ledger = getLedger();
-  const { outcome, note, durationSec, cfg, now } = ctx;
+  const { outcome, note, durationSec, cfg, now, member } = ctx;
   const existing = req.callId != null ? ledger.getCall(req.callId) : null;
   if (req.callId != null && existing?.prospectId !== prospectId)
     throw new CallLogError("call not found", 404);
@@ -526,6 +529,7 @@ function applyCallOutcome(
       note,
       phone: dialled,
       provider: "tel",
+      member,
     });
   }
   const nowIso = now.toISOString();
@@ -610,7 +614,7 @@ export function listCalls(
   const calls = callsOf(cfg);
   const base = {
     enabled: calls.enabled,
-    dialMode: calls.bridge ? ("bridge" as const) : ("tel" as const),
+    dialMode: calls.bridge && twilioKeysFromEnv() ? ("bridge" as const) : ("tel" as const),
     window: calls.window,
   };
   if (!calls.enabled) return { ...base, due: [], list: [] };

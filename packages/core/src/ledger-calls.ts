@@ -70,6 +70,23 @@ interface CallRow {
   transcript_json: string | null;
   summary_json: string | null;
   created_at: string;
+  member: string | null;
+  status: string | null;
+  transcript_sid: string | null;
+}
+
+/** A bridged call's live states (`CallRecordView.status`). */
+export const BRIDGE_CALL_STATUSES = [
+  "ringing_founder",
+  "ringing_prospect",
+  "connected",
+  "ended",
+  "failed",
+] as const;
+export type BridgeCallStatus = (typeof BRIDGE_CALL_STATUSES)[number];
+
+function bridgeStatusOf(value: string | null): BridgeCallStatus {
+  return BRIDGE_CALL_STATUSES.find((s) => s === value) ?? "ringing_founder";
 }
 
 function parseJson<T>(raw: string | null): T | null {
@@ -91,7 +108,9 @@ function toView(row: CallRow): CallRecordView {
     durationSec: row.duration_sec,
     outcome: (row.outcome as CallOutcome | null) ?? null,
     note: row.note,
+    member: row.member ?? null,
     provider: row.provider === "twilio" ? "twilio" : "tel",
+    ...(row.provider === "twilio" ? { status: bridgeStatusOf(row.status) } : {}),
     transcriptStatus:
       status === "pending" || status === "ready" || status === "failed" ? status : "none",
     transcript: parseJson<CallRecordView["transcript"]>(row.transcript_json),
@@ -112,13 +131,19 @@ export function insertCall(
     phone?: string | null;
     provider?: "tel" | "twilio";
     providerCallSid?: string | null;
+    /** The member who placed or logged it (email); null for the unlisted local owner. */
+    member?: string | null;
+    /** A bridged call's state when written. */
+    status?: BridgeCallStatus | null;
+    /** 'pending' for a bridged call that is recorded; 'none' otherwise. */
+    transcriptStatus?: "none" | "pending";
   },
 ): number {
   const result = db
     .prepare(
       `INSERT INTO calls (prospect_id, play_name, started_at, duration_sec, outcome, reply_intent,
-                          note, phone, provider, provider_call_sid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          note, phone, provider, provider_call_sid, member, status, transcript_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.prospectId,
@@ -131,6 +156,9 @@ export function insertCall(
       input.phone ?? null,
       input.provider ?? "tel",
       input.providerCallSid ?? null,
+      input.member ?? null,
+      input.status ?? null,
+      input.transcriptStatus ?? "none",
     );
   return Number(result.lastInsertRowid);
 }
@@ -171,6 +199,109 @@ export function setCallOutcome(
         input.outcome,
       ).changes > 0
   );
+}
+
+/** What the bridge needs of a bridged call besides its view: the provider's ids. */
+export interface BridgedCall {
+  view: CallRecordView;
+  callSid: string;
+  recordingSid: string | null;
+  transcriptSid: string | null;
+  /** The number dialled, E.164. */
+  phone: string | null;
+}
+
+function toBridged(row: CallRow): BridgedCall | null {
+  if (row.provider !== "twilio" || !row.provider_call_sid) return null;
+  return {
+    view: toView(row),
+    callSid: row.provider_call_sid,
+    recordingSid: row.recording_sid,
+    transcriptSid: row.transcript_sid,
+    phone: row.phone,
+  };
+}
+
+/** A bridged call by id; null for a `tel:` call or none. */
+export function getBridgedCall(db: Database, id: number): BridgedCall | null {
+  const row = db.query("SELECT * FROM calls WHERE id = ?").get(id) as CallRow | null;
+  return row ? toBridged(row) : null;
+}
+
+/**
+ * Write what the bridge read or did on a call. Each key present replaces the
+ * stored value; `transcript` and `suggestion` are stored as JSON.
+ */
+export function updateBridgedCall(
+  db: Database,
+  id: number,
+  patch: {
+    status?: BridgeCallStatus;
+    durationSec?: number | null;
+    recordingSid?: string | null;
+    transcriptSid?: string | null;
+    transcriptStatus?: CallRecordView["transcriptStatus"];
+    transcript?: CallRecordView["transcript"];
+    suggestion?: CallRecordView["suggestion"];
+  },
+): void {
+  const sets: string[] = [];
+  const args: Array<string | number | null> = [];
+  const set = (column: string, value: string | number | null) => {
+    sets.push(`${column} = ?`);
+    args.push(value);
+  };
+  if (patch.status !== undefined) set("status", patch.status);
+  if (patch.durationSec !== undefined) set("duration_sec", patch.durationSec);
+  if (patch.recordingSid !== undefined) set("recording_sid", patch.recordingSid);
+  if (patch.transcriptSid !== undefined) set("transcript_sid", patch.transcriptSid);
+  if (patch.transcriptStatus !== undefined) set("transcript_status", patch.transcriptStatus);
+  if (patch.transcript !== undefined)
+    set("transcript_json", patch.transcript ? JSON.stringify(patch.transcript) : null);
+  if (patch.suggestion !== undefined)
+    set("summary_json", patch.suggestion ? JSON.stringify(patch.suggestion) : null);
+  if (sets.length === 0) return;
+  db.prepare(`UPDATE calls SET ${sets.join(", ")} WHERE id = ?`).run(...args, id);
+}
+
+/**
+ * Bridged calls started since `sinceIso` with work left: still live as last
+ * read, a transcript pending, or a ready transcript with no suggestion yet.
+ * Oldest first, at most `limit` (the scheduler's sweep).
+ */
+export function listBridgedCallsToAdvance(
+  db: Database,
+  sinceIso: string,
+  limit: number,
+): BridgedCall[] {
+  return (
+    db
+      .query(
+        `SELECT * FROM calls
+          WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at >= ?
+            AND (COALESCE(status, '') NOT IN ('ended', 'failed')
+                 OR transcript_status = 'pending'
+                 OR (transcript_status = 'ready' AND summary_json IS NULL))
+          ORDER BY started_at ASC, id ASC LIMIT ?`,
+      )
+      .all(sinceIso, limit) as CallRow[]
+  )
+    .map(toBridged)
+    .filter((c): c is BridgedCall => c != null);
+}
+
+/**
+ * Bridged calls started before `beforeIso` whose transcript is still pending:
+ * the sweep gives up on them (`transcript_status = 'failed'`). Returns how
+ * many it marked.
+ */
+export function failStaleTranscripts(db: Database, beforeIso: string): number {
+  return db
+    .prepare(
+      `UPDATE calls SET transcript_status = 'failed'
+        WHERE provider = 'twilio' AND transcript_status = 'pending' AND started_at < ?`,
+    )
+    .run(beforeIso).changes;
 }
 
 export function getCall(db: Database, id: number): CallRecordView | null {

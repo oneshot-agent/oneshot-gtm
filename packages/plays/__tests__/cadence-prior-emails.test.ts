@@ -39,6 +39,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
       recentSentEmailBodies: () => [],
       getCadence: () => ({ current_step: 0, status: "active" }),
+      listCallsForProspect: () => storedCalls,
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
       // The queue row the sequence started from, which the follow-up edge angle is chosen from.
       cadenceQueueRow: () => (sentPayload ? { id: 1, payload: sentPayload, source: "" } : null),
@@ -77,6 +78,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
 let nextLlmContent: string | null = null;
 /** The intro's sent queue payload (issue #584); null = no multi-angle edge to draw on. */
 let sentPayload: Record<string, unknown> | null = null;
+
+/** The prospect's calls, newest first (PRIOR CALLS). */
+let storedCalls: Array<Record<string, unknown>> = [];
 
 let storedRows: Array<{
   step_index: number;
@@ -136,11 +140,54 @@ beforeEach(() => {
   llmCalls.length = 0;
   nextLlmContent = null;
   storedRows = [];
+  storedCalls = [];
   sentPayload = null;
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe("buildFollowUpEmail — PRIOR CALLS", () => {
+  it("adds the confirmed call after the emails, so the follow-up picks up from it", async () => {
+    storedRows = [
+      { step_index: 0, metadata_json: JSON.stringify({ subject: "first", body: "first body" }) },
+    ];
+    storedCalls = [
+      {
+        startedAt: "2026-11-17T10:00:00Z",
+        outcome: "interested",
+        note: "Wants a pilot for two teams.",
+        suggestion: { outcome: "interested", note: "", commitments: ["send terms Thursday"] },
+      },
+      { startedAt: "2026-11-16T10:00:00Z", outcome: null, note: null, suggestion: null },
+    ];
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    await builder(ctx());
+    const user = llmCalls[0]!.user;
+    expect(user.indexOf("PRIOR CALLS")).toBeGreaterThan(user.indexOf("PRIOR EMAILS"));
+    expect(user).toContain("- 2026-11-17: Interested");
+    expect(user).toContain("Note: Wants a pilot for two teams.");
+    expect(user).toContain("Promised: send terms Thursday");
+    expect(user).not.toContain("2026-11-16");
+  });
+
+  it("leaves the prompt as it was with no logged call", async () => {
+    storedRows = [
+      { step_index: 0, metadata_json: JSON.stringify({ subject: "first", body: "first body" }) },
+    ];
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    await builder(ctx());
+    expect(llmCalls[0]!.user).not.toContain("PRIOR CALLS");
+  });
 });
 
 describe("buildFollowUpEmail — PRIOR EMAILS injection", () => {

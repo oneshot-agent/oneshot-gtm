@@ -50,6 +50,38 @@ Opening a row shows a brief: an opener that points back to your email, the offer
 
 Replies and the funnel count a call the way they count an email reply. Do not contact is final: a call logged with it cannot be changed to another outcome.
 
+## Ringing your phone (bridged calls)
+
+Without it, Call opens a `tel:` link. With it, Call rings your own phone; when you pick up, it dials the prospect, and they see your number. The call is recorded, transcribed with each side labelled, and a suggested outcome is waiting when you hang up.
+
+**Setup:**
+
+1. Add a Twilio API key to the workspace's `.env`:
+
+   ```sh
+   TWILIO_ACCOUNT_SID=AC…      # the account or subaccount
+   TWILIO_API_KEY_SID=SK…
+   TWILIO_API_KEY_SECRET=…
+   ```
+
+2. Each member verifies their own phone in **Setup → Calls → Your phone**: type the mobile, press Verify, and type the 6-digit code on the screen when Twilio rings you. Your phone is yours across every workspace on the install; nobody else's Call rings it.
+
+No webhook, tunnel or Twilio number is needed: the server asks Twilio for everything and polls. The transcription service is created on the first transcript and shared by every workspace.
+
+**While and after the call:** the dial panel shows ringing you, ringing them, connected, then ended. After hangup the recording is transcribed (usually within a few minutes) and your configured model proposes an outcome, a note and any promises made. Nothing is logged until you confirm it. If you close the tab, the server finishes the transcript on its own; one still missing after 6 hours is marked failed. Once confirmed, the note and promises go into the next follow-up email, so it picks up from the call.
+
+**Cost per call (Twilio US list prices, October 2026):** two call legs at $0.014/min each, recording at $0.0025/min, transcription at $0.024/min: about $0.27 for a 5-minute call, plus one model completion for the suggestion.
+
+| Setting                          | Default       | What it does                                                                   |
+| -------------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| `bridge`                         | on            | `null` in `config.json` turns bridged calls off, even with the keys set.       |
+| `bridge.record`                  | true          | `oneshot-gtm config calls record off`: no recording, transcript or suggestion. |
+| `bridge.transcriptionServiceSid` | the install's | Use a Twilio Conversational Intelligence service of your own.                  |
+
+## Recording consent
+
+Some states and countries require everyone on a call to agree to it being recorded. Getting that consent is the caller's responsibility: say so at the start ("I record my calls so I can take notes, is that OK?"), and hang up or stop if they say no. Set `record` off to place bridged calls without recording them.
+
 ## Your responsibility
 
 OneShot GTM does not check national do-not-call registers, line types or calling-hour laws. Who you call, when, and whether you may record the call is your responsibility.

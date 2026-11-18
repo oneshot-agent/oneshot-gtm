@@ -856,19 +856,23 @@ export interface CallsConfig {
   /** The recipient's local hours for a call; default 09:00–17:00 on weekdays. */
   window?: { start: string; end: string; weekdays?: boolean };
   /**
-   * The dashboard rings the founder's phone first, then dials the prospect
-   * (phase 2). Null or absent = `tel:` links only. Holds no secret: the
-   * provider keys live in the workspace's `.env`.
+   * Bridged calls (phase 2): Call rings the member's own verified phone,
+   * then dials the prospect, and the call is recorded and transcribed. On
+   * whenever the provider keys are in the workspace's `.env`
+   * (`TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`);
+   * absent = the defaults below, `null` = off (`tel:` links only, even with
+   * the keys). Holds no secret and no phone: each member's phone is theirs,
+   * kept install-wide (shared database `member_phones`).
    */
   bridge?: {
     provider: "twilio";
-    /** E.164: the phone that rings first. */
-    founderPhone: string;
-    /** What the prospect sees: a provider number or the founder's verified own mobile. */
-    callerId: string;
-    /** Default true: the transcript is the point. */
+    /** Default true: the transcript is the point. False = no recording, no transcript. */
     record?: boolean;
-    /** The provider's transcription service, created by `calls setup`. */
+    /**
+     * The provider's transcription service. Unset = the install's own,
+     * found or created on the first transcript and kept in the shared
+     * database.
+     */
     transcriptionServiceSid?: string;
   } | null;
 }

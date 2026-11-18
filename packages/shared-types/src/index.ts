@@ -694,7 +694,8 @@ export interface SetupRequest {
   /**
    * The dialler. `undefined` = leave unchanged. Each key present replaces the
    * stored one (`cadenceStep: null` = the Calls page only); a key left out is
-   * kept, and so is a configured `bridge`, which this form never edits.
+   * kept. `record` sets whether bridged calls are recorded and transcribed
+   * (`calls.bridge.record`); the rest of the bridge is never edited here.
    * Positions count the first email as 1 (2 or more); times are HH:MM with
    * the start first. Anything else is a 400.
    */
@@ -702,6 +703,7 @@ export interface SetupRequest {
     enabled?: boolean;
     cadenceStep?: { position: number; delayDays: number; holdDays?: number } | null;
     window?: { start: string; end: string; weekdays?: boolean };
+    record?: boolean;
   };
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;

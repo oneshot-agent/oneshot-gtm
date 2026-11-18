@@ -30,7 +30,7 @@ const render = (calls: CallsSettingsView) =>
 const switches = (html: string) => html.match(/<button[^>]*role="switch"[^>]*>/g) ?? [];
 
 describe("CallsSection", () => {
-  it("renders off by default: no step fields, the window, the bridge read-only", () => {
+  it("renders off by default: no step fields, the window, and Your phone", () => {
     const html = render(off);
     const [enabled, step] = switches(html);
     expect(enabled).toContain('aria-checked="false"');
@@ -38,12 +38,10 @@ describe("CallsSection", () => {
     expect(html).not.toContain("Step position");
     expect(html).toContain('value="09:00"');
     expect(html).toContain('value="17:00"');
-    expect(html).toContain("Ringing your phone from the dashboard needs the call bridge.");
-    expect(
-      html
-        .match(/<input[^>]*placeholder="not set"[^>]*>/g)
-        ?.every((i) => i.includes('disabled=""')),
-    ).toBe(true);
+    expect(html).toContain("Your phone");
+    // The phase 1 read-only founder phone and caller ID are gone.
+    expect(html).not.toContain("Caller ID");
+    expect(html).not.toContain('placeholder="not set"');
   });
 
   it("shows the step fields when the call step is on", () => {

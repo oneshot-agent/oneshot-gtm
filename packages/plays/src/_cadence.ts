@@ -7,6 +7,7 @@ import type {
 } from "@oneshot-gtm/shared-types";
 import {
   CADENCE_SEND_UNCONFIRMED,
+  CALL_OUTCOMES,
   LINKEDIN_SEND_PENDING,
   isFounderOrCeoTitle,
   replyIntentMeta,
@@ -3579,7 +3580,12 @@ export function buildFollowUpEmail(opts: {
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
-    const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
+    // PRIOR CALLS rides with the emails: a follow-up after a call picks up
+    // from what was said. No logged call = byte-identical to before.
+    const priorBlock =
+      [buildPriorEmailsBlock(ctx.prospect.id, opts.playName), buildPriorCallsBlock(ctx.prospect.id)]
+        .filter((b): b is string => b != null)
+        .join("\n\n") || null;
     // Optional first-name field: prompt rule lets the LLM occasionally open
     // with the greeting and the name. Absent when name is null / (unknown) / handle.
     const firstName = firstNameFrom(ctx.prospect.name);
@@ -3887,6 +3893,38 @@ function buildPriorEmailsBlock(prospectId: number, playName: string): string | n
     lines.push(`--- step ${row.stepIndex} (${row.label}) ---`);
     lines.push(`Subject: ${row.subject}`);
     lines.push(row.body);
+  }
+  return lines.join("\n");
+}
+
+/** Calls a follow-up reads: the newest few with an outcome logged, past the ones that never reached the person. */
+const PRIOR_CALLS_MAX = 3;
+const CALLS_NOT_WITH_THEM = new Set(["wrong_number", "wrong_person"]);
+const callLine = (text: string, max: number) => text.replace(/\s+/g, " ").trim().slice(0, max);
+
+/**
+ * The calls the founder logged with this prospect (any play), newest first,
+ * for a follow-up's history: when, the outcome, the founder's note and what
+ * was promised on the call (the confirmed call's suggestion). A call with no
+ * outcome logged is not confirmed, and one that reached someone else says
+ * nothing about this person. Null when none is left.
+ */
+export function buildPriorCallsBlock(prospectId: number): string | null {
+  const calls = getLedger()
+    .listCallsForProspect(prospectId)
+    .filter((c) => c.outcome != null && !CALLS_NOT_WITH_THEM.has(c.outcome))
+    .slice(0, PRIOR_CALLS_MAX);
+  if (calls.length === 0) return null;
+  const lines = [
+    "PRIOR CALLS (the sender phoned this prospect, newest first. When they spoke, this email picks up from the latest call: refer to it plainly, keep any promise listed, never re-introduce yourself or repeat the first email's pitch):",
+  ];
+  for (const c of calls) {
+    const title = CALL_OUTCOMES.find((o) => o.outcome === c.outcome)?.title ?? c.outcome;
+    lines.push(`- ${c.startedAt.slice(0, 10)}: ${title}`);
+    if (c.note?.trim()) lines.push(`  Note: ${callLine(c.note, 400)}`);
+    const promised = c.suggestion?.commitments?.filter((x) => x.trim()) ?? [];
+    if (promised.length > 0)
+      lines.push(`  Promised: ${promised.map((x) => callLine(x, 200)).join("; ")}`);
   }
   return lines.join("\n");
 }

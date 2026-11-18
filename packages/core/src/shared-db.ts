@@ -141,6 +141,24 @@ export interface Member {
 }
 
 /** The stored form of a member email: trimmed and lowercased. Null when it cannot be one. */
+export type MemberPhoneStatus = "verifying" | "verified" | "failed";
+
+/** A `member_phones` row. */
+export interface MemberPhoneRow {
+  member: string;
+  phone: string;
+  status: MemberPhoneStatus;
+  validation_code: string | null;
+  verified_at: string | null;
+  error: string | null;
+  updated_at: string;
+}
+
+/** The `member_phones` key for a request's member: the email, '' for the unlisted local owner. */
+export function memberPhoneKey(email: string | null | undefined): string {
+  return email ? (normalizeMemberEmail(email) ?? email.trim().toLowerCase()) : "";
+}
+
 export function normalizeMemberEmail(input: string): string | null {
   const email = input.trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
@@ -367,6 +385,26 @@ export class SharedDb {
       CREATE TABLE IF NOT EXISTS allowed_hosts (
         host     TEXT PRIMARY KEY,
         added_at TEXT NOT NULL
+      );
+      -- Each member's own phone for bridged calls (call-bridge.ts): it rings
+      -- first and is the caller ID the prospect sees. Keyed by the member's
+      -- email, '' for the unlisted local owner. status: verifying (the
+      -- provider is calling it with validation_code), verified, failed.
+      CREATE TABLE IF NOT EXISTS member_phones (
+        member          TEXT PRIMARY KEY,
+        phone           TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        validation_code TEXT,
+        verified_at     TEXT,
+        error           TEXT,
+        updated_at      TEXT NOT NULL
+      );
+      -- Install-wide values every workspace shares (the call bridge's
+      -- transcription service: the provider subaccount is install-wide).
+      CREATE TABLE IF NOT EXISTS install_settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
     `);
     // Shared files created before reservations existed. Every workspace's
@@ -1480,6 +1518,64 @@ export class SharedDb {
       this.db
         .query<{ host: string }, [string]>("SELECT host FROM allowed_hosts WHERE host = ?")
         .get(normalized) != null
+    );
+  }
+
+  /** A member's phone for bridged calls, or null. `member` is `memberPhoneKey`'s. */
+  memberPhone(member: string): MemberPhoneRow | null {
+    return (
+      this.db
+        .query<MemberPhoneRow, [string]>("SELECT * FROM member_phones WHERE member = ?")
+        .get(member) ?? null
+    );
+  }
+
+  /** Write a member's phone and its verification state; the fields left out are cleared. */
+  setMemberPhone(input: {
+    member: string;
+    phone: string;
+    status: MemberPhoneStatus;
+    validationCode?: string | null;
+    verifiedAt?: string | null;
+    error?: string | null;
+  }): MemberPhoneRow {
+    this.db.run(
+      `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error, updated_at)
+       VALUES(?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = excluded.status,
+         validation_code = excluded.validation_code, verified_at = excluded.verified_at,
+         error = excluded.error, updated_at = excluded.updated_at`,
+      [
+        input.member,
+        input.phone,
+        input.status,
+        input.validationCode ?? null,
+        input.verifiedAt ?? null,
+        input.error ?? null,
+        new Date().toISOString(),
+      ],
+    );
+    return this.memberPhone(input.member)!;
+  }
+
+  /** Forget a member's phone. False when none was set. */
+  deleteMemberPhone(member: string): boolean {
+    return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;
+  }
+
+  installSetting(key: string): string | null {
+    return (
+      this.db
+        .query<{ value: string }, [string]>("SELECT value FROM install_settings WHERE key = ?")
+        .get(key)?.value ?? null
+    );
+  }
+
+  setInstallSetting(key: string, value: string): void {
+    this.db.run(
+      `INSERT INTO install_settings(key, value, updated_at) VALUES(?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [key, value, new Date().toISOString()],
     );
   }
 

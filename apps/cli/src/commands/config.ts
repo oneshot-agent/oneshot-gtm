@@ -8,6 +8,7 @@ import {
   saveSecrets,
   secretsPath,
   isSlackWebhookUrl,
+  twilioKeysFromEnv,
 } from "@oneshot-gtm/core";
 import {
   TRIGGERS,
@@ -397,10 +398,16 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     note(
       `call window ${calls.window.start}–${calls.window.end} their time, ${calls.window.weekdays ? "weekdays" : "every day"}`,
     );
-    note(calls.bridge ? `rings ${calls.bridge.founderPhone} first` : "Call opens a tel: link");
+    note(
+      !calls.bridge
+        ? "bridged calls off: Call opens a tel: link"
+        : twilioKeysFromEnv()
+          ? `bridged calls: Call rings the member's verified phone; ${calls.bridge.record ? "recorded and transcribed" : "not recorded"}`
+          : "Call opens a tel: link (add TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to .env to ring your phone)",
+    );
     note(
       c.dim(
-        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day]",
+        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day] | record <on|off>",
       ),
     );
     return;
@@ -453,7 +460,28 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     return;
   }
 
-  throw new Error(`unknown action '${action}' — pass on, off, step or window`);
+  if (action === "record") {
+    const value = args[0];
+    if (value !== "on" && value !== "off")
+      throw new Error(`invalid record '${value ?? ""}' — pass on or off`);
+    if (current.bridge === null)
+      throw new Error("bridged calls are off for this workspace (calls.bridge is null)");
+    saveConfig({
+      ...cfg,
+      calls: {
+        ...current,
+        bridge: { ...current.bridge, provider: "twilio", record: value === "on" },
+      },
+    });
+    ok(
+      value === "on"
+        ? "bridged calls are recorded and transcribed"
+        : "bridged calls are not recorded (no transcript, no suggested outcome)",
+    );
+    return;
+  }
+
+  throw new Error(`unknown action '${action}' — pass on, off, step, window or record`);
 }
 
 const X_TRIGGER = "x-reposters";

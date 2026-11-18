@@ -62,6 +62,7 @@ vi.mock("@oneshot-gtm/core", async () => {
               { id: "base:2", channel: "email", dayOffset: 7, label: "pilot + close (breakup)" },
             ]
           : null,
+      listCallsForProspect: () => [],
       listSequenceEventsForProspectPlay: () => [],
       latestSentQueuePayload: () => null,
       getProductResearchCache: () => null,

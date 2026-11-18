@@ -444,7 +444,7 @@ config
 config
   .command("calls [action] [values...]")
   .description(
-    "Show or set the dialler: 'on' or 'off'; 'step <position> [delay] [hold]' puts a call in new email cadences (the first email is 1), 'step off' removes it; 'window <09:00-17:00> [weekdays|every-day]' sets the prospect's local hours",
+    "Show or set the dialler: 'on' or 'off'; 'step <position> [delay] [hold]' puts a call in new email cadences (the first email is 1), 'step off' removes it; 'window <09:00-17:00> [weekdays|every-day]' sets the prospect's local hours; 'record <on|off>' records and transcribes bridged calls",
   )
   .action(runOrFail((action?: string, values?: string[]) => configCalls(action, values ?? [])));
 

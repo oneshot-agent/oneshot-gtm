@@ -32,6 +32,7 @@ import {
   pollInboxBounces,
   pollInboxReplies,
   retryUntriagedReplies,
+  sweepBridgedCalls,
   sweepLinkedInInvitations,
   expireUnsentLinkedInInvites,
 } from "@oneshot-gtm/plays";
@@ -102,6 +103,14 @@ const DELIVERY_SWEEP_DEADLINE_MS = 2 * 60_000;
  */
 const CODE_ANSWER_SWEEP_INTERVAL_MS = 24 * 60 * 60_000;
 const CODE_ANSWER_SWEEP_DEADLINE_MS = 10 * 60_000;
+/**
+ * Bridged calls whose tab closed: read their state, then their recording,
+ * transcript and suggested outcome. A few provider reads per call, at most
+ * one paid completion per finished transcript; idle with calls off or no
+ * provider keys.
+ */
+const CALL_SWEEP_INTERVAL_MS = 2 * 60_000;
+const CALL_SWEEP_DEADLINE_MS = 2 * 60_000;
 /** Untriaged-reply retry: a bounded batch every 15 min, so a reply that keeps failing can't cost a paid call per tick. */
 const REPLY_INTENT_RETRY_INTERVAL_MS = 15 * 60_000;
 
@@ -141,6 +150,8 @@ export function startScheduler(): SchedulerHandle {
   let lastLinkedInInviteSweepAt = 0;
   // 0 = never swept, so the first tick after boot checks the code answers.
   let lastCodeAnswerSweepAt = 0;
+  // 0 = never swept, so the first tick finishes calls left over from before a restart.
+  let lastCallSweepAt = 0;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -419,6 +430,20 @@ export function startScheduler(): SchedulerHandle {
         } catch (err) {
           logEvent(
             "scheduler.code_answer_sweep.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
+      // Bridged calls left unfinished by a closed tab. Isolated and stamped
+      // before the await like the sweeps above.
+      if (Date.now() - lastCallSweepAt >= CALL_SWEEP_INTERVAL_MS) {
+        lastCallSweepAt = Date.now();
+        try {
+          await withDeadline(sweepBridgedCalls(), CALL_SWEEP_DEADLINE_MS, "bridged call sweep");
+        } catch (err) {
+          logEvent(
+            "scheduler.call_sweep.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
             "warn",
           );
