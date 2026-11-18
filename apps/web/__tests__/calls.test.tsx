@@ -18,10 +18,13 @@ import {
   dialKeyAction,
   inCallWindow,
   dialReducer,
+  findRow,
   logCallRequest,
+  newSaveKey,
   nextRow,
   OUTCOME_KEYS,
   timerAfterLog,
+  timersAfterLog,
   type DialKeyEvent,
   type DialState,
 } from "../src/lib/dialler.ts";
@@ -76,6 +79,7 @@ const row = (over: Partial<CallListRow> = {}): CallListRow => ({
   queueId: 10,
   local: { zones: ["America/Chicago"], localTime: "10:05", inWindow: true, opensAt: null },
   playName: "post-funding",
+  currentStep: 1,
   section: "due",
   reason: "replied: interested",
   lastTouchAt: "2026-11-15T10:00:00Z",
@@ -88,8 +92,22 @@ const data = (over: Partial<CallListResponse> = {}): CallListResponse => ({
   window: { start: "09:00", end: "17:00", weekdays: true },
   due: [row()],
   list: [
-    row({ prospectId: 2, name: "Sam Ortiz", section: "list", playName: null, reason: "other" }),
-    row({ prospectId: 3, name: "Lee Park", section: "list", playName: null, reason: "other" }),
+    row({
+      prospectId: 2,
+      name: "Sam Ortiz",
+      section: "list",
+      playName: null,
+      currentStep: null,
+      reason: "other",
+    }),
+    row({
+      prospectId: 3,
+      name: "Lee Park",
+      section: "list",
+      playName: null,
+      currentStep: null,
+      reason: "other",
+    }),
   ],
   ...over,
 });
@@ -310,7 +328,7 @@ describe("dial keys and Save & next", () => {
     const open = vi.fn();
     const req = logCallRequest({ ...start, outcome: "no_answer" }, {})!;
     // Row 1 saved; meanwhile row 3 was opened.
-    await saveCall(log, row(), req, row({ prospectId: 2 }), open, (id) => id === 3);
+    await saveCall(log, row(), req, row({ prospectId: 2 }), open, (r) => r.prospectId === 3);
     expect(log).toHaveBeenCalledWith(1, { outcome: "no_answer" });
     expect(open).not.toHaveBeenCalled();
   });
@@ -326,16 +344,16 @@ describe("dial keys and Save & next", () => {
     const log = vi.fn().mockResolvedValue({});
     const open = vi.fn();
     const req = logCallRequest(state, { durationSec: 41.6, playName: null })!;
-    await saveCall(log, rows[0]!, req, nextRow(rows, 2), open, (id) => id === 2);
+    await saveCall(log, rows[0]!, req, nextRow(rows, rows[0]!), open, (r) => r.prospectId === 2);
     expect(log).toHaveBeenCalledWith(2, {
       outcome: "voicemail",
       note: "left a message",
       durationSec: 42,
     });
-    expect(open).toHaveBeenCalledWith(3);
+    expect(open).toHaveBeenCalledWith(rows[1]);
 
     // The section's last row closes the panel.
-    await saveCall(log, rows[1]!, req, nextRow(rows, 3), open, (id) => id === 3);
+    await saveCall(log, rows[1]!, req, nextRow(rows, rows[1]!), open, (r) => r.prospectId === 3);
     expect(open).toHaveBeenLastCalledWith(null);
   });
 
@@ -442,6 +460,52 @@ describe("calls page: review fixes", () => {
     expect(dialledNumber(1000, "+15126531187", "+15126539999")).toBe("+15126531187");
     // No call started here: the number on the row is the one dialled by hand.
     expect(dialledNumber(null, null, "+15126539999")).toBe("+15126539999");
+  });
+
+  it("opens the Due row of the play named, for a person due in two plays", () => {
+    const d = data({
+      due: [
+        row({ reason: "due: call · post-funding" }),
+        row({ playName: "hiring", currentStep: 2, reason: "due: call · hiring" }),
+      ],
+    });
+    expect(findRow(d, 1, "hiring")).toMatchObject({ playName: "hiring", currentStep: 2 });
+    expect(findRow(d, 1)).toMatchObject({ playName: "post-funding" });
+    expect(findRow(d, 1, "gone")).toMatchObject({ playName: "post-funding" });
+    expect(nextRow(d.due, d.due[0]!)).toBe(d.due[1]);
+    const html = render(
+      <CallsView data={d} selected={1} selectedPlay="hiring" onOpen={() => {}} />,
+    );
+    expect(html).toContain(">Due (2)</h2>");
+    // The panel is the hiring row's: the last Due row, so Save has no next.
+    expect(html).toContain(">Save</button>");
+    expect(render(<CallsView data={d} selected={1} onOpen={() => {}} />)).toContain(
+      "Save &amp; next",
+    );
+  });
+
+  it("a log spends only its own prospect's started call", () => {
+    const timers = {
+      1: { prospectId: 1, at: 1000, phone: "+15125551234" },
+      2: { prospectId: 2, at: 2000, phone: "+15125559999" },
+    };
+    expect(timersAfterLog(timers, { prospectId: 1, at: 1000 })).toEqual({ 2: timers[2] });
+    expect(timersAfterLog(timers, { prospectId: 1, at: 500 })).toBe(timers);
+    expect(timersAfterLog(timers, { prospectId: 3, at: 1000 })).toBe(timers);
+  });
+
+  it("posts the step the row was opened on and the save's id", () => {
+    const key = newSaveKey();
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(newSaveKey()).not.toBe(key);
+    const state: DialState = { outcome: "no_answer", note: "", holdUntil: "2026-12-01" };
+    expect(
+      logCallRequest(state, { playName: "post-funding", currentStep: 1, clientKey: key }),
+    ).toEqual({ outcome: "no_answer", playName: "post-funding", currentStep: 1, clientKey: key });
+    expect(logCallRequest(state, { currentStep: null })).toEqual({
+      outcome: "no_answer",
+      currentStep: null,
+    });
   });
 
   it("privacy mode hides the brief and the call notes", () => {

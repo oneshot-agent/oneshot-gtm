@@ -1173,7 +1173,10 @@ function CadencesPage() {
                           <Button
                             size="sm"
                             onClick={() =>
-                              void navigate({ to: "/calls", search: { prospect: c.prospectId } })
+                              void navigate({
+                                to: "/calls",
+                                search: { prospect: c.prospectId, play: c.playName },
+                              })
                             }
                           >
                             <Phone size={11} /> Open call
@@ -1420,7 +1423,7 @@ function CadencesPage() {
                                     onOpenCall={() =>
                                       void navigate({
                                         to: "/calls",
-                                        search: { prospect: c.prospectId },
+                                        search: { prospect: c.prospectId, play: c.playName },
                                       })
                                     }
                                     onToggle={() => toggleExpanded(key)}

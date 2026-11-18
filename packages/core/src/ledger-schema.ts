@@ -579,16 +579,14 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     },
   },
   {
-    // The dialler (ledger-calls.ts): one row per call the founder made or
-    // logged. `provider` is 'tel' (a tel: link, nothing recorded) or 'twilio'
-    // (a bridged call: its SIDs, then the transcript and the model's
-    // suggested outcome). `outcome` is a shared-types `CallOutcome`, NULL
-    // until logged; `reply_intent` is the reply label it counts as, when it
-    // means one. `phone` is the number dialled, kept after a wrong-number
-    // clears the prospect's. `client_key` is the dashboard's id for one save,
-    // so a retried save writes one row. A brief written for someone outside
-    // a cadence is cached per prospect in `call_briefs`, so reopening them
-    // pays nothing.
+    // The dialler (ledger-calls.ts): one row per call. `provider` is 'tel'
+    // (nothing recorded) or 'twilio' (a bridged call: its SIDs, transcript and
+    // suggested outcome). `outcome` is a `CallOutcome`, NULL until logged;
+    // `reply_intent` the reply label it counts as. `phone` is the number
+    // dialled, kept after a wrong-number clears the prospect's. `client_key`
+    // is the dashboard's id for one save, so a retry writes one row.
+    // `call_briefs` caches the brief for someone outside a cadence, so
+    // reopening them pays nothing.
     version: 27,
     name: "calls",
     up: (db) => {

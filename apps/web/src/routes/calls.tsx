@@ -13,36 +13,58 @@ import {
   canDial,
   findRow,
   localTimeNow,
+  newSaveKey,
   nextRow,
   outcomeTitle,
+  rowId,
+  sameRow,
   sectionRows,
-  timerAfterLog,
+  timersAfterLog,
   windowHint,
   type CallTimer,
+  type RowKey,
 } from "../lib/dialler.ts";
 import { useMask } from "../lib/privacy.tsx";
 
 interface CallsSearch {
   /** The open row, e.g. from a cadence's "Open call". */
   prospect?: number;
+  /** Its play, for a Due row: a person can be due in two. */
+  play?: string;
 }
 
 export const Route = createFileRoute("/calls")({
   staticData: { title: "Calls" },
   validateSearch: (search: Record<string, unknown>): CallsSearch => {
     const id = Number(search["prospect"]);
-    return Number.isInteger(id) && id > 0 ? { prospect: id } : {};
+    if (!Number.isInteger(id) || id <= 0) return {};
+    const play = search["play"];
+    return typeof play === "string" && play ? { prospect: id, play } : { prospect: id };
   },
   component: CallsPage,
 });
 
 function CallsPage() {
-  const { prospect } = Route.useSearch();
+  const { prospect, play } = Route.useSearch();
   const navigate = Route.useNavigate();
   const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
-  const open = (id: number | null) =>
-    void navigate({ search: id == null ? {} : { prospect: id }, replace: true });
-  return <CallsView data={query.data} error={query.error} selected={prospect} onOpen={open} />;
+  const open = (row: RowKey | null) =>
+    void navigate({
+      search:
+        row == null
+          ? {}
+          : { prospect: row.prospectId, ...(row.playName ? { play: row.playName } : {}) },
+      replace: true,
+    });
+  return (
+    <CallsView
+      data={query.data}
+      error={query.error}
+      selected={prospect}
+      {...(play ? { selectedPlay: play } : {})}
+      onOpen={open}
+    />
+  );
 }
 
 /** The page body, apart from the router so it renders from data alone. */
@@ -50,24 +72,35 @@ export function CallsView({
   data,
   error,
   selected,
+  selectedPlay,
   onOpen,
 }: {
   data: CallListResponse | undefined;
   error?: Error | null;
   selected: number | undefined;
-  onOpen: (prospectId: number | null) => void;
+  selectedPlay?: string;
+  onOpen: (row: RowKey | null) => void;
 }) {
-  // When Call was pressed, per prospect: the panel's timer reads it.
-  const [started, setStarted] = useState<CallTimer | null>(null);
+  // When Call was pressed and the number it dialled, per prospect, until
+  // that prospect's call is logged: the panel's timer and log read it.
+  const [started, setStarted] = useState<Record<number, CallTimer>>({});
   const start = (prospectId: number, phone: string | null) =>
-    setStarted({ prospectId, at: Date.now(), phone });
+    setStarted((s) => ({ ...s, [prospectId]: { prospectId, at: Date.now(), phone } }));
+  // Each row's next save id, kept here so a panel that remounts while its
+  // save runs retries with the same one; a logged save takes a new one.
+  const saveKeys = useRef(new Map<string, string>());
+  const saveKeyFor = (row: RowKey) => {
+    const id = rowId(row);
+    const key = saveKeys.current.get(id) ?? newSaveKey();
+    saveKeys.current.set(id, key);
+    return key;
+  };
   // The call window is read on this clock, so a row turns callable (or not)
   // as a boundary passes, without waiting on the next poll.
   const [now, refresh] = useNow(CLOCK_TICK_MS);
   // Which row is open as of the latest render: a save that finishes after the
   // founder opened someone else must not move them on.
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
+  const openRef = useRef<CallListRow | null>(null);
 
   const header = (
     <div>
@@ -127,8 +160,9 @@ export function CallsView({
     );
   }
 
-  const row = selected != null ? findRow(data, selected) : null;
-  const next = row ? nextRow(sectionRows(data, row.prospectId), row.prospectId) : null;
+  const row = selected != null ? findRow(data, selected, selectedPlay) : null;
+  openRef.current = row;
+  const next = row ? nextRow(sectionRows(data, row), row) : null;
   const section = (title: string, rows: CallListRow[], empty: string) => (
     <section className="flex flex-col gap-3">
       <h2 className="text-[13px] font-medium text-ink-cream">
@@ -140,15 +174,15 @@ export function CallsView({
         <div className="flex flex-col divide-y divide-ink-rule rounded-[var(--radius-md)] border border-ink-rule">
           {rows.map((r) => (
             <CallRow
-              key={r.prospectId}
+              key={rowId(r)}
               row={r}
               data={data}
               now={now}
               onRefresh={refresh}
-              open={r.prospectId === selected}
-              onOpen={() => onOpen(r.prospectId)}
+              open={row != null && sameRow(r, row)}
+              onOpen={() => onOpen(r)}
               onStart={(phone) => {
-                onOpen(r.prospectId);
+                onOpen(r);
                 start(r.prospectId, phone);
               }}
             />
@@ -174,19 +208,24 @@ export function CallsView({
         <div className="min-w-0 lg:sticky lg:top-0 lg:self-start">
           {row ? (
             <DialPanel
-              key={row.prospectId}
+              key={rowId(row)}
               row={row}
               next={next}
               dialMode={data.dialMode}
               window={data.window}
               now={now}
               onRefresh={refresh}
-              startedAt={started?.prospectId === row.prospectId ? started.at : null}
-              dialledPhone={started?.prospectId === row.prospectId ? started.phone : null}
+              startedAt={started[row.prospectId]?.at ?? null}
+              dialledPhone={started[row.prospectId]?.phone ?? null}
+              saveKey={saveKeyFor(row)}
               onStart={(phone) => start(row.prospectId, phone)}
-              onLogged={(id, at) => setStarted((s) => timerAfterLog(s, { prospectId: id, at }))}
+              onLogged={(logged, at, key) => {
+                setStarted((s) => timersAfterLog(s, { prospectId: logged.prospectId, at }));
+                if (saveKeys.current.get(rowId(logged)) === key)
+                  saveKeys.current.delete(rowId(logged));
+              }}
               onOpen={onOpen}
-              isOpen={(id) => selectedRef.current === id}
+              isOpen={(r) => openRef.current != null && sameRow(openRef.current, r)}
             />
           ) : selected != null ? (
             <EmptyNote note="This person isn't on the call list: no usable number, or they can't be contacted." />

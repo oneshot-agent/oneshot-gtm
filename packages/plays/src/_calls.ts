@@ -434,11 +434,10 @@ export class CallLogError extends Error {
 /**
  * Log a call's outcome: the `calls` row, a `call` channel touch, and the call
  * step when it is next. Each outcome moves or stops cadences as a sent step or
- * a reply would (table in docs/calls.md). do_not_contact is final: a later log
- * that changes it is refused (409). A new call records `req.phone`, the number
- * actually dialled, so a wrong_number lands on it even if the stored one
- * changed since; a number that does not parse is refused (400). A save whose
- * `clientKey` was written already is a log on that call.
+ * a reply would (docs/calls.md). do_not_contact is final (a change is a 409).
+ * A new call records `req.phone`, the number dialled, so a wrong_number lands
+ * on it even if the stored one changed; one that does not parse is a 400. A
+ * save whose `clientKey` was written already is a log on that call.
  */
 export function recordCall(
   prospectId: number,
