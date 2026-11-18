@@ -676,6 +676,21 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // The reply credit on draft usage (ledger-drafts.ts DV_REPLIED) looks up
+    // each sent version's slot and, for intro versions with no prospect id,
+    // the prospect by lower-cased email. Without these, every lookup walked
+    // the table: GET /api/triggers took ~37 s on a 7k-version ledger.
+    version: 31,
+    name: "draft-usage-indexes",
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_draft_versions_slot
+          ON draft_versions(play_name, prospect_key, step_index, outcome);
+        CREATE INDEX IF NOT EXISTS idx_prospects_email_lower ON prospects(lower(email));
+      `);
+    },
+  },
 ];
 
 /**
