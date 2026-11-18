@@ -1235,6 +1235,7 @@ export async function approveQueueRoute(
       member: currentMember(req)?.email ?? null,
       notes: notes === moving.reserved ? moving.previous.notes : notes,
       previousDecision: {
+        reviewed_at: approved.reviewed_at ?? null,
         decision: approved.decision ?? null,
         decided_at: approved.decided_at ?? null,
         decided_by: approved.decided_by ?? null,
@@ -1457,7 +1458,7 @@ const activeQueueMoves = new Map<
       member: string | null;
       previousDecision: Pick<
         QueueRow,
-        "decision" | "decided_at" | "decided_by" | "decision_reason"
+        "reviewed_at" | "decision" | "decided_at" | "decided_by" | "decision_reason"
       >;
     };
   }
@@ -1529,6 +1530,7 @@ export async function moveQueueRowRoute(
       notes: row.notes,
       member: row.decided_by_member ?? null,
       previousDecision: {
+        reviewed_at: row.reviewed_at ?? null,
         decision: row.decision ?? null,
         decided_at: row.decided_at ?? null,
         decided_by: row.decided_by ?? null,

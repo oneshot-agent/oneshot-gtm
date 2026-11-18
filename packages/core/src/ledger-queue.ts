@@ -1978,8 +1978,14 @@ export class QueueStore {
     id: number;
     reservedNotes: string;
     member?: string | null;
-    /** Restore the captured decision with its member, including bulk and machine decisions. */
-    previousDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
+    /**
+     * Restore the captured decision with its member, including bulk and
+     * machine decisions, and the captured review time, null included.
+     */
+    previousDecision?: Pick<
+      QueueRow,
+      "reviewed_at" | "decision" | "decided_at" | "decided_by" | "decision_reason"
+    >;
     status: QueueStatus;
     notes: string | null;
   }): boolean {
@@ -1987,6 +1993,7 @@ export class QueueStore {
     const decision =
       input.status === "approved" ? "approve" : input.status === "rejected" ? "reject" : null;
     const previousDecision = input.previousDecision ?? {
+      reviewed_at: input.status === "pending" ? null : now,
       decision,
       decided_at: decision ? now : null,
       decided_by: decision ? "human" : null,
@@ -1995,15 +2002,16 @@ export class QueueStore {
     // Every restored status gets its decision back, `expired` included: the
     // reservation overwrote these columns whatever the row's status was, and
     // the member below is restored unconditionally, so skipping one status
-    // would leave the move's `reject` beside the prior member.
-    const reviewedAtSql = input.status === "pending" ? "NULL" : "$now";
+    // would leave the move's `reject` beside the prior member. `reviewed_at`
+    // goes back with it: the reservation stamped its own time there, and
+    // few-shot ordering and the source report's window both read that column.
     const sentGuard =
       input.status === "pending" || input.status === "approved"
         ? " AND status != 'sent' AND sent_at IS NULL"
         : "";
     const r = this.db
       .prepare(
-        `UPDATE target_queue SET status = $status, notes = $notes, decided_by_member = $member, send_started_at = NULL, reviewed_at = ${reviewedAtSql}, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
+        `UPDATE target_queue SET status = $status, notes = $notes, decided_by_member = $member, send_started_at = NULL, reviewed_at = $reviewedAt, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
       )
       .run({
         $status: input.status,
@@ -2011,7 +2019,7 @@ export class QueueStore {
         $id: input.id,
         $reserved: input.reservedNotes,
         $member: input.member ?? null,
-        ...(input.status === "pending" ? {} : { $now: now }),
+        $reviewedAt: previousDecision.reviewed_at,
         $decision: previousDecision.decision,
         $decidedAt: previousDecision.decided_at,
         $decidedBy: previousDecision.decided_by,
