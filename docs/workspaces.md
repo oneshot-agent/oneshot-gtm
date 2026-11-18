@@ -76,6 +76,6 @@ To hand a person to another product, use **move →** on the queue row. The dest
 
 ## In the dashboard
 
-A chip in the masthead names the workspace and its port. Click it, or `⌘K → Workspaces`, to see every workspace with a live status dot. A running one opens in a new tab, on the hostname this page was opened with; a stopped one starts first. If it is not up within 15 seconds you get the command to start it by hand.
+A chip in the masthead names the workspace and its port. Click it, or `⌘K → Workspaces`, to see every workspace with a live status dot. A running one opens in a new tab, on the hostname this page was opened with; a stopped one starts first, with only its own keys and wallet, not the ones of the dashboard that started it. If it is not up within 15 seconds you get the command to start it by hand.
 
 Workspaces created with **New workspace** install their service automatically when a user service manager is available. For CLI-created workspaces, install a [service](./background-monitoring.md) to bring the dashboard back after a restart.

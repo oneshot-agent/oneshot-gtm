@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -73,6 +73,9 @@ describe("POST /api/workspaces", () => {
       expect(service).toContain(String(firstPort));
       expect(service).toContain("--no-env-file");
       expect(service).toContain("ONESHOT_GTM_WORKSPACES");
+      // vitest.setup.ts relocates the shared database; the service must follow it.
+      expect(service).toContain("ONESHOT_GTM_SHARED");
+      expect(service).toContain(process.env["ONESHOT_GTM_SHARED"]!);
       expect(service).toContain("ONESHOT_GTM_NO_BROWSER");
       expect(service).toContain("/apps/server/src/bin.ts");
       expect(run.mock.calls).toEqual(
@@ -102,6 +105,15 @@ describe("POST /api/workspaces", () => {
     expect(loadRegistry().workspaces["beta"]!.port).toBe(firstPort + 1);
     expect((await results[2]!.json()).error).toContain("already exists");
     expect((await create({ name: "default" })).status).toBe(409);
+  });
+
+  it("never assigns the port this dashboard is serving on, registered or not", async () => {
+    // A dashboard started with `--port` or PORT on a port the registry does not hold.
+    vi.stubEnv("PORT", String(firstPort));
+    const res = await create({ name: "acme" });
+    expect(res.status).toBe(201);
+    expect((await res.json()).port).toBe(firstPort + 1);
+    expect(loadRegistry().workspaces["acme"]!.port).toBe(firstPort + 1);
   });
 
   it("rejects malformed bodies and names with the CLI's exact rules before writing", async () => {
@@ -190,6 +202,54 @@ describe("POST /api/workspaces", () => {
     });
     expect(existsSync(target("linux"))).toBe(true);
     expect(existsSync(join(loadRegistry().workspaces["acme"]!.home, "config.json"))).toBe(true);
+  });
+
+  it("keeps the home and its config when settings were saved after initialization", async () => {
+    const home = join(tmp, "registry", "acme");
+    const saved = JSON.stringify({ founderName: "Saved in Setup" });
+    run.mockImplementation(async (_command, args) => {
+      // A server launched from the switcher saves Setup while the unit is enabling.
+      if (args.includes("enable")) {
+        writeFileSync(join(home, "config.json"), saved);
+        throw new Error("activation failed");
+      }
+    });
+    const res = await create({ name: "acme" });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({
+      name: "acme",
+      error: expect.stringContaining("workspace retained"),
+    });
+    expect(readFileSync(join(home, "config.json"), "utf8")).toBe(saved);
+    expect(loadRegistry().workspaces["acme"]).toBeDefined();
+  });
+
+  it("keeps the config when the workspace's server has written other files", async () => {
+    const home = join(tmp, "registry", "acme");
+    run.mockImplementation(async (_command, args) => {
+      if (args.includes("enable")) {
+        writeFileSync(join(home, "ledger.sqlite"), "");
+        throw new Error("activation failed");
+      }
+    });
+    const res = await create({ name: "acme" });
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain("workspace retained");
+    expect(existsSync(join(home, "config.json"))).toBe(true);
+    expect(loadRegistry().workspaces["acme"]).toBeDefined();
+  });
+
+  it("does not hand this workspace's keys to an unsupervised new server", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "parent-openrouter");
+    vi.stubEnv("AGENT_PRIVATE_KEY", "parent-wallet");
+    vi.stubEnv("GITHUB_TOKEN", "parent-github");
+    run.mockRejectedValue(new Error("no user bus"));
+    expect((await create({ name: "acme" })).status).toBe(201);
+    const env = spawn.mock.calls[0]![0].env as Record<string, string | undefined>;
+    expect(env["ONESHOT_GTM_HOME"]).toBe(join(tmp, "registry", "acme"));
+    expect(env).not.toHaveProperty("OPENROUTER_API_KEY");
+    expect(env).not.toHaveProperty("AGENT_PRIVATE_KEY");
+    expect(env).not.toHaveProperty("GITHUB_TOKEN");
   });
 
   it("rolls back when the unsupervised spawn fails", async () => {

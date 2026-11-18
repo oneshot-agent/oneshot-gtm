@@ -1,6 +1,8 @@
-import { rmdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, rmdirSync, unlinkSync } from "node:fs";
+import { join, resolve } from "node:path";
 import {
+  ENV_ONLY_SECRET_KEYS,
+  SECRET_KEYS,
   WorkspaceError,
   ServiceRollbackError,
   assertValidName,
@@ -10,6 +12,7 @@ import {
   initializeWorkspaceHome,
   installDashboardService,
   removeWorkspace,
+  sharedDir,
   workspacesDir,
   type WorkspaceEntry,
   currentWorkspaceName,
@@ -27,7 +30,7 @@ import { jsonResponse } from "../server.ts";
  * same-origin and the switcher has a single polling surface.
  */
 
-/** The port this server is actually bound to (bin.ts reads the same env). */
+/** The port this server is bound to: bin.ts sets PORT to the port it chose. */
 function boundPort(): number {
   const p = Number.parseInt(process.env["PORT"] ?? "3030", 10);
   return Number.isFinite(p) ? p : 3030;
@@ -124,7 +127,8 @@ export async function workspaceCreate(
 
   let entry: WorkspaceEntry;
   try {
-    entry = createWorkspace(name);
+    // The running dashboard's port may be unregistered (`--port`, PORT).
+    entry = createWorkspace(name, { reservedPorts: [boundPort()] });
   } catch (err) {
     return jsonResponse(
       { error: (err as Error).message },
@@ -132,10 +136,9 @@ export async function workspaceCreate(
       req,
     );
   }
-  let initialized = false;
+  let initialConfig: string | null = null;
   try {
-    initializeWorkspaceHome(entry.home);
-    initialized = true;
+    initialConfig = initializeWorkspaceHome(entry.home);
     const spec = dashboardService({
       bunBin: process.execPath,
       serverEntry: dashboardServerEntry(),
@@ -147,6 +150,10 @@ export async function workspaceCreate(
     // Keep a relocated registry visible after reboot, too.
     if (process.env["ONESHOT_GTM_WORKSPACES"]) {
       spec.env.push(["ONESHOT_GTM_WORKSPACES", workspacesDir()]);
+    }
+    // And the shared database, which holds members and allowed hosts.
+    if (process.env["ONESHOT_GTM_SHARED"]?.trim()) {
+      spec.env.push(["ONESHOT_GTM_SHARED", resolve(sharedDir())]);
     }
     const persistent = await installDashboardService(spec, serviceOptions);
     if (!persistent) spawnWorkspace(name, entry);
@@ -166,7 +173,12 @@ export async function workspaceCreate(
     let error = (err as Error).message;
     if (!(err instanceof ServiceRollbackError)) {
       try {
-        if (initialized) unlinkSync(join(entry.home, "config.json"));
+        // A launch from the switcher can start this workspace's server while
+        // the service is still being installed, and it can save settings or
+        // open its ledger. Delete only what this request wrote and nothing
+        // has touched since; otherwise keep the home.
+        if (initialConfig !== null) assertUntouchedHome(entry.home, initialConfig);
+        if (initialConfig !== null) unlinkSync(join(entry.home, "config.json"));
         // Never recursively delete a home: unexpected files mean it must be kept.
         rmdirSync(entry.home);
         removeWorkspace(name);
@@ -184,6 +196,17 @@ export async function workspaceCreate(
       500,
       req,
     );
+  }
+}
+
+/** Throw unless the home holds only the config.json this request wrote, unchanged. */
+function assertUntouchedHome(home: string, initialConfig: string): void {
+  const files = readdirSync(home);
+  if (files.length !== 1 || files[0] !== "config.json") {
+    throw new Error(`${home} has files the new workspace's server wrote`);
+  }
+  if (readFileSync(join(home, "config.json"), "utf8") !== initialConfig) {
+    throw new Error(`${home}/config.json was saved after creation`);
   }
 }
 
@@ -240,11 +263,12 @@ function spawnWorkspace(name: string, entry: { home: string; port: number }): vo
   // The parent may be running in dev mode; the child has no vite of its own
   // and must serve its static build instead of 302ing to the parent's.
   delete env["VITE_DEV_SERVER_URL"];
-  // A sibling workspace must resolve its own Smartlead account. Otherwise
-  // applySecretsToEnv's fill-blanks rule keeps the parent's key and silently
-  // lists/sends against the wrong account. --no-env-file also prevents Bun
-  // from reintroducing the repository's Smartlead key before config loads.
-  delete env["SMARTLEAD_API_KEY"];
+  // A sibling workspace must resolve its own keys and wallet. This process's
+  // env already holds its own workspace's .env (applySecretsToEnv), and the
+  // child's fill-blanks rule would keep those values and silently spend,
+  // send or list on the wrong accounts. --no-env-file also prevents Bun from
+  // reintroducing the repository's keys before config loads.
+  for (const key of [...SECRET_KEYS, ...ENV_ONLY_SECRET_KEYS]) delete env[key];
 
   // fileURLToPath, not .pathname: a repo path with a space or non-ASCII char
   // would arrive percent-encoded and the child would die on a missing file.

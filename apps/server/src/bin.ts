@@ -41,6 +41,10 @@ if (args.kind === "error") {
   process.exit(2);
 }
 const { port, noBrowser } = args;
+// Publish the port actually chosen (`--port`, PORT or the registered one).
+// The workspace API reads it to report this dashboard and to keep a new
+// workspace off it; children get their own PORT.
+process.env["PORT"] = String(port);
 
 // Cache the server on globalThis so Bun's `--hot` re-execution (same
 // process) can swap handlers via `server.reload({fetch})` instead of

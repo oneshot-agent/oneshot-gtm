@@ -185,7 +185,15 @@ export function resolveWorkspaceHome(
   return entry.home;
 }
 
-export function createWorkspace(name: string): WorkspaceEntry {
+/**
+ * `reservedPorts` are ports in use that the registry does not know about, such
+ * as the port of the dashboard that is creating the workspace when it was
+ * started with `--port` or `PORT`. A new workspace never gets one of them.
+ */
+export function createWorkspace(
+  name: string,
+  opts: { reservedPorts?: Iterable<number> } = {},
+): WorkspaceEntry {
   assertValidName(name);
   if (name === DEFAULT_WORKSPACE) {
     throw new WorkspaceError(`'${DEFAULT_WORKSPACE}' is the built-in workspace at ${legacyHome()}`);
@@ -204,7 +212,10 @@ export function createWorkspace(name: string): WorkspaceEntry {
         `${home} already has files (a removed workspace?) — delete them first, or pick another name`,
       );
     }
-    const used = new Set(listWorkspaces(reg).map(([, e]) => e.port));
+    const used = new Set([
+      ...listWorkspaces(reg).map(([, e]) => e.port),
+      ...(opts.reservedPorts ?? []),
+    ]);
     let port = BASE_PORT + 1;
     while (used.has(port)) port += 1;
     const entry: WorkspaceEntry = { home, port, createdAt: new Date().toISOString() };

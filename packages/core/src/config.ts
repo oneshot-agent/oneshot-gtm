@@ -440,14 +440,17 @@ const DEFAULTS: OneShotConfig = {
   icpProposalMinDecisions: 30,
 };
 
-/** Initialize a newly created home with init's defaults, without rebinding this process. */
-export function initializeWorkspaceHome(home: string): void {
+/**
+ * Initialize a newly created home with init's defaults, without rebinding this
+ * process. Returns the config.json text it wrote, so a caller can tell later
+ * whether anything has saved over it.
+ */
+export function initializeWorkspaceHome(home: string): string {
   mkdirSync(home, { recursive: true });
   const { cfg } = bootstrapClientId({ ...DEFAULTS });
-  writeFileSync(join(home, "config.json"), JSON.stringify(cfg, null, 2), {
-    flag: "wx",
-    mode: 0o600,
-  });
+  const text = JSON.stringify(cfg, null, 2);
+  writeFileSync(join(home, "config.json"), text, { flag: "wx", mode: 0o600 });
+  return text;
 }
 
 export function configDir(): string {
