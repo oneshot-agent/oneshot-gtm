@@ -14,15 +14,36 @@ interface Replacement {
   error?: string;
 }
 
+/** A replacement login that has been opened and has not been adopted or given up yet. */
+function awaitingLogin(accountKey: string): Replacement | null {
+  const replacement = getLinkedInInboxStore().progress<Replacement>(`replacement:${accountKey}`);
+  return replacement?.stage === "awaiting_login" && replacement.intentId ? replacement : null;
+}
+
+/**
+ * Wallets where a replacement login is still open. An account that appears on
+ * one may be what that login connected, and it belongs to the member who
+ * started it, so discovery leaves it to the adoption below instead of
+ * recording it with no member. Re-read after discovery's await, like
+ * `pendingLinkedInConnectionWallets`.
+ */
+export function pendingLinkedInReplacementWallets(): Set<string> {
+  return new Set(
+    getLinkedInInboxStore()
+      .accounts()
+      .filter((a) => awaitingLogin(a.key))
+      .map((a) => a.wallet),
+  );
+}
+
 /** Only consumes an explicitly authorized, persisted replacement intent. Never revokes accounts. */
 export async function adoptPendingLinkedInReplacements() {
   const store = getLinkedInInboxStore();
   const review = getReplyReviewStore();
   for (const a of store.accounts()) {
-    if (a.removedAt) continue;
     const progressKey = `replacement:${a.key}`;
-    const replacement = store.progress<Replacement>(progressKey);
-    if (replacement?.stage !== "awaiting_login" || !replacement.intentId) continue;
+    const replacement = awaitingLogin(a.key);
+    if (!replacement?.intentId) continue;
     const result = await callLinkedIn<{
       status: string;
       failure_reason?: string;
@@ -37,7 +58,35 @@ export async function adoptPendingLinkedInReplacements() {
       });
       continue;
     }
-    const newKey = `${a.wallet}:${result.account.id}`;
+    const connected = result.account;
+    const newKey = `${a.wallet}:${connected.id}`;
+    // The login was opened from this account, so what it connected belongs to the
+    // same member from here on, merged yet or not. Recorded before the replacement
+    // stops being open, so discovery never finds the connection with no member.
+    const keepForMember = () => {
+      if (store.accounts().some((x) => x.wallet === a.wallet && x.account.id === connected.id))
+        return;
+      store.saveAccount({
+        key: newKey,
+        wallet: a.wallet,
+        workspace: a.workspace,
+        ownerMember: a.ownerMember || undefined,
+        account: connected,
+        sync: null,
+        checkedAt: null,
+        error: null,
+      });
+    };
+    if (a.removedAt) {
+      // Nothing to merge into: the new connection stays an account of its own.
+      keepForMember();
+      store.saveProgress(progressKey, {
+        ...replacement,
+        stage: "failed",
+        error: "This LinkedIn connection has been removed.",
+      });
+      continue;
+    }
     const claims: Array<[string, string]> = [];
     try {
       for (const key of [
@@ -58,8 +107,13 @@ export async function adoptPendingLinkedInReplacements() {
         `backfill:${a.key}`,
         `backfill:${newKey}`,
       ]).size;
-      if (claims.length !== required || store.account(a.key)?.removedAt) continue;
-      store.replaceAccount(a.key, result.account, linkedInMatches());
+      if (claims.length !== required || store.account(a.key)?.removedAt) {
+        // Another server is still capturing, or the account was removed meanwhile. The
+        // new connection is captured under the member until the next pass settles it.
+        keepForMember();
+        continue;
+      }
+      store.replaceAccount(a.key, connected, linkedInMatches());
       if (replacement.pauseBackfill) {
         const job = store.progress<Record<string, unknown>>(`backfill:${a.key}`);
         if (job)
@@ -76,9 +130,10 @@ export async function adoptPendingLinkedInReplacements() {
       store.saveProgress(progressKey, {
         ...replacement,
         stage: "complete",
-        newAccountId: result.account.id,
+        newAccountId: connected.id,
       });
     } catch (e) {
+      keepForMember();
       store.saveProgress(progressKey, {
         ...replacement,
         stage: "failed",

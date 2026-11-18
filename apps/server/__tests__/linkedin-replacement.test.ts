@@ -77,3 +77,48 @@ it("does not treat opening the login page as a completed grant", async () => {
   expect(store.account("wallet:old")?.account.id).toBe("old");
   expect(store.progress("replacement:wallet:old")).toMatchObject({ stage: "awaiting_login" });
 });
+/** The account being replaced, as one a member connected. A saved record keeps its first owner, so start over. */
+function connectedByMia(removedAt?: string) {
+  store.db.exec("DELETE FROM accounts");
+  store.saveAccount({
+    key: "wallet:old",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: { id: "old", member_urn: "owner", status: "revoked" } as never,
+    sync: null,
+    checkedAt: null,
+    error: null,
+    ownerMember: "mia@example.com",
+    removedAt,
+  });
+}
+it("keeps a connection it cannot merge with the member who opened the login", async () => {
+  connectedByMia();
+  const { pendingLinkedInReplacementWallets } = await import("../src/linkedin-replacement.ts");
+  // Until the login settles, discovery leaves the wallet's new accounts alone.
+  expect([...pendingLinkedInReplacementWallets()]).toEqual(["wallet"]);
+  sdk.mockResolvedValue({
+    status: "completed",
+    account: { id: "new", member_urn: "different", status: "connected", allowed_actions: [] },
+  });
+  await expect(adoptPendingLinkedInReplacements()).rejects.toThrow("does not match");
+  expect(store.account("wallet:old")?.account.id).toBe("old");
+  // The other LinkedIn member Mia signed in as is an account of its own, and hers.
+  expect(store.account("wallet:new")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "new", member_urn: "different" },
+  });
+  expect(pendingLinkedInReplacementWallets().size).toBe(0);
+});
+it("settles a login finished after its account was removed, and keeps the member", async () => {
+  connectedByMia("2026-11-01T00:00:00Z");
+  await adoptPendingLinkedInReplacements();
+  expect(store.account("wallet:old")).toMatchObject({ account: { id: "old" } });
+  expect(store.account("wallet:new")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "new" },
+  });
+  expect(store.progress("replacement:wallet:old")).toMatchObject({ stage: "failed" });
+  await adoptPendingLinkedInReplacements();
+  expect(sdk).toHaveBeenCalledTimes(1);
+});
