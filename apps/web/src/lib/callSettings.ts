@@ -13,6 +13,8 @@ export type CallSectionValues = {
   start: string;
   end: string;
   weekdays: boolean;
+  /** Top-level `phoneOnApprove`, shown here because numbers are for calling. */
+  phoneOnApprove: boolean;
 };
 
 /** What `POST /api/setup` merges under `calls`. The bridge is not edited here. */
@@ -39,7 +41,10 @@ export function callsSettings(status: Pick<SetupStatus, "calls" | "cfg">): Calls
   };
 }
 
-export function callSectionValues(calls: CallsSettingsView): CallSectionValues {
+export function callSectionValues(
+  calls: CallsSettingsView,
+  phoneOnApprove = false,
+): CallSectionValues {
   const step = calls.cadenceStep;
   return {
     enabled: calls.enabled,
@@ -50,6 +55,7 @@ export function callSectionValues(calls: CallsSettingsView): CallSectionValues {
     start: calls.window.start,
     end: calls.window.end,
     weekdays: calls.window.weekdays ?? DEFAULT_CALL_WINDOW.weekdays,
+    phoneOnApprove,
   };
 }
 
@@ -58,8 +64,11 @@ export function callSectionRequest(
   values: CallSectionValues,
   sent: Partial<CallSectionValues>,
 ): SetupRequest & { calls?: CallsSettingsPatch } {
-  if (Object.keys(sent).length === 0) return {};
+  const { phoneOnApprove, ...callKeys } = sent;
+  const lookup = phoneOnApprove === undefined ? {} : { phoneOnApprove };
+  if (Object.keys(callKeys).length === 0) return lookup;
   return {
+    ...lookup,
     calls: {
       enabled: values.enabled,
       cadenceStep: values.stepOn

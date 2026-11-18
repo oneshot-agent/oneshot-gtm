@@ -39,6 +39,7 @@ describe("CallsSection", () => {
     expect(html).toContain('value="09:00"');
     expect(html).toContain('value="17:00"');
     expect(html).toContain("Your phone");
+    expect(html).toContain("Look up a phone number for each row I approve");
     // The phase 1 read-only founder phone and caller ID are gone.
     expect(html).not.toContain("Caller ID");
     expect(html).not.toContain('placeholder="not set"');
@@ -83,6 +84,18 @@ describe("Calls section request", () => {
       },
     });
     expect(callSectionRequest(values, {})).toEqual({});
+  });
+
+  it("sends the phone lookup setting top-level, and calls only when a calls field changed", () => {
+    const values = { ...callSectionValues(off, false), phoneOnApprove: true };
+    expect(callSectionRequest(values, { phoneOnApprove: true })).toEqual({ phoneOnApprove: true });
+    const both = callSectionRequest(
+      { ...values, enabled: true },
+      { phoneOnApprove: true, enabled: true },
+    );
+    expect(both.phoneOnApprove).toBe(true);
+    expect(both.calls?.enabled).toBe(true);
+    expect(callSectionValues(off, true).phoneOnApprove).toBe(true);
   });
 
   it("flags a window out of order on both ends, so editing either one blocks Save", () => {
