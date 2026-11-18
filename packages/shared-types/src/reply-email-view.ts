@@ -84,8 +84,7 @@ export function emailThreads(
       kind: newest.replyKind,
       intent: newest.intent,
       intentReason: null,
-      // A conversation item carries no confidence, so this label is never flagged for review.
-      intentReview: false,
+      intentReview: !!newest.intentReview,
       fromEmail: c.email,
       fromRaw: c.name ?? c.email,
       subject: newest.subject ?? "",

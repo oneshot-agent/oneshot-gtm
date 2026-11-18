@@ -349,6 +349,8 @@ describe("inbox route — persisted drafts & sent replies", () => {
               source_identity_id: "gmail:me@x.com",
               thread_id: "t1",
               message_id: "<m1@mail>",
+              intent: "question",
+              intent_review: 1,
             },
           ],
         ],
@@ -391,7 +393,11 @@ describe("inbox route — persisted drafts & sent replies", () => {
     // Timeline order: outreach (SQLite timestamp, normalized) → their reply → our manual answer.
     expect(conv.items.map((i) => i.kind)).toEqual(["outreach", "reply", "sent"]);
     expect(conv.items[0]!.body).toBe("outreach body");
-    expect(conv.items[1]!.body).toBe("It's sdk maintenance");
+    expect(conv.items[1]).toMatchObject({
+      body: "It's sdk maintenance",
+      intent: "question",
+      intentReview: true,
+    });
     expect(conv.items[2]!.body).toBe("my answer");
   });
 

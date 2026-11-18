@@ -10,13 +10,10 @@ import { classifyReplyIntent } from "@oneshot-gtm/intel";
 import { stopCadencesForOptOut } from "@oneshot-gtm/plays";
 
 /**
- * Give this workspace's LinkedIn replies the reply labels email replies get
- * (REPLY_INTENTS), with the same classifier and the workspace's
- * `replyClassifier` config. Only the accounts this workspace owns: the
- * workspace servers share one inbox store, and each would otherwise pay for
- * the same message. An `unsubscribe` label opts the person out on every
- * channel and stops their live cadences where the reply was delivered.
- * Bounded per call; logs failures and never throws.
+ * Label this workspace's LinkedIn replies with email's reply labels and
+ * classifier config. Only accounts this workspace owns: the servers share one
+ * store, and each would otherwise pay for the same message. An `unsubscribe`
+ * stops the person's live cadences. Bounded per call; logs, never throws.
  */
 export async function labelLinkedInReplies(
   opts: { limit?: number; classify?: LinkedInReplyClassifier; store?: LinkedInInboxStore } = {},

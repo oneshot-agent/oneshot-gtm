@@ -11,10 +11,21 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return { ...actual, classifyReplyIntent: classifyMock };
 });
 
-const { LinkedInInboxStore, currentWorkspaceName } = await import("@oneshot-gtm/core");
+const { Ledger, LinkedInInboxStore, canonicalLinkedInProfileKey, configDir, currentWorkspaceName } =
+  await import("@oneshot-gtm/core");
 const { commandIntelBackfillIntent } = await import("../src/commands/intel.ts");
 
 let store: InstanceType<typeof LinkedInInboxStore>;
+const result = (intent: string) => ({
+  intent,
+  reason: intent,
+  confidence: 0.9,
+  probabilities: null,
+  classifier: "decisions:stub",
+  costMicros: 1,
+  review: false,
+  fellBack: false,
+});
 beforeEach(() => {
   store = new LinkedInInboxStore(join(tmpdir(), `backfill-linkedin-${randomUUID()}.sqlite`));
   store.saveAccount({
@@ -41,16 +52,7 @@ beforeEach(() => {
     })) as never,
   );
   classifyMock.mockReset();
-  classifyMock.mockResolvedValue({
-    intent: "interested",
-    reason: "interested",
-    confidence: 0.9,
-    probabilities: null,
-    classifier: "decisions:stub",
-    costMicros: 1,
-    review: false,
-    fellBack: false,
-  });
+  classifyMock.mockResolvedValue(result("interested"));
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 });
 afterEach(() => {
@@ -88,4 +90,80 @@ it("ends when every remaining reply fails", async () => {
   await commandIntelBackfillIntent({ linkedin: true, linkedinStore: store });
   expect(classifyMock).toHaveBeenCalledTimes(30);
   expect(labelled()).toBe(0);
+});
+
+it("says how many replies failed every retry, and --retry-failed labels them", async () => {
+  for (let i = 0; i < 30; i++)
+    for (let n = 0; n < 3; n++) store.recordMessageIntentFailure("mine", `m${i}`);
+  await commandIntelBackfillIntent({ linkedin: true, linkedinStore: store });
+  expect(classifyMock).not.toHaveBeenCalled();
+  expect(vi.mocked(process.stdout.write).mock.calls.flat().join("")).toContain(
+    "30 LinkedIn replies failed every retry",
+  );
+  // A dry run classifies them and still writes nothing.
+  await commandIntelBackfillIntent({
+    linkedin: true,
+    retryFailed: true,
+    dryRun: true,
+    limit: 2,
+    linkedinStore: store,
+  });
+  expect(classifyMock).toHaveBeenCalledTimes(2);
+  expect(labelled()).toBe(0);
+  expect(store.exhaustedReplyCount(["mine"])).toBe(30);
+  await commandIntelBackfillIntent({ linkedin: true, retryFailed: true, linkedinStore: store });
+  expect(labelled()).toBe(30);
+});
+
+it("an unsubscribe stops the person's live cadences; a dry run stops nothing", async () => {
+  const ledger = new Ledger(join(configDir(), "ledger.sqlite"));
+  try {
+    const slug = `ada-${randomUUID().slice(0, 8)}`;
+    const url = `https://linkedin.com/in/${slug}`;
+    const prospectId = ledger.upsertProspect({
+      email: `${slug}@example.test`,
+      name: "Ada",
+      linkedin_url: url,
+    });
+    store.db.exec("DELETE FROM messages");
+    store.saveConversation(
+      "mine",
+      { id: slug, attendees: [{ is_self: false, profile_url: url }] } as never,
+      [],
+    );
+    store.assign(`linkedin:mine:${slug}`, { workspace: currentWorkspaceName(), prospectId });
+    store.saveMessages("mine", [
+      {
+        id: "stop",
+        conversation_id: slug,
+        direction: "inbound",
+        sender_name: "Ada",
+        text: "Please stop messaging me",
+        sent_at: "2026-11-01T10:00:00Z",
+        deleted: false,
+        attachments: [],
+      },
+    ] as never);
+    store.deliverAll(store.threads(), [
+      {
+        workspace: currentWorkspaceName(),
+        home: configDir(),
+        prospectId,
+        name: "Ada",
+        profile: canonicalLinkedInProfileKey(url)!,
+      },
+    ]);
+    ledger.enrollCadence({ prospectId, playName: "intro", nextDueAt: "2026-12-01T09:00:00.000Z" });
+    classifyMock.mockResolvedValue(result("unsubscribe"));
+
+    await commandIntelBackfillIntent({ linkedin: true, dryRun: true, linkedinStore: store });
+    expect(store.messageIntent("mine", "stop")).toBeNull();
+    expect(ledger.getCadence(prospectId, "intro")?.status).toBe("active");
+
+    await commandIntelBackfillIntent({ linkedin: true, linkedinStore: store });
+    expect(store.messageIntent("mine", "stop")?.intent).toBe("unsubscribe");
+    expect(ledger.getCadence(prospectId, "intro")?.status).toBe("unsubscribed");
+  } finally {
+    ledger.close();
+  }
 });

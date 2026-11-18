@@ -227,6 +227,7 @@ describe("reply label filter", () => {
           body: "Let's meet",
           replyKind: "human",
           intent: "meeting",
+          intentReview: true,
         },
       ],
     } satisfies ConversationView;
@@ -234,7 +235,7 @@ describe("reply label filter", () => {
       { replies: [], conversations: [conversation], hasMore: false },
       "test",
     );
-    expect(fallback).toMatchObject({ intent: "meeting", intentReview: false });
+    expect(fallback).toMatchObject({ intent: "meeting", intentReview: true });
     const [unlabelled] = emailThreads(
       { replies: [{ ...reply, intent: null, intentReview: undefined }], hasMore: false },
       "test",

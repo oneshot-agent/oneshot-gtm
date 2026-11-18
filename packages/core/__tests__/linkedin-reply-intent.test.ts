@@ -112,8 +112,8 @@ describe("message labels in the shared store", () => {
     ]);
     expect(store.unlabelledReplies([], { limit: 10 })).toEqual([]);
 
-    expect(store.claimMessageIntent("account", "new")).toBe(true);
-    expect(store.claimMessageIntent("account", "new")).toBe(false);
+    expect(store.claimMessageIntent("account", "new")).not.toBeNull();
+    expect(store.claimMessageIntent("account", "new")).toBeNull();
     expect(ids()).toEqual(["old"]);
 
     store.setMessageIntent("account", "new", label("interested", { review: true }));
@@ -128,7 +128,7 @@ describe("message labels in the shared store", () => {
     });
     // Labelled: never listed or claimed again.
     expect(ids()).toEqual(["old"]);
-    expect(store.claimMessageIntent("account", "new")).toBe(false);
+    expect(store.claimMessageIntent("account", "new")).toBeNull();
     expect(store.messageIntent("account", "old")).toBeNull();
     expect([...store.conversationIntents("account", "chat").keys()]).toEqual(["new"]);
   });
@@ -138,10 +138,10 @@ describe("message labels in the shared store", () => {
     const now = Date.parse("2026-11-18T12:00:00Z");
     const listed = (at: number) =>
       store.unlabelledReplies(["account"], { limit: 10, now: at }).length;
-    expect(store.claimMessageIntent("account", "flaky", now)).toBe(true);
+    expect(store.claimMessageIntent("account", "flaky", now)).not.toBeNull();
     store.recordMessageIntentFailure("account", "flaky", now);
     expect(listed(now)).toBe(0);
-    expect(store.claimMessageIntent("account", "flaky", now)).toBe(false);
+    expect(store.claimMessageIntent("account", "flaky", now)).toBeNull();
     // One failure waits an hour; the next waits two.
     expect(listed(now + 61 * 60_000)).toBe(1);
     store.recordMessageIntentFailure("account", "flaky", now);
@@ -149,7 +149,54 @@ describe("message labels in the shared store", () => {
     expect(listed(now + 121 * 60_000)).toBe(1);
     store.recordMessageIntentFailure("account", "flaky", now);
     expect(listed(now + 24 * 60 * 60_000)).toBe(0);
-    expect(store.claimMessageIntent("account", "flaky", now + 24 * 60 * 60_000)).toBe(false);
+    expect(store.claimMessageIntent("account", "flaky", now + 24 * 60 * 60_000)).toBeNull();
+  });
+
+  it("--retry-failed gives an exhausted message its attempts back", () => {
+    store.saveMessages("account", [message("flaky"), message("fine")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    for (let i = 0; i < 3; i++) store.recordMessageIntentFailure("account", "flaky", now);
+    const later: { limit: number; now: number; includeExhausted?: boolean } = {
+      limit: 10,
+      now: now + 24 * 60 * 60_000,
+    };
+    const ids = (opts = later) =>
+      store.unlabelledReplies(["account"], opts).map((r) => r.message.id);
+    expect(ids()).toEqual(["fine"]);
+    expect(store.exhaustedReplyCount(["account"])).toBe(1);
+    // A dry run lists it without writing; it stays exhausted.
+    expect(ids({ ...later, includeExhausted: true }).toSorted()).toEqual(["fine", "flaky"]);
+    expect(store.exhaustedReplyCount(["account"])).toBe(1);
+    expect(store.resetExhaustedReplies(["account"])).toBe(1);
+    expect(store.exhaustedReplyCount(["account"])).toBe(0);
+    expect(ids({ limit: 10, now }).toSorted()).toEqual(["fine", "flaky"]);
+  });
+
+  it("a completion whose claim lapsed never replaces the label of the caller that retook it", () => {
+    store.saveMessages("account", [message("slow")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const first = store.claimMessageIntent("account", "slow", now);
+    const second = store.claimMessageIntent("account", "slow", now + 6 * 60_000);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    // The first caller finishes while the second still holds the claim: nothing is written.
+    expect(store.setMessageIntent("account", "slow", label("question"), { claim: first })).toBe(
+      null,
+    );
+    store.recordMessageIntentFailure("account", "slow", now, first);
+    expect(store.messageIntent("account", "slow")).toBeNull();
+    expect(store.setMessageIntent("account", "slow", label("meeting"), { claim: second })).toEqual(
+      [],
+    );
+    expect(store.setMessageIntent("account", "slow", label("question"), { claim: first })).toBe(
+      null,
+    );
+    // Nor does a write without a claim replace a stored label.
+    expect(store.setMessageIntent("account", "slow", label("unsubscribe"))).toBe(null);
+    expect(store.messageIntent("account", "slow")?.intent).toBe("meeting");
+    expect(
+      store.db.query("SELECT attempts FROM message_intents WHERE message_id='slow'").get(),
+    ).toEqual({ attempts: 0 });
   });
 });
 
@@ -255,6 +302,21 @@ describe("labelLinkedInReplyBatch", () => {
     expect((await labelLinkedInReplyBatch({ classify, store })).checked).toBe(0);
   });
 
+  it("a slow classify whose claim was retaken keeps the other caller's label", async () => {
+    store.saveMessages("account", [message("slow")] as never);
+    const out = await labelLinkedInReplyBatch({
+      classify: async () => {
+        // Another server retakes the lapsed claim and stores its label first.
+        const claim = store.claimMessageIntent("account", "slow", Date.now() + 6 * 60_000);
+        store.setMessageIntent("account", "slow", label("meeting"), { claim });
+        return label("unsubscribe");
+      },
+      store,
+    });
+    expect(out).toMatchObject({ labelled: 0, skipped: 1, labels: [] });
+    expect(store.messageIntent("account", "slow")?.intent).toBe("meeting");
+  });
+
   it("a dry run classifies without storing", async () => {
     store.saveMessages("account", [message("dry")] as never);
     const out = await labelLinkedInReplyBatch({
@@ -266,6 +328,6 @@ describe("labelLinkedInReplyBatch", () => {
       { accountKey: "account", messageId: "dry", intent: "unsubscribe", review: false },
     ]);
     expect(store.messageIntent("account", "dry")).toBeNull();
-    expect(store.claimMessageIntent("account", "dry")).toBe(true);
+    expect(store.claimMessageIntent("account", "dry")).not.toBeNull();
   });
 });

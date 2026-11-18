@@ -11,8 +11,10 @@ import {
   getLinkedInInboxStore,
   labelLinkedInReplyBatch,
   loadConfig,
+  workspaceLinkedInAccountKeys,
   type LinkedInInboxStore,
 } from "@oneshot-gtm/core";
+import { stopCadencesForOptOut } from "@oneshot-gtm/plays";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
 import { bail, box, c, header, note, ok, warn } from "../output.ts";
@@ -137,6 +139,8 @@ export interface BackfillIntentOptions {
   allowUnsubscribeDowngrade?: boolean;
   /** Label this workspace's LinkedIn replies instead of email ones. */
   linkedin?: boolean;
+  /** With `linkedin`: also retry replies whose label failed every attempt. */
+  retryFailed?: boolean;
   /** Tests only: the shared LinkedIn inbox store. */
   linkedinStore?: LinkedInInboxStore;
 }
@@ -145,19 +149,26 @@ export interface BackfillIntentOptions {
 const LINKEDIN_BACKFILL_BATCH = 25;
 
 /**
- * `backfill-intent --linkedin`: label the human LinkedIn replies on the
- * accounts this workspace owns that have no label, in batches until none is
- * left (or `limit` are done). The same claim the server's background pass
- * takes, so a message both see is paid for once; a message that fails waits
- * out its backoff, so the loop ends. Like the email backfill it only labels:
- * no cadence is stopped here, though an `unsubscribe` label is an opt-out
- * from then on (contact-optout.ts reads it). A dry run classifies one batch
- * of up to `limit` (default 200) and writes nothing.
+ * `backfill-intent --linkedin`: label this workspace's unlabelled LinkedIn
+ * replies in batches until none is left (or `limit` are done), under the
+ * server pass's claim, so each is paid for once. An `unsubscribe` label stops
+ * that person's cadences, as the server pass does. A dry run classifies (still
+ * paid) one batch of up to `limit` (default 200) and writes nothing.
  */
 async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void> {
   if (opts.reclassify || opts.sinceDays != null)
     bail("--linkedin labels unlabelled replies only: drop --reclassify and --since.");
   const store = opts.linkedinStore ?? getLinkedInInboxStore();
+  const accountKeys = workspaceLinkedInAccountKeys(store);
+  if (opts.retryFailed && !opts.dryRun) store.resetExhaustedReplies(accountKeys);
+  const nothingLeft = () => {
+    const exhausted = opts.retryFailed && !opts.dryRun ? 0 : store.exhaustedReplyCount(accountKeys);
+    note(
+      exhausted > 0
+        ? `Nothing to backfill — ${exhausted} LinkedIn repl${exhausted === 1 ? "y" : "ies"} failed every retry; --retry-failed tries again.`
+        : "Nothing to backfill — every LinkedIn reply already has a label.",
+    );
+  };
   const print = (labels: Array<{ messageId: string; intent: string; review: boolean }>) => {
     for (const l of labels)
       process.stdout.write(
@@ -170,17 +181,19 @@ async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void
       limit: opts.limit ?? 200,
       store,
       dryRun: true,
+      ...(opts.retryFailed ? { includeExhausted: true } : {}),
     });
     print(out.labels);
-    if (out.checked === 0) note("Nothing to backfill — every LinkedIn reply already has a label.");
+    if (out.checked === 0) nothingLeft();
     else ok(`would label ${out.labels.length}, ${out.failed} failed.`);
     return;
   }
-  const total = { labelled: 0, failed: 0, skipped: 0, costMicros: 0 };
+  const total = { labelled: 0, failed: 0, skipped: 0, cadencesStopped: 0, costMicros: 0 };
   while (opts.limit == null || total.labelled + total.failed < opts.limit) {
     const left = opts.limit == null ? Infinity : opts.limit - total.labelled - total.failed;
     const out = await labelLinkedInReplyBatch({
       classify: (email) => classifyReplyIntent(email),
+      stopCadences: (ledger, prospectId) => stopCadencesForOptOut(prospectId, ledger, "linkedin"),
       limit: Math.min(LINKEDIN_BACKFILL_BATCH, left),
       store,
     });
@@ -188,20 +201,19 @@ async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void
     total.labelled += out.labelled;
     total.failed += out.failed;
     total.skipped += out.skipped;
+    total.cadencesStopped += out.cadencesStopped;
     total.costMicros += out.costMicros;
     // Nothing left, or only messages another caller holds right now.
     if (out.checked === 0 || out.labelled + out.failed === 0) break;
   }
-  if (total.labelled + total.failed + total.skipped === 0) {
-    note("Nothing to backfill — every LinkedIn reply already has a label.");
-    return;
-  }
+  if (total.labelled + total.failed + total.skipped === 0) return nothingLeft();
   const cost =
     total.costMicros > 0 ? `, $${(total.costMicros / 1_000_000).toFixed(4)} classifier cost` : "";
   ok(
     `labelled ${total.labelled} LinkedIn repl${total.labelled === 1 ? "y" : "ies"}` +
       (total.failed > 0 ? `, ${total.failed} failed (retried later)` : "") +
       (total.skipped > 0 ? `, ${total.skipped} already being labelled` : "") +
+      (total.cadencesStopped > 0 ? `, ${total.cadencesStopped} cadences stopped` : "") +
       cost +
       ".",
   );
@@ -223,6 +235,7 @@ export async function commandIntelBackfillIntent(opts: BackfillIntentOptions = {
     `intel backfill-intent${opts.linkedin ? " --linkedin" : ""}${opts.reclassify ? " --reclassify" : ""}${opts.dryRun ? " (dry run)" : ""}`,
   );
   if (opts.linkedin) return backfillLinkedInIntent(opts);
+  if (opts.retryFailed) bail("--retry-failed applies to --linkedin only.");
   const ledger = getLedger();
   const sinceIso =
     opts.sinceDays != null
