@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import {
   classifyReply,
   getGmailProfile,
@@ -711,6 +712,7 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   } else {
     status = bodyCommitsTerms(draftBody) ? "needs_decision" : null;
     ledger.upsertInboxDraft({
+      member: currentMember(req)?.email ?? null,
       threadKey,
       inboundEmailId,
       toEmail,

@@ -196,7 +196,8 @@ function changedRole(
 async function redraftForRole(row: QueueRow): Promise<boolean> {
   const payload = parsePayload(row.payload_json);
   const offer = payload["offer"];
-  if (isRecord(offer) && offer["editedBy"] === "founder") return false;
+  if (isRecord(offer) && typeof offer["editedBy"] === "string" && !!offer["editedBy"]?.trim())
+    return false;
   try {
     let offerWritten = false;
     if (playMakesOffer(row.play_name)) {

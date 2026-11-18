@@ -1048,6 +1048,7 @@ export interface QueueRowView {
    */
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
+  decidedByMember?: string | null;
   decidedAt: string | null;
   /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
   decisionReason?: DecisionReason | null;
@@ -1348,6 +1349,8 @@ export interface DraftAngle {
 }
 
 export interface LastDraft {
+  /** Member who requested this draft; null for unattended or legacy drafts. */
+  editedBy?: string | null;
   angle?: DraftAngle;
   subject: string;
   body: string;

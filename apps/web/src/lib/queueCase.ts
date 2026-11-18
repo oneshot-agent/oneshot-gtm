@@ -1,3 +1,4 @@
+import type { QueueRowView } from "@oneshot-gtm/shared-types";
 /**
  * The case column of an open queue row (issue #594): what the priority engine
  * wrote about the prospect, laid out as key: value rows where a reason has a
@@ -122,4 +123,20 @@ export function researchEmptyState(payload: unknown): string | null {
   )
     return null;
   return records.length ? "Research unavailable" : "Not researched yet";
+}
+
+/** Named human decisions only: old rows and machine decisions have no member. */
+export function memberDecision(
+  row: Pick<QueueRowView, "status" | "decision" | "decidedBy" | "decidedByMember">,
+): string | null {
+  if (!row.decidedByMember || row.decidedBy === "machine") return null;
+  const verb =
+    row.status === "sent"
+      ? "Sent"
+      : row.decision === "approve"
+        ? "Approved"
+        : row.decision === "reject"
+          ? "Rejected"
+          : null;
+  return verb ? `${verb} by ${row.decidedByMember}` : null;
 }

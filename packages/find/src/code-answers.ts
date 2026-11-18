@@ -111,7 +111,7 @@ export function codeAnswersForThread(
 /** Approve into the brief, as written or with the founder's text (required unless pending). */
 export function approveCodeAnswer(
   id: string,
-  input: { text?: string | null; by: string; ledger?: Ledger },
+  input: { text?: string | null; by: string | null; ledger?: Ledger },
 ): { answer: CodeAnswer } | { error: string } {
   const out = (input.ledger ?? getLedger()).codeAnswers.approve(id, {
     text: input.text ?? null,
@@ -124,7 +124,7 @@ export function approveCodeAnswer(
 
 export function dismissCodeAnswer(
   id: string,
-  input: { by?: string; ledger?: Ledger } = {},
+  input: { by?: string | null; ledger?: Ledger } = {},
 ): { answer: CodeAnswer } | { error: string } {
   const out = (input.ledger ?? getLedger()).codeAnswers.dismiss(id, { by: input.by });
   if ("error" in out) return out;

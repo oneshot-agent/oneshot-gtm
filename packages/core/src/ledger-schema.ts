@@ -557,6 +557,20 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    version: 25,
+    name: "member-attribution",
+    up: (db) => {
+      addColumnIfMissing(db, "target_queue", "decided_by_member", "TEXT");
+      addColumnIfMissing(db, "inbox_drafts", "edited_by", "TEXT");
+      db.exec(`CREATE TABLE IF NOT EXISTS config_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        member TEXT,
+        section TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      )`);
+    },
+  },
 ];
 
 /**

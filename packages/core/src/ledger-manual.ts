@@ -4,6 +4,7 @@ import { channelOf, firstTouchSender } from "./channels.ts";
 
 export interface ManualQueueSend {
   id: number;
+  member?: string | null;
   profileUrl: string;
   name: string | null;
   /** Optimistic check: record precisely the draft the route reviewed. */
@@ -50,7 +51,12 @@ export function recordManualQueueSend(
         metadata: { ...input.metadata, queueId: row.id, manual: true },
       });
       ledger.setQueueProspectId(row.id, prospectId);
-      ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
+      ledger.setQueueStatus({
+        id: row.id,
+        status: "sent",
+        decidedBy: "human",
+        member: input.member,
+      });
       ledger.closeQueueDraftVersion(row.id, "sent");
       return { prospectId };
     })

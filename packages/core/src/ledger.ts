@@ -209,6 +209,7 @@ import {
 import { MailboxStore } from "./mailbox-store.ts";
 import { type ReceiptCompaction, ReceiptStore } from "./ledger-receipts.ts";
 import {
+  recordConfigChange as sysRecordConfigChange,
   clearWebhookReplays as sysClearWebhookReplays,
   consumeWebhookReplay as sysConsumeWebhookReplay,
   deletePendingResolution as sysDeletePendingResolution,
@@ -880,6 +881,7 @@ export class Ledger {
 
   /** @see ledger-inbox.ts#InboxStore.upsertInboxDraft */
   upsertInboxDraft(input: {
+    member?: string | null;
     threadKey: string;
     inboundEmailId: string;
     toEmail: string;
@@ -2087,6 +2089,10 @@ export class Ledger {
     return this.queue.isQueueDuplicate(playName, dedupeKey);
   }
 
+  recordConfigChange(input: { member: string | null; section: string }): void {
+    sysRecordConfigChange(this.db, input);
+  }
+
   /** @see ledger-system.ts#upsertPendingResolution */
   upsertPendingResolution(input: {
     playName: string;
@@ -2292,6 +2298,7 @@ export class Ledger {
      *   the per-row UI routes pass "human" explicitly.
      */
     decidedBy?: "human" | "machine";
+    member?: string | null;
     /** The founder's structured reason (#813); see QueueStore.setQueueStatus. */
     decisionReason?: DecisionReason | null;
   }): void {
@@ -2347,7 +2354,10 @@ export class Ledger {
 
   /** @see ledger-queue.ts#QueueStore.approveAllPending */
   approveAllPending(
-    opts: Omit<QueueListFilters, "status"> & { ids?: readonly number[] } = {},
+    opts: Omit<QueueListFilters, "status"> & {
+      member?: string | null;
+      ids?: readonly number[];
+    } = {},
   ): number {
     return this.queue.approveAllPending(opts);
   }
@@ -2548,6 +2558,7 @@ export class Ledger {
   /** @see ledger-queue.ts#QueueStore.setQueueDraftIfCurrent */
   setQueueDraftIfCurrent(input: {
     id: number;
+    member?: string | null;
     previousDraft: string | null;
     previousPayload: string;
     previousChannel?: string;
@@ -2732,6 +2743,7 @@ export class Ledger {
   restoreQueueMoveIf(input: {
     id: number;
     reservedNotes: string;
+    member?: string | null;
     status: QueueStatus;
     notes: string | null;
   }): boolean {

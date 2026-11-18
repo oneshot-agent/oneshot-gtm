@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import { randomBytes } from "node:crypto";
 import { draftAngleFor, parseDraftAngle } from "./_draft-angle.ts";
 import { toDraftVersionView } from "./_draft-versions.ts";
@@ -394,6 +395,7 @@ export function toView(
     // `?? null`: pre-v26 rows and test fakes may not carry the columns.
     decision: row.decision ?? null,
     decidedBy: row.decided_by ?? null,
+    decidedByMember: row.decided_by === "machine" ? null : (row.decided_by_member ?? null),
     decisionReason: isDecisionReason(row.decision_reason) ? row.decision_reason : null,
     decidedAt: row.decided_at ?? null,
     delivery: deliveryFor(row.status, lastDraft),
@@ -1214,6 +1216,7 @@ export async function approveQueueRoute(
     id,
     status: "approved",
     decidedBy: "human",
+    member: currentMember(req)?.email ?? null,
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
   });
   // The founder's approval is the latest decision on a row a move holds: it
@@ -1513,6 +1516,7 @@ export async function moveQueueRowRoute(
     id,
     status: "rejected",
     decidedBy: "human",
+    member: currentMember(req)?.email ?? null,
     decisionReason: "other",
     notes: note,
   });
@@ -1586,6 +1590,7 @@ export async function moveQueueRowRoute(
         ledger.restoreQueueMoveIf({
           id,
           reservedNotes: moves.reserved,
+          member: currentMember(req)?.email ?? null,
           status: moves.previous.status,
           notes: moves.previous.notes,
         });
@@ -1665,6 +1670,7 @@ export async function rejectQueueRoute(
     id,
     status: "rejected",
     decidedBy: "human",
+    member: currentMember(req)?.email ?? null,
     ...(parsedReason.decisionReason ? { decisionReason: parsedReason.decisionReason } : {}),
     ...(parsed.reason !== undefined ? { notes: parsed.reason } : {}),
   });
@@ -1835,7 +1841,10 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   // is finished in JS, so the UPDATE is then limited to those ids.
   const pendingIds = filteredPendingIds(ledger, filters);
   const exact = !filters.show || queueShowIsExact(filters.show.show);
-  const n = ledger.approveAllPending(exact ? filters : { ...filters, ids: pendingIds });
+  const n = ledger.approveAllPending({
+    ...(exact ? filters : { ...filters, ids: pendingIds }),
+    member: currentMember(req)?.email ?? null,
+  });
   if (n > 0) {
     scheduleNewsfeedOnApproval(pendingIds);
     schedulePhoneOnApproval(pendingIds);
@@ -1901,7 +1910,10 @@ export async function regenerateDraftRoute(
   params: Record<string, string>,
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
-  const out = await regenerateQueueDraft(id, { rotate: () => rotateFromBody(req) });
+  const out = await regenerateQueueDraft(id, {
+    rotate: () => rotateFromBody(req),
+    member: currentMember(req)?.email ?? null,
+  });
   return jsonResponse(out.body, out.status, req);
 }
 
@@ -1920,6 +1932,7 @@ async function rotateFromBody(req: Request): Promise<boolean | null> {
 }
 
 export interface RegenerateDraftOpts {
+  member?: string | null;
   /** Whether to rotate the angle; read after the row checks. Null: a malformed request (400). */
   rotate?: () => Promise<boolean | null>;
   /**
@@ -2119,6 +2132,7 @@ async function regenerateDraftInner(
     ? fresh.payload_json
     : row.payload_json;
   const saved = ledger.setQueueDraftIfCurrent({
+    member: opts.member,
     id,
     previousDraft: row.last_draft_json ?? null,
     previousPayload,
@@ -2215,6 +2229,7 @@ export async function markSentRoute(
     community && thread ? communityProfile(thread.platform, thread.handle)! : profileUrl;
   try {
     const result = ledger.recordManualQueueSend({
+      member: currentMember(req)?.email ?? null,
       id: row.id,
       profileUrl: destination!,
       name: community && thread ? thread.handle : pstr("name"),
@@ -2454,7 +2469,12 @@ export async function sendDraftRoute(
       } catch {
         // best-effort backfill. The invite is already recorded
       }
-      ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
+      ledger.setQueueStatus({
+        id,
+        status: "sent",
+        decidedBy: "human",
+        member: currentMember(req)?.email ?? null,
+      });
       try {
         ledger.closeQueueDraftVersion(id, "sent");
       } catch {
@@ -2684,7 +2704,12 @@ export async function sendDraftRoute(
     }
   }
   // The human read this draft and clicked Send. A per-row judgment.
-  ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
+  ledger.setQueueStatus({
+    id,
+    status: "sent",
+    decidedBy: "human",
+    member: currentMember(req)?.email ?? null,
+  });
   ledger.setQueueDraft({
     id,
     draft: {
@@ -2807,7 +2832,12 @@ async function sendKnownConnectionRow(
     } catch {
       // The connection is recorded either way; the draft is only its label.
     }
-    ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
+    ledger.setQueueStatus({
+      id,
+      status: "sent",
+      decidedBy: "human",
+      member: currentMember(req)?.email ?? null,
+    });
     return jsonResponse({ ok: true, prospectId: out.prospectId, status: out.status }, 200, req);
   } catch (err) {
     ledger.clearQueueSendingMarker(id);

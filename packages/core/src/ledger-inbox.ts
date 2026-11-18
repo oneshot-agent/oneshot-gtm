@@ -76,6 +76,7 @@ export class InboxStore {
    * `setInboxDraftSteer` for that.
    */
   upsertInboxDraft(input: {
+    member?: string | null;
     threadKey: string;
     inboundEmailId: string;
     toEmail: string;
@@ -86,8 +87,8 @@ export class InboxStore {
   }): void {
     this.db
       .prepare(
-        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, status, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, status, updated_at, edited_by)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(thread_key) DO UPDATE SET
            inbound_email_id = excluded.inbound_email_id,
            to_email = excluded.to_email,
@@ -95,7 +96,8 @@ export class InboxStore {
            identity_id = excluded.identity_id,
            body = excluded.body,
            status = excluded.status,
-           updated_at = excluded.updated_at`,
+           updated_at = excluded.updated_at,
+           edited_by = excluded.edited_by`,
       )
       .run(
         input.threadKey,
@@ -106,6 +108,7 @@ export class InboxStore {
         input.body,
         input.status ?? null,
         new Date().toISOString(),
+        input.member ?? null,
       );
   }
 

@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import { getLedger, type CadenceWithProspect } from "@oneshot-gtm/core";
 import { CLICK_RESEARCH_WAIT_MS } from "@oneshot-gtm/find";
 import {
@@ -69,7 +70,7 @@ function offerChoice(o: SequenceOfferValue | ProspectOffer): CadenceOfferChoice 
 export function cadenceOfferView(record: SequenceOfferRecord): CadenceOfferView {
   const o = record.offer;
   const active = o ? offerChoice(o) : null;
-  const founderEdited = o?.editedBy === "founder";
+  const founderEdited = typeof o?.editedBy === "string" && !!o?.editedBy?.trim();
   return {
     ...active,
     text: active?.text ?? null,
@@ -281,7 +282,7 @@ export async function cadenceOfferRoute(
       offer = picked.offer;
       candidates = picked.candidates;
     } else {
-      const written = await founderOffer(body, input);
+      const written = await founderOffer(body, input, currentMember(req)?.email ?? null);
       if (isOfferEditError(written)) {
         return jsonResponse({ error: written.error }, written.status, req);
       }

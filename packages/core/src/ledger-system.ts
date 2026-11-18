@@ -242,3 +242,15 @@ export function clearWebhookReplays(db: Database): void {
 export function releaseWebhookReplay(db: Database, replayKey: string): void {
   db.prepare("DELETE FROM webhook_replays WHERE replay_key = ?").run(replayKey);
 }
+
+/** A server config save's actor and section, without any configuration values. */
+export function recordConfigChange(
+  db: Database,
+  input: { member: string | null; section: string },
+): void {
+  db.prepare("INSERT INTO config_changes(member, section, changed_at) VALUES (?, ?, ?)").run(
+    input.member,
+    input.section,
+    new Date().toISOString(),
+  );
+}
