@@ -48,6 +48,8 @@ const {
   sendCadenceStepBatch,
   CALL_STEP_NOT_SENT,
   PREVIEW_STEP_MOVED,
+  isBreakupStepAt,
+  threadsIntoIntro,
 } = await import("../src/_cadence.ts");
 const { recordCall, listCalls, buildCallBrief, callBriefFor, parseCallBrief, callBriefFlags } =
   await import("../src/_calls.ts");
@@ -87,6 +89,9 @@ function atCallStep(id: number, agoMs = 0) {
 }
 
 const cadence = (id: number) => ledger.getCadence(id, PLAY)!;
+/** A plan as its email labels, other steps by channel. */
+const shape = (seq: { steps: Array<{ channel: string; label?: string | null }> }) =>
+  seq.steps.map((s) => (s.channel === "email" ? s.label : s.channel));
 const callEvents = (id: number) =>
   ledger.listSequenceEventsForProspectPlay(id, PLAY).filter((e) => e.channel === "call");
 
@@ -705,5 +710,75 @@ describe("review fixes", () => {
     const call = recordCall(id, { outcome: "meeting_booked" });
     recordCall(id, { outcome: "meeting_booked", callId: call.id });
     expect(ledger.listDealOutcomesForProspect(id)).toHaveLength(1);
+  });
+
+  describe("the breakup email stays the last step a call step is placed around", () => {
+    const BREAKUP = "__calls_breakup";
+    beforeEach(() => {
+      registerSequence({
+        playName: BREAKUP,
+        steps: ["follow-up 1", "follow-up 2", "breakup"].map((label, i) => ({
+          dayOffset: i * 3,
+          channel: "email" as const,
+          label,
+          breakOnReply: true,
+          builder: async () => ({ kind: "email" as const, subject: "s", body: "b" }),
+        })),
+      });
+    });
+
+    it("a call at position 2 leaves the breakup last", () => {
+      callsOn(2);
+      const seq = effectiveSequence(BREAKUP)!;
+      // Position 2: right after the intro, before every follow-up.
+      expect(shape(seq)).toEqual(["call", "follow-up 1", "follow-up 2", "breakup"]);
+      expect(isBreakupStepAt(seq, 3)).toBe(true);
+      expect(threadsIntoIntro(seq, 3)).toBe(false);
+    });
+
+    it("a call set past the last email goes just before the breakup", () => {
+      callsOn(9);
+      const seq = effectiveSequence(BREAKUP)!;
+      expect(shape(seq)).toEqual(["follow-up 1", "follow-up 2", "call", "breakup"]);
+      expect(isBreakupStepAt(seq, 3)).toBe(true);
+      expect(threadsIntoIntro(seq, 1)).toBe(true);
+      // A sequence without a breakup may end on the call.
+      expect(shape(effectiveSequence(PLAY)!)).toEqual(["touch 1", "touch 2", "touch 3", "call"]);
+    });
+
+    it("with the LinkedIn continuation, the call stays among the emails", () => {
+      callsOn(9);
+      cfg = { ...cfg, linkedinContinuation: true };
+      const seq = effectiveSequence(BREAKUP)!;
+      expect(shape(seq)).toEqual([
+        "follow-up 1",
+        "follow-up 2",
+        "call",
+        "breakup",
+        "linkedin",
+        "linkedin",
+        "linkedin",
+      ]);
+      // The last email still starts its own thread; LinkedIn after it does not count.
+      expect(threadsIntoIntro(seq, 3)).toBe(false);
+      expect(threadsIntoIntro(seq, 1)).toBe(true);
+    });
+  });
+
+  it("listCalls reads the due cadences' plans once, not once per row", () => {
+    callsOn();
+    const ids = [enroll(), enroll("+15126531188", "two@acme.test")];
+    for (const id of ids) atCallStep(id);
+    const perRow = vi.spyOn(ledger, "getCadencePlan");
+    const batch = vi.spyOn(ledger, "cadencePlansFor");
+    const getCadence = vi.spyOn(ledger, "getCadence");
+    expect(
+      listCalls()
+        .due.map((r) => r.prospectId)
+        .toSorted(),
+    ).toEqual(ids.toSorted());
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(perRow).not.toHaveBeenCalled();
+    expect(getCadence).not.toHaveBeenCalled();
   });
 });

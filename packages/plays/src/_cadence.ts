@@ -726,10 +726,12 @@ export function effectiveSequence(
   if (mail && eligible)
     steps.splice(Math.min(mail.position - 2, steps.length), 0, mailStep(mail.delayDays));
   // Spliced in after the letter, so its position counts every step before it,
-  // the letter included.
+  // the letter included. Never after a final breakup email: the breakup
+  // stays the step the sequence ends on (`isBreakupStepAt`), so a call set
+  // past it goes just before it.
   if (call)
     steps.splice(
-      Math.min(Math.max(call.position - 2, 0), steps.length),
+      callIndexBeforeBreakup(steps, Math.min(Math.max(call.position - 2, 0), steps.length)),
       0,
       callStep(playName, call.delayDays),
     );
@@ -744,11 +746,21 @@ export function effectiveSequence(
         : after >= 0
           ? after + 1
           : Math.min(savedCall.index, steps.length);
-    steps.splice(at, 0, callStep(playName, savedCall.dayOffset));
+    steps.splice(callIndexBeforeBreakup(steps, at), 0, callStep(playName, savedCall.dayOffset));
   }
   // Last: the email steps come first, then the LinkedIn continuation.
   if (carriesOn) steps.push(...tail);
   return { playName, steps };
+}
+
+/**
+ * Where a call step may be spliced into a plan's steps (before the LinkedIn
+ * continuation is appended): `at`, or before a last email labelled breakup.
+ */
+function callIndexBeforeBreakup(steps: readonly SequenceStep[], at: number): number {
+  const last = steps.length - 1;
+  const final = steps[last];
+  return final?.channel === "email" && isBreakupLabel(final.label) ? Math.min(at, last) : at;
 }
 
 /** Capture before a configuration write; preserve completed prefixes and any existing mailpiece. */

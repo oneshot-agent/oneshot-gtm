@@ -10,8 +10,10 @@ OneShot API's copy of the same data (same commit, same release).
 | `prefixes`: phone number prefix to IANA zones (`&`-separated) | libphonenumber `resources/timezones/map_data.txt`, the data its `PhoneNumberToTimeZonesMapper` reads | commit `d1457634c3d95e570dad433ee0ab400beb343a56` (2026-10-07) | Apache-2.0    |
 | `countries`: ISO 3166 country code to IANA zones              | tz database `zone.tab`                                                                               | release `2026f`                                                | public domain |
 
-libphonenumber is Copyright (C) The Libphonenumber Authors, licensed under the Apache License, Version 2.0
-(https://www.apache.org/licenses/LICENSE-2.0). The data is used unmodified apart from the JSON packing.
+libphonenumber is Copyright (C) The Libphonenumber Authors, licensed under the Apache License, Version 2.0. The
+notice and the full licence text are in [`LICENSE`](./LICENSE) next to the data; the server build copies it into
+its package (`dist/licenses/libphonenumber-LICENSE`), since the data is bundled there. The data is used unmodified
+apart from the JSON packing.
 
 The longest prefix of a number's E.164 digits wins, as in libphonenumber. A prefix as short as the calling code is
 the whole country's zone list. North American area codes are listed one by one, with finer prefixes where an area

@@ -1464,6 +1464,11 @@ export class Ledger {
    * sentiment-triaged `intent` (issue #480) reads 'unsubscribe' is reported
    * here as 'unsubscribe' too (issue #666), since callers use this value to
    * choose between an "unsubscribed" and a "bounced" outcome.
+   *
+   * An opt-out (an unsubscribe reply, a call logged do-not-contact) is the
+   * person's: it holds every verified address `findProspectByEmail` resolves
+   * to them. A dead mailbox (auto_permanent) holds only the address it came
+   * from.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
     return delivContactSuppressionFor(this.db, email, this.findProspectByEmail(email)?.id ?? null);
@@ -1945,6 +1950,10 @@ export class Ledger {
 
   /** @see ledger-calls.ts#phoneForCall */
   phoneForCall(prospectId: number, defaultCountry?: string): ReturnType<typeof callsPhoneForCall> {
+    // The phone `getProspectById` shows: a shared person's number found in
+    // another workspace is copied to this row first (a version check when
+    // nothing changed).
+    this.refreshSharedPeople();
     return callsPhoneForCall(this.db, prospectId, defaultCountry);
   }
 
@@ -1960,6 +1969,8 @@ export class Ledger {
 
   /** @see ledger-calls.ts#listCallCandidates */
   listCallCandidates(opts: Parameters<typeof callsListCallCandidates>[1]): CallCandidate[] {
+    // As `phoneForCall`: the rows carry their shared people's phones.
+    this.refreshSharedPeople();
     return callsListCallCandidates(this.db, opts);
   }
 

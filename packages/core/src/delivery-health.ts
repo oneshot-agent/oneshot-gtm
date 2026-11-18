@@ -98,6 +98,10 @@ function hasIntentColumn(db: Database): boolean {
  * classifier can miss an opt-out that sentiment classification catches. Older
  * ledgers without intent fall back to kind.
  *
+ * An opt-out is the person's: an unsubscribe reply or a do-not-contact call
+ * recorded against `prospectId` holds every address they resolve from. A
+ * dead mailbox (auto_permanent) is the address's alone, matched by address.
+ *
  * Return the suppression reason, not the raw kind. An intent-only unsubscribe
  * must report unsubscribe so callers do not label the opt-out as a bounce.
  */
@@ -119,9 +123,9 @@ export function contactSuppressionFor(
            CASE WHEN kind IN ('unsubscribe', 'auto_permanent') THEN kind ELSE 'unsubscribe' END AS kind,
            received_at
          FROM inbox_replies
-         WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?)
-                OR prospect_id = ?)
-           AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause})
+         WHERE ((from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
+                AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause}))
+            OR (prospect_id = ? AND (kind = 'unsubscribe'${intentClause}))
          ORDER BY received_at DESC LIMIT 1`,
       )
       .get(canonEmail(email), canonEmail(email), prospectId) as {

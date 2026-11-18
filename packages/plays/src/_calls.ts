@@ -53,6 +53,7 @@ import {
   sequenceOffer,
   stopCadencesForOptOut,
   type CadenceContext,
+  type LoadedCadence,
   type PriorStepRow,
   type StepPayload,
 } from "./_cadence.ts";
@@ -622,8 +623,17 @@ export function listCalls(
 
   const due: CallListRow[] = [];
   const dueIds = new Set<number>();
-  const dueCalls = ledger.listActiveCadences({ dueByIso: now.toISOString() }).flatMap((cad) => {
-    const next = nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id);
+  // The rows, their saved plans and the config are read once for every due
+  // cadence: building a sequence reads nothing again (`LoadedCadence`).
+  const active = ledger.listActiveCadences({ dueByIso: now.toISOString() });
+  const plans = ledger.cadencePlansFor(active);
+  const dueCalls = active.flatMap((cad) => {
+    const loaded: LoadedCadence = {
+      cadence: cad,
+      plan: plans.get(`${cad.prospect_id}|${cad.play_name}`) ?? null,
+      cfg,
+    };
+    const next = nextStepInfo(cad.play_name, cad.current_step, cad.prospect_id, loaded);
     return next?.channel === "call" ? [{ cad, next }] : [];
   });
   // One opt-out read for every due row, not one per row.

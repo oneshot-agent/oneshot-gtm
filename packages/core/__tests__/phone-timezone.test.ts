@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PHONE_TIMEZONE_DATA,
@@ -80,6 +82,22 @@ describe("phoneTimeZones", () => {
   it("keeps its provenance", () => {
     expect(PHONE_TIMEZONE_DATA.libphonenumber.license).toBe("Apache-2.0");
     expect(PHONE_TIMEZONE_DATA.prefixes).toBeGreaterThan(3000);
+  });
+
+  it("ships libphonenumber's notice and the Apache-2.0 text with the data, and in the server build", () => {
+    const root = join(import.meta.dirname, "..", "..", "..");
+    const license = readFileSync(
+      join(root, "packages/core/vendor/phone-timezones/LICENSE"),
+      "utf8",
+    );
+    expect(license).toContain("Copyright (C) The Libphonenumber Authors");
+    expect(license).toContain("Apache License");
+    expect(license).toContain("END OF TERMS AND CONDITIONS");
+    const server = JSON.parse(readFileSync(join(root, "apps/server/package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    expect(server.scripts["build"]).toContain("copy:licenses");
+    expect(server.scripts["copy:licenses"]).toContain("phone-timezones/LICENSE");
   });
 });
 

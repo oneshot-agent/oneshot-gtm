@@ -223,9 +223,53 @@ describe("shared person identity with workspace memberships", () => {
     expect(alpha.contactSuppressionFor("b-new@example.test")).toMatchObject({
       kind: "unsubscribe",
     });
+    // A dead mailbox holds that address only, never the person's others.
+    const bounced = beta.upsertProspect({
+      email: "c-new@example.test",
+      linkedin_url: "https://linkedin.com/in/mailbox-gone",
+    });
+    const gone = alpha.upsertProspect({
+      email: "c-old@example.test",
+      linkedin_url: "https://linkedin.com/in/mailbox-gone",
+    });
+    expect(beta.getProspectById(bounced)?.shared_person_id).toBe(
+      alpha.getProspectById(gone)?.shared_person_id,
+    );
+    alpha.recordInboxReply({
+      id: "g1",
+      threadKey: "t2",
+      prospectId: gone,
+      fromEmail: "c-new@example.test",
+      body: "mailbox does not exist",
+      receivedAt: "2026-11-16T11:00:00.000Z",
+      kind: "auto_permanent",
+    });
+    expect(alpha.contactSuppressionFor("c-new@example.test")).toMatchObject({
+      kind: "auto_permanent",
+    });
+    expect(alpha.contactSuppressionFor("c-old@example.test")).toBeNull();
     // An address nobody knows is not held.
     expect(alpha.contactSuppressionFor("stranger@example.test")).toBeNull();
   });
+  it("the call phone readers see a phone the shared person gained elsewhere", () => {
+    const a = alpha.upsertProspect({
+      email: "caller@example.test",
+      linkedin_url: "https://linkedin.com/in/caller",
+    });
+    expect(alpha.phoneForCall(a).phone).toBeNull();
+    // Another workspace finds the same person's number.
+    beta.upsertProspect({
+      email: "caller@example.test",
+      linkedin_url: "https://linkedin.com/in/caller",
+      phone: "+15126531187",
+    });
+    expect(alpha.getProspectById(a)?.phone).toBe("+15126531187");
+    expect(alpha.phoneForCall(a).phone).toBe("+15126531187");
+    expect(alpha.listCallCandidates({ limit: 10 })).toMatchObject([
+      { prospectId: a, prospectPhone: "+15126531187" },
+    ]);
+  });
+
   it("keeps each workspace's original finder profile provenance", () => {
     const a = beta.upsertProspect({
       email: "same@example.test",
