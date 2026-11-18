@@ -4,7 +4,7 @@ The verification stamp below covers the automated test suite and static checks. 
 
 Last verified **2026-11-18** · Bun 1.3.13 · OneShot SDK 0.65.0 · **8272 tests / 618 files** · typecheck + oxlint + oxfmt pass (0 lint warnings, 0 errors). People a profile read from the last 14 days shows as first-degree connections (`network_distance`) get no connection request: the queue row or the cadence's request step records the connection without an invite or an invite slot, and the first message is due at once. If LinkedIn then answers `not_connected`, that record is withdrawn and the step drafts the connection request for review; the message follows its acceptance. The funnel counts these people as already connected, never as invites sent.
 
-The stamp above measures the combined tree after this sync. Before the sync, the member branch passed **8210 tests / 615 files**; main separately passed **8207 tests / 611 files** on **2026-11-18**.
+The stamp above is the member branch's measurement before merging main at `868260c47ebe`; main separately passed **8257 tests / 617 files** on **2026-11-18**. The merged tree requires a new measurement. Before the earlier sync, the member branch passed **8210 tests / 615 files**; main separately passed **8207 tests / 611 files** on **2026-11-18**.
 
 LinkedIn notes and messages are templates by default: seven steps (connection request with and without evidence, first message and its already-connected variant, last message with and without an offer, the after-reply note) filled with `{first_name}`, `{evidence}` and `{offer}`, no model call. Neutral defaults ship; a workspace sets its own on Setup → LinkedIn copy (`linkedin.templates`), and `linkedin.writer: "model"` keeps the prompt-written path.
 
