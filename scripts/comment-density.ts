@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at 812ee9d.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at c9b781d.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -22,6 +22,8 @@ export interface CommentBlock { file: string; line: number; length: number }
 
 export interface CommentDensity {
   code: number;
+  /** Comment lines the diff removes from counted files. */
+  removedComments: number;
   comments: number;
   share: number;
   blocks: CommentBlock[];
@@ -95,19 +97,29 @@ function headerPath(l: string): string | null {
   return m ? (m[1] ?? m[2]) : null;
 }
 
+function kindOf(file: string | null): 'c' | 'hash' | null {
+  if (!file || EXCLUDED.test(file)) return null;
+  return C_LIKE.test(file) ? 'c' : HASH.test(file) ? 'hash' : null;
+}
+
 /** Measure the lines a `git diff -U0 -M` adds; removed lines only matter as the source of moved comments. */
 export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}): CommentDensity {
   const lim = { ...DEFAULT_COMMENT_LIMITS, ...limits };
   const lines = diff.split('\n');
   // A comment the diff removes and adds back elsewhere was moved, not written.
   const removed = new Map<string, number>();
-  let inHunk = false;
+  let removedComments = 0;
+  let inHunk = false, oldExt: 'c' | 'hash' | null = null;
+  let oldState: ScanState = { block: false, doc: null, template: false };
   for (const l of lines) {
-    if (l.startsWith('diff --git ')) inHunk = false;
-    else if (l.startsWith('@@ ')) inHunk = true;
+    if (l.startsWith('diff --git ')) { inHunk = false; oldExt = null; }
+    else if (!inHunk && l.startsWith('--- ')) oldExt = kindOf(l.startsWith('--- a/') ? l.slice(6) : null);
+    else if (l.startsWith('@@ ')) { inHunk = true; oldState = { block: false, doc: null, template: false }; }
     else if (inHunk && l.startsWith('-')) {
       const s = l.slice(1).trim();
-      if (s) removed.set(s, (removed.get(s) ?? 0) + 1);
+      if (!s) continue;
+      removed.set(s, (removed.get(s) ?? 0) + 1);
+      if (oldExt && lineKind(oldExt, s, oldState) === 'comment') removedComments++;
     }
   }
   let code = 0, comments = 0;
@@ -124,7 +136,7 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
     if (l.startsWith('diff --git ')) { close(); inHunk = false; file = null; ext = null; continue; }
     if (!inHunk && l.startsWith('+++ ')) {
       file = headerPath(l);
-      ext = file && !EXCLUDED.test(file) ? (C_LIKE.test(file) ? 'c' : HASH.test(file) ? 'hash' : null) : null;
+      ext = kindOf(file);
       continue;
     }
     const hunk = l.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
@@ -154,15 +166,17 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   const total = code + comments;
   const share = total ? comments / total : 0;
   const violations: string[] = [];
-  if (total >= lim.minLines && share > lim.share) {
+  // Rewriting comments into fewer lines, with no code added, is a trim.
+  const trim = code === 0 && comments <= removedComments;
+  if (!trim && total >= lim.minLines && share > lim.share) {
     violations.push(`the diff adds ${comments} comment lines to ${code} code lines (${(share * 100).toFixed(1)}%, limit ${Math.round(lim.share * 100)}%)`);
   }
-  if (blocks.length) {
+  if (!trim && blocks.length) {
     const named = blocks.slice(0, 5).map((b) => `${b.file}:${b.line} (${b.length} lines)`).join(', ');
     const more = blocks.length > 5 ? ` and ${blocks.length - 5} more` : '';
     violations.push(`comment blocks longer than ${lim.block} lines: ${named}${more}`);
   }
-  return { code, comments, share, blocks, violations };
+  return { code, removedComments, comments, share, blocks, violations };
 }
 
 if ((import.meta as { main?: boolean }).main) {
@@ -177,7 +191,7 @@ if ((import.meta as { main?: boolean }).main) {
   const git = bun.spawnSync(['git', 'diff', '-U0', '-M', `${base}...HEAD`]);
   if (git.exitCode !== 0) { console.error(new TextDecoder().decode(git.stderr)); process.exit(2); }
   const r = commentDensity(new TextDecoder().decode(git.stdout));
-  console.log(`comment-density: ${r.comments} comment / ${r.code} code lines added (${Math.round(r.share * 100)}%)`);
+  console.log(`comment-density: ${r.comments} comment / ${r.code} code lines added (${Math.round(r.share * 100)}%), ${r.removedComments} comment lines removed`);
   if (r.violations.length) {
     for (const v of r.violations) console.log(`FAIL ${v}`);
     console.log(COMMENT_RULE_TEXT);
