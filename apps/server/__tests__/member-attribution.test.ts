@@ -146,6 +146,36 @@ it("move records the requester and failed handover restores through the guarded 
     decided_by_member: member,
   });
 });
+it("a failed overlapping move preserves the intervening approver's member", async () => {
+  const id = row();
+  let release!: (response: Response) => void;
+  const paused = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockImplementationOnce(() => {
+        reached();
+        return paused;
+      })
+      .mockResolvedValueOnce(Response.json({ error: "refused" }, { status: 409 })),
+  );
+  const first = queue.moveQueueRowRoute(req({ workspace: "other" }), params(id));
+  await waiting;
+  expect((await queue.approveQueueRoute(req({}, "/api/queue", owner), params(id))).status).toBe(
+    200,
+  );
+  expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(409);
+  release(Response.json({ error: "refused" }, { status: 409 }));
+  expect((await first).status).toBe(409);
+  expect(ledger.getQueueRow(id)).toMatchObject({ status: "approved", decided_by_member: owner });
+});
 it("send draft stores the sender even when another member approved", async () => {
   const id = row();
   ledger.setQueueStatus({ id, status: "approved", member: owner });

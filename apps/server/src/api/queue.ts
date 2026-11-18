@@ -1230,6 +1230,7 @@ export async function approveQueueRoute(
     moving.rejected = false;
     moving.previous = {
       status: "approved",
+      member: currentMember(req)?.email ?? null,
       notes: notes === moving.reserved ? moving.previous.notes : notes,
     };
   }
@@ -1444,7 +1445,7 @@ const activeQueueMoves = new Map<
     imported: boolean;
     rejected: boolean;
     reserved: string;
-    previous: Pick<QueueRow, "status" | "notes">;
+    previous: Pick<QueueRow, "status" | "notes"> & { member: string | null };
   }
 >();
 
@@ -1509,7 +1510,7 @@ export async function moveQueueRowRoute(
     imported: false,
     rejected: false,
     reserved: "",
-    previous: { status: row.status, notes: row.notes },
+    previous: { status: row.status, notes: row.notes, member: currentMember(req)?.email ?? null },
   };
   const note = moveNote(row.notes, workspace, randomBytes(4).toString("hex"));
   // A move is a routing decision, never a fit judgment about the person.
@@ -1591,7 +1592,7 @@ export async function moveQueueRowRoute(
         ledger.restoreQueueMoveIf({
           id,
           reservedNotes: moves.reserved,
-          member: currentMember(req)?.email ?? null,
+          member: moves.previous.member,
           status: moves.previous.status,
           notes: moves.previous.notes,
         });
