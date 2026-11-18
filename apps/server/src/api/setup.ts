@@ -18,6 +18,7 @@ import {
   loadConfig,
   loadGmailTokens,
   MAX_OFFER_WRITER_ROUNDS,
+  followUpOfferPlaysOf,
   offerChecksOf,
   offerExclusionsOf,
   offerRulesOf,
@@ -682,6 +683,7 @@ export function mergeSetupConfig(
     offerRules: _rules,
     offerChecks: _checks,
     offerAnchor: _anchor,
+    followUpOfferPlays: _followUpOfferPlays,
     linkedin: _linkedin,
     calls: _calls,
     ...kept
@@ -692,6 +694,10 @@ export function mergeSetupConfig(
   const offerRules = mergeOfferRules(body.offerRules, current.offerRules);
   const offerChecks = mergeOfferChecks(body.offerChecks, current.offerChecks);
   const offerAnchor = mergeOfferAnchor(body.offerAnchor, current.offerAnchor);
+  const followUpOfferPlays = mergeFollowUpOfferPlays(
+    body.followUpOfferPlays,
+    current.followUpOfferPlays,
+  );
   const sourceRepo = mergeSourceRepo(body.sourceRepo, current.sourceRepo);
   const codeAnswerDisclosure = mergeDisclosure(
     body.codeAnswerDisclosure,
@@ -705,6 +711,7 @@ export function mergeSetupConfig(
     ...(offerRules ? { offerRules } : {}),
     ...(offerChecks ? { offerChecks } : {}),
     ...(offerAnchor ? { offerAnchor } : {}),
+    ...(followUpOfferPlays ? { followUpOfferPlays } : {}),
     ...(linkedin ? { linkedin } : {}),
     ...(calls ? { calls } : {}),
     walletMode,
@@ -1211,6 +1218,32 @@ export function mergeOfferAnchor(
     throw new SetupValidationError(`offerAnchor must be one of ${OFFER_ANCHORS.join(", ")}`);
   }
   return incoming as OneShotConfig["offerAnchor"];
+}
+
+const MAX_FOLLOW_UP_OFFER_PLAYS = 50;
+const PLAY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+
+/** `followUpOfferPlays` merge: `undefined` keeps, `null` or empty clears; a non-play-name is a 400. */
+export function mergeFollowUpOfferPlays(
+  incoming: SetupRequest["followUpOfferPlays"],
+  current: OneShotConfig["followUpOfferPlays"],
+): OneShotConfig["followUpOfferPlays"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (!Array.isArray(incoming) || incoming.some((e) => typeof e !== "string")) {
+    throw new SetupValidationError("followUpOfferPlays must be a list of play names");
+  }
+  const list = followUpOfferPlaysOf({ followUpOfferPlays: incoming });
+  const bad = list.filter((name) => !PLAY_NAME.test(name));
+  if (bad.length > 0) {
+    throw new SetupValidationError(`followUpOfferPlays: not a play name: ${bad.join(", ")}`);
+  }
+  if (list.length > MAX_FOLLOW_UP_OFFER_PLAYS) {
+    throw new SetupValidationError(
+      `followUpOfferPlays holds at most ${MAX_FOLLOW_UP_OFFER_PLAYS} entries`,
+    );
+  }
+  return list.length > 0 ? list : undefined;
 }
 
 /** Offer-judge merge: the same rules as the reply classifier's. */

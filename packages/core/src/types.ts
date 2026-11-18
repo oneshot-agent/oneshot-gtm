@@ -598,6 +598,13 @@ export interface OneShotConfig {
    */
   noOfferPlays?: string[];
   /**
+   * Plays of `noOfferPlays` whose follow-ups still make an offer: the first
+   * touch stays offer-free, the sequence behaves as an offer play's
+   * (`playMakesSequenceOffer` in plays). Names not in `noOfferPlays`, and
+   * `NO_OFFER_PLAYS`, change nothing. Absent or empty (the default): off.
+   */
+  followUpOfferPlays?: string[];
+  /**
    * What an organization's members get when it offers the founder's product
    * to them (credits, setup, an extended trial), in the founder's own words.
    * The `multiplier` play quotes it verbatim and refuses to draft without

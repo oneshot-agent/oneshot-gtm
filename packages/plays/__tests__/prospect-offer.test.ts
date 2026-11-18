@@ -37,6 +37,7 @@ const cfg: {
   offerChecks?: string[];
   offerAnchor?: "prefer-product" | "either";
   noOfferPlays?: string[];
+  followUpOfferPlays?: string[];
   offerWriter?: { rounds?: number; fallbackModel?: string; fallbackOnWeak?: boolean };
 } = {
   founderName: "Founder",
@@ -109,6 +110,7 @@ const {
   activeOfferPatch,
   OFFER_PROMPT_VERSION,
   playMakesOffer,
+  playMakesSequenceOffer,
   weakOfferHold,
 } = await import("../src/_prospect-offer.ts");
 
@@ -704,6 +706,109 @@ describe("a workspace's noOfferPlays", () => {
     } finally {
       rmSync(file, { force: true });
     }
+  });
+});
+
+describe("a workspace's followUpOfferPlays", () => {
+  afterEach(() => {
+    delete cfg.noOfferPlays;
+    delete cfg.followUpOfferPlays;
+  });
+
+  it("turns the sequence's offer back on only for a play the workspace turned off", () => {
+    const rows: Array<
+      [string, { noOfferPlays?: string[]; followUpOfferPlays?: string[] }, boolean, boolean]
+    > = [
+      // play, config, first touch makes one, sequence makes one
+      ["repo-interest", {}, true, true],
+      ["repo-interest", { followUpOfferPlays: ["repo-interest"] }, true, true],
+      ["repo-interest", { noOfferPlays: ["repo-interest"] }, false, false],
+      [
+        "repo-interest",
+        { noOfferPlays: ["repo-interest"], followUpOfferPlays: ["repo-interest"] },
+        false,
+        true,
+      ],
+      [
+        "repo-interest",
+        { noOfferPlays: ["repo-interest"], followUpOfferPlays: [" repo-interest "] },
+        false,
+        true,
+      ],
+      [
+        "repo-interest",
+        { noOfferPlays: ["repo-interest"], followUpOfferPlays: ["design-partner-loi"] },
+        false,
+        false,
+      ],
+      // The plays that never make an offer stay offer-free in their follow-ups too.
+      ["discovery-interview", { followUpOfferPlays: ["discovery-interview"] }, false, false],
+      [
+        "discovery-interview",
+        { noOfferPlays: ["discovery-interview"], followUpOfferPlays: ["discovery-interview"] },
+        false,
+        false,
+      ],
+    ];
+    for (const [play, own, first, sequence] of rows) {
+      const label = `${play} ${JSON.stringify(own)}`;
+      expect(playMakesOffer(play, own), label).toBe(first);
+      expect(playMakesSequenceOffer(play, own), label).toBe(sequence);
+    }
+  });
+
+  it("reads both lists from the config file when no config is passed", async () => {
+    const { configDir } =
+      await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+    const file = join(configDir(), "config.json");
+    try {
+      mkdirSync(configDir(), { recursive: true });
+      writeFileSync(
+        file,
+        JSON.stringify({ noOfferPlays: ["repo-interest"], followUpOfferPlays: ["repo-interest"] }),
+      );
+      expect(playMakesOffer("repo-interest")).toBe(false);
+      expect(playMakesSequenceOffer("repo-interest")).toBe(true);
+      writeFileSync(file, JSON.stringify({ noOfferPlays: ["repo-interest"] }));
+      expect(playMakesSequenceOffer("repo-interest")).toBe(false);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it("asks the writer for a sequence's offer, never for the first touch's", async () => {
+    cfg.noOfferPlays = ["repo-interest"];
+    cfg.followUpOfferPlays = ["repo-interest"];
+    llm.replies = [JSON.stringify({ skip: true, why: "nothing to go on" })];
+    expect(await deriveOffers({ target, playName: "repo-interest" })).toEqual({
+      offers: [],
+      skip: null,
+    });
+    expect(await ensureOfferSet({ target, playName: "repo-interest" })).toBeNull();
+    expect(llm.inputs).toHaveLength(0);
+    const out = await deriveOffers({ target, playName: "repo-interest", sequence: true });
+    expect(out.skip?.why).toBe("nothing to go on");
+    expect(llm.inputs).toHaveLength(1);
+  });
+
+  it("gives a follow-up the OFFER block and the first touch none", () => {
+    const own = {
+      ...cfg,
+      noOfferPlays: ["repo-interest"],
+      followUpOfferPlays: ["repo-interest"],
+    };
+    expect(offerBlock(good, own, "repo-interest")).toBeNull();
+    const lines = offerBlock(good, own, "repo-interest", { sequence: true });
+    expect(lines).toContain(
+      `OFFER (what you offer to do for them; the message opens with it): ${good.offer}`,
+    );
+    expect(lines).toContain(
+      `OFFER TERMS (the founder's general terms; never a price): ${cfg.pilotOffer}`,
+    );
+    // Without the setting a follow-up of the listed play stays offer-free.
+    expect(
+      offerBlock(good, { ...own, followUpOfferPlays: [] }, "repo-interest", { sequence: true }),
+    ).toBeNull();
   });
 });
 

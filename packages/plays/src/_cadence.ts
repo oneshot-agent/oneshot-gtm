@@ -110,8 +110,9 @@ import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import { templatedLinkedIn } from "./_linkedin-template.ts";
 import {
   offerBlock,
+  offerHoldsSend,
   playMakesOffer,
-  weakOfferHold,
+  playMakesSequenceOffer,
   type ProspectOffer,
 } from "./_prospect-offer.ts";
 import {
@@ -934,6 +935,7 @@ export function enrollInCadence(input: {
     playName: input.playName,
     nextDueAt: dueAt,
     ...(input.channel ? { channel: input.channel } : {}),
+    // Only a first touch that made an offer stamps it as the intro's.
     ...(input.offer && playMakesOffer(input.playName)
       ? {
           offer: {
@@ -2192,7 +2194,7 @@ export async function runCadenceStepForProspect(
     !opts.persistedPayload &&
     !mailDraft &&
     (step.channel === "email" || step.channel === "linkedin") &&
-    playMakesOffer(opts.playName)
+    playMakesSequenceOffer(opts.playName, cfg)
   ) {
     const record = sequenceOfferRecord({
       prospectId: opts.prospectId,
@@ -2205,10 +2207,7 @@ export async function runCadenceStepForProspect(
     const flag =
       email && !held
         ? NO_OFFER_FLAG
-        : email &&
-            held &&
-            !record.introCarriedOffer &&
-            weakOfferHold(opts.playName, { offer: held })
+        : email && held && !record.introCarriedOffer && offerHoldsSend(held)
           ? WEAK_OFFER_FLAG
           : sequenceOfferIsStale(record, cfg)
             ? STALE_OFFER_FLAG
@@ -2596,20 +2595,27 @@ export async function previewCadenceStep(input: {
   // A sequence that has none gets one written now, and one that can't (no
   // brief, nothing to go on, every offer judged off, a send holding the
   // cadence) is held, never drafted from the terms alone.
-  const offerStep = !mailDraft && step.channel === "email" && playMakesOffer(input.playName);
+  const offerStep =
+    !mailDraft && step.channel === "email" && playMakesSequenceOffer(input.playName, cfg);
   // A LinkedIn touch restates the stored offer as it stands: one written for
   // the sequence under an older setup is written again first, and the touch
   // is drafted with whatever that leaves (never held for want of one).
-  const refreshOnly =
-    !mailDraft &&
-    step.channel === "linkedin" &&
-    playMakesOffer(input.playName, cfg) &&
-    sequenceOfferIsStale(
-      sequenceOfferRecord({ prospectId: input.prospectId, playName: input.playName, cadence }),
-      cfg,
-    );
+  const linkedInRecord =
+    !mailDraft && step.channel === "linkedin" && playMakesSequenceOffer(input.playName, cfg)
+      ? sequenceOfferRecord({ prospectId: input.prospectId, playName: input.playName, cadence })
+      : null;
+  const refreshOnly = !!linkedInRecord && sequenceOfferIsStale(linkedInRecord, cfg);
+  // An offer play's LinkedIn sequence starts with its row's offer; one whose
+  // follow-ups alone make offers starts with none, so its first message
+  // writes it (never the connection request, which is a first touch).
+  const writeMissing =
+    !!linkedInRecord &&
+    !linkedInRecord.offer &&
+    !playMakesOffer(input.playName, cfg) &&
+    step.id !== CONTINUATION_INVITE_ID &&
+    !reinvite;
   const derived =
-    offerStep || refreshOnly
+    offerStep || refreshOnly || writeMissing
       ? await deriveSequenceOffer({
           prospectId: input.prospectId,
           playName: input.playName,
@@ -2719,9 +2725,7 @@ export async function previewCadenceStep(input: {
           ...hardBanHold(built),
           // A weak-fit offer the founder has not approved holds the touch, as
           // it holds an intro (`offerHoldsSend`); not one the intro already sent.
-          ...(seqOffer &&
-          !seqOffer.record.introCarriedOffer &&
-          weakOfferHold(input.playName, { offer: seqOffer.offer })
+          ...(seqOffer && !seqOffer.record.introCarriedOffer && offerHoldsSend(seqOffer.offer)
             ? [WEAK_OFFER_FLAG]
             : []),
         ]
@@ -3638,7 +3642,7 @@ export function buildFollowUpEmail(opts: {
     // touch's pool.
     // A play the workspace lists in `noOfferPlays` carries no offer here
     // either, nor its angles: a stored one from before the setting stays unused.
-    const introOffer = !playMakesOffer(opts.playName, ctx.cfg)
+    const introOffer = !playMakesSequenceOffer(opts.playName, ctx.cfg)
       ? null
       : ctx.sequenceOffer !== undefined
         ? ctx.sequenceOffer
@@ -3680,7 +3684,7 @@ export function buildFollowUpEmail(opts: {
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
     const demoDayText = demoDayLine(demoDay);
-    const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName);
+    const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName, { sequence: true });
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -3775,8 +3779,8 @@ export function hardBanHold(payload: StepPayload): string[] {
 
 /**
  * The last follow-up of a builder play. With `cfg.pilotOffer` set, and the
- * play making offers (`playMakesOffer`), it offers the founder's pilot and
- * closes the thread (`pilot-close-followup`, with the
+ * play's sequence making offers (`playMakesSequenceOffer`), it offers the
+ * founder's pilot and closes the thread (`pilot-close-followup`, with the
  * prospect's company facts and the price/link hold). With the offer set but a
  * play listed in `noOfferPlays`, the plain breakup, since the step is planned
  * whenever an offer is set. With no offer, the play's plain breakup
@@ -3805,7 +3809,7 @@ export function pilotOrBreakup(opts: {
   return async (ctx: CadenceContext) => {
     // The pilot is an offer: a play that makes none closes with the breakup.
     if (ctx.cfg.pilotOffer?.trim()) {
-      return playMakesOffer(opts.playName, ctx.cfg) ? pilot(ctx) : breakup(ctx);
+      return playMakesSequenceOffer(opts.playName, ctx.cfg) ? pilot(ctx) : breakup(ctx);
     }
     return opts.fallback === "breakup" ? breakup(ctx) : null;
   };
@@ -4802,7 +4806,7 @@ function linkedInMessageFacts(
       e.channel === "email" &&
       (e.status === "sent" || e.status === "delivered" || e.status === "replied"),
   );
-  const record = playMakesOffer(playName, cfg)
+  const record = playMakesSequenceOffer(playName, cfg)
     ? sequenceOfferRecord({ prospectId: prospect.id, playName })
     : null;
   // The emails made the active offer and were not answered: the close makes
@@ -4866,7 +4870,7 @@ async function buildLinkedInMessage(
   which: "first" | "last",
 ): Promise<StepPayload | null> {
   let facts = linkedInMessageFacts(ctx.prospect, playName, ctx.cfg);
-  if (which === "last" && facts.emailed && playMakesOffer(playName, ctx.cfg)) {
+  if (which === "last" && facts.emailed && playMakesSequenceOffer(playName, ctx.cfg)) {
     // Picked or written onto the cadence, so the facts read again carry it.
     await ensureCloseOffer({ prospectId: ctx.prospect.id, playName, cfg: ctx.cfg });
     facts = linkedInMessageFacts(ctx.prospect, playName, ctx.cfg);
@@ -4908,7 +4912,7 @@ async function buildLinkedInMessage(
     which === "last" ? facts.closeOffer : sequenceOffer(ctx.prospect, playName),
     ctx.cfg,
     playName,
-    { brief: false },
+    { brief: false, sequence: true },
   );
   const learned = learningBlock({
     channel: "linkedin",

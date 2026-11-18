@@ -27,6 +27,7 @@ import {
   offerResearchText,
   offerSkipPatch,
   playMakesOffer,
+  playMakesSequenceOffer,
   prospectOfferInput,
   sequenceOfferOf,
   writeSequenceOffer,
@@ -419,7 +420,7 @@ export function selectAllWeakSequences(
   const out: WeakItem[] = [];
   for (const cadence of cadences) {
     if (cadence.status !== undefined && cadence.status !== "active") continue;
-    if (!playMakesOffer(cadence.play_name)) continue;
+    if (!playMakesSequenceOffer(cadence.play_name)) continue;
     const record = sequenceOfferOf(cadence);
     if (record.introCarriedOffer || !isProspectOffer(record.offer)) continue;
     if (!allWeak(record.offer, record.offerCandidates)) continue;
@@ -606,7 +607,7 @@ export async function commandListExcludedOffers(
   }
   const sequences = ledger
     .listActiveCadences()
-    .filter((cad) => playMakesOffer(cad.play_name))
+    .filter((cad) => playMakesSequenceOffer(cad.play_name, cfg))
     .map((cad) => ({ cad, record: sequenceOfferOf(cad) }))
     .filter(({ record }) => isProspectOffer(record.offer));
   summary.eligible = sequences.length;
@@ -730,7 +731,7 @@ export function selectStaleSequences(
   };
   for (const cadence of cadences) {
     if (cadence.status !== undefined && cadence.status !== "active") continue;
-    if (!playMakesOffer(cadence.play_name, cfg)) continue;
+    if (!playMakesSequenceOffer(cadence.play_name, cfg)) continue;
     const record = sequenceOfferOf(cadence);
     const offer = record.offer;
     if (!offer) continue;

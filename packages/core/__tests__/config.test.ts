@@ -8,7 +8,9 @@ import {
   DEFAULT_LLM_MODEL,
   learningExpireAfterDaysOf,
   llmApiKey,
+  currentFollowUpOfferPlays,
   currentNoOfferPlays,
+  followUpOfferPlaysOf,
   loadConfig,
   noOfferPlaysOf,
   offerAnchorOf,
@@ -267,6 +269,16 @@ describe("noOfferPlaysOf", () => {
   });
 });
 
+describe("followUpOfferPlaysOf", () => {
+  it("reads the list as noOfferPlaysOf does", () => {
+    expect(
+      followUpOfferPlaysOf({ followUpOfferPlays: [" repo-interest ", "", "repo-interest", 3] }),
+    ).toEqual(["repo-interest"]);
+    expect(followUpOfferPlaysOf({ followUpOfferPlays: "luma-events" })).toEqual(["luma-events"]);
+    expect(followUpOfferPlaysOf({})).toEqual([]);
+  });
+});
+
 describe("priorityPriorsOf", () => {
   it("keeps known numeric priors per play, clamped to 0-100", () => {
     expect(
@@ -307,6 +319,18 @@ describe("currentNoOfferPlays", () => {
     // A different size changes the stamp even inside one mtime tick.
     writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest", "luma-events"] }));
     expect(currentNoOfferPlays()).toEqual(["repo-interest", "luma-events"]);
+  });
+
+  it("reads followUpOfferPlays from the same file and stamp", () => {
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest"] }));
+    expect(currentFollowUpOfferPlays()).toEqual([]);
+    writeFileSync(
+      configFile(),
+      JSON.stringify({ noOfferPlays: ["repo-interest"], followUpOfferPlays: ["repo-interest"] }),
+    );
+    expect(currentNoOfferPlays()).toEqual(["repo-interest"]);
+    expect(currentFollowUpOfferPlays()).toEqual(["repo-interest"]);
   });
 });
 

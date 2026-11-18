@@ -662,6 +662,11 @@ export interface SetupRequest {
    * clear (back to `either`); anything else is a 400.
    */
   offerAnchor?: "prefer-product" | "either" | null;
+  /**
+   * Plays of `noOfferPlays` whose follow-ups still make an offer. `undefined`
+   * = leave unchanged; `null` or `[]` = clear (off); a non-play-name is a 400.
+   */
+  followUpOfferPlays?: string[] | null;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
   /**

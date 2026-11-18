@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../../packages/core/src/ledger.ts";
 
@@ -473,6 +475,40 @@ describe("cadenceOfferRoute", () => {
       { id: String(id) },
     );
     expect(missing.status).toBe(404);
+  });
+});
+
+describe("a play the workspace lists in noOfferPlays", () => {
+  const configFile = async () => {
+    const { configDir } =
+      await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+    mkdirSync(configDir(), { recursive: true });
+    return join(configDir(), "config.json");
+  };
+  afterEach(async () => rmSync(await configFile(), { force: true }));
+
+  it("refuses an offer change with 400, and shows no offer", async () => {
+    writeFileSync(await configFile(), JSON.stringify({ noOfferPlays: [PLAY] }));
+    const { id } = cadence({ offer: first, candidates: [first, second] });
+    const out = await post(id, { select: 1 });
+    expect(out.status).toBe(400);
+    expect(out.body["error"]).toBe(`${PLAY} makes no offer`);
+    expect(seqOffer(id)).toMatchObject({ offer: first.offer });
+    expect(preview(id)).not.toBeNull();
+    expect(await viewOf(id)).not.toHaveProperty("offer");
+  });
+
+  it("changes the sequence's offer when followUpOfferPlays names the play", async () => {
+    writeFileSync(
+      await configFile(),
+      JSON.stringify({ noOfferPlays: [PLAY], followUpOfferPlays: [PLAY] }),
+    );
+    const { id } = cadence();
+    derived.offers = [first, second];
+    const out = await post(id, { regenerate: true });
+    expect(out.status).toBe(200);
+    expect(seqOffer(id)).toMatchObject({ offer: first.offer });
+    expect((await viewOf(id))["offer"]).toMatchObject({ text: first.offer, activeIndex: 0 });
   });
 });
 
