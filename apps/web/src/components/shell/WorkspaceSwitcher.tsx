@@ -195,9 +195,11 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           className="border-t border-ink-rule mt-1 p-2 space-y-2 text-xs text-ink-cream"
         >
           <p>
-            {remoteSetup.running
-              ? `Workspace ${remoteSetup.name} is running on port ${remoteSetup.port}.`
-              : `Workspace ${remoteSetup.name} was created on port ${remoteSetup.port} but is not answering yet. Start it from the list above.`}
+            {remoteSetup.running === null
+              ? `Workspace ${remoteSetup.name} was created on port ${remoteSetup.port}. Checking that it answers…`
+              : remoteSetup.running
+                ? `Workspace ${remoteSetup.name} is running on port ${remoteSetup.port}.`
+                : `Workspace ${remoteSetup.name} was created on port ${remoteSetup.port} but is not answering yet. Start it from the list above.`}
           </p>
           <p className="text-ink-cream-2">
             It opens from this address once the host operator serves that port on the host machine:
@@ -208,9 +210,12 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           <a href={remoteSetup.url} target="_blank" rel="noreferrer" className="underline">
             Open {remoteSetup.name}
           </a>
-          <button type="button" onClick={props.onDismissSetup} className="ml-2 text-ink-faint">
-            Dismiss
-          </button>
+          {/* The settled check shows the step again, so it is dismissable only then. */}
+          {remoteSetup.running !== null && (
+            <button type="button" onClick={props.onDismissSetup} className="ml-2 text-ink-faint">
+              Dismiss
+            </button>
+          )}
         </div>
       )}
       <div className="border-t border-ink-rule mt-1 px-2 py-1.5 text-[10px] text-ink-faint">
@@ -298,7 +303,8 @@ export function WorkspaceSwitcher() {
   const onCreate = (name: string) => {
     setCreating(true);
     setCreateError(null);
-    void createAndOpenWorkspace(name)
+    // A member sees the port and serve step while the new server is still checked.
+    void createAndOpenWorkspace(name, setRemoteSetup)
       .then((setup) => {
         setNewName(null);
         // A member's address: keep the popover open on the setup step.

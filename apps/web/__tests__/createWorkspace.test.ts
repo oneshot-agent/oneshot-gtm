@@ -32,7 +32,8 @@ afterEach(() => {
 
 describe("new workspace navigation", () => {
   it("reserves a tab on submit and opens the returned workspace only after its health probe succeeds", async () => {
-    const promise = createAndOpenWorkspace("acme");
+    const published = vi.fn();
+    const promise = createAndOpenWorkspace("acme", published);
     expect(open).toHaveBeenCalledWith("", "_blank");
     expect(mocks.create).toHaveBeenCalledWith("acme");
     await vi.advanceTimersByTimeAsync(1000);
@@ -42,6 +43,8 @@ describe("new workspace navigation", () => {
     expect(await promise).toBeNull();
     expect(win.location.href).toBe("http://localhost:4031/");
     expect(win.opener).toBeNull();
+    // The setup step is a member's; the host machine opens the workspace instead.
+    expect(published).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -82,14 +85,13 @@ describe("new workspace navigation", () => {
   ])("still returns a member's setup step, not yet running, when %s", async (_case, arrange) => {
     browseFrom("https://host.tailnet.ts.net:3030/");
     arrange();
-    const result = createAndOpenWorkspace("acme");
+    const published = vi.fn();
+    const result = createAndOpenWorkspace("acme", published);
     await vi.runAllTimersAsync();
-    expect(await result).toEqual({
-      name: "acme",
-      port: 4031,
-      url: "https://host.tailnet.ts.net:4031/",
-      running: false,
-    });
+    const setup = { name: "acme", port: 4031, url: "https://host.tailnet.ts.net:4031/" };
+    expect(await result).toEqual({ ...setup, running: false });
+    // Handed over once, at creation, with the check still open.
+    expect(published.mock.calls).toEqual([[{ ...setup, running: null }]]);
     expect(mocks.create).toHaveBeenCalledOnce();
   });
 

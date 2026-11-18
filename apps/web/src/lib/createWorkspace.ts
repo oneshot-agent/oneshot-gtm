@@ -34,18 +34,25 @@ export interface RemoteWorkspaceSetup {
   port: number;
   /** Where the workspace opens once the host serves `port`. */
   url: string;
-  /** Its own server answered on `port`. False: created, but not confirmed up. */
-  running: boolean;
+  /**
+   * Its own server answered on `port`. False: created, but not confirmed up.
+   * Null: created, and the check is still running.
+   */
+  running: boolean | null;
 }
 
 /**
  * Create a workspace and wait until its own server answers on its port. On the
  * host machine the new dashboard then opens; call this directly from form
  * submission, because the tab is reserved before the server is awaited. On any
- * other address nothing opens: the returned setup step is shown first, and it
- * is returned whether or not the server was seen answering.
+ * other address nothing opens: the setup step goes to `onRemoteSetup` as soon
+ * as the workspace exists, and is returned once the server was seen answering
+ * or the check gave up.
  */
-export async function createAndOpenWorkspace(name: string): Promise<RemoteWorkspaceSetup | null> {
+export async function createAndOpenWorkspace(
+  name: string,
+  onRemoteSetup?: (setup: RemoteWorkspaceSetup) => void,
+): Promise<RemoteWorkspaceSetup | null> {
   // Keep the host used to reach this dashboard (including a remote host or tunnel).
   const url = new URL(window.location.href);
   const remote = !isLoopbackHost(url.hostname);
@@ -80,10 +87,11 @@ export async function createAndOpenWorkspace(name: string): Promise<RemoteWorksp
       return false;
     };
     if (remote) {
-      // The workspace exists now and cannot be created again, so a failed or
-      // expired check must not cost the member its port and serve step.
-      const running = await answers().catch(() => false);
-      return { name: created.name, port: created.port, url: url.href, running };
+      // The workspace exists now and cannot be created again, so the member
+      // gets its port and serve step before the check, whatever it finds.
+      const setup = { name: created.name, port: created.port, url: url.href };
+      onRemoteSetup?.({ ...setup, running: null });
+      return { ...setup, running: await answers().catch(() => false) };
     }
     if (!(await answers())) {
       throw new Error(
