@@ -1445,6 +1445,19 @@ export async function labelLinkedInReplyBatch(opts: {
     costMicros: 0,
     labels: [],
   };
+  // Best effort: a locked database must not throw away the batch's results.
+  // The claim lapses either way, so the message is picked up again.
+  const recordFailure = (accountKey: string, messageId: string, claim: number | null) => {
+    try {
+      store.recordMessageIntentFailure(accountKey, messageId, Date.now(), claim);
+    } catch (err) {
+      logEvent(
+        "linkedin.reply.failure_record_failed",
+        { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
+  };
   const rows = store.unlabelledReplies(workspaceLinkedInAccountKeys(store, workspace), {
     limit: opts.limit ?? 25,
     ...(opts.includeExhausted ? { includeExhausted: true } : {}),
@@ -1468,7 +1481,7 @@ export async function labelLinkedInReplyBatch(opts: {
         received_at: m.sent_at,
       } as InboxEmail);
     } catch (err) {
-      if (!opts.dryRun) store.recordMessageIntentFailure(accountKey, m.id, Date.now(), claim);
+      if (!opts.dryRun) recordFailure(accountKey, m.id, claim);
       out.failed++;
       logEvent(
         "linkedin.reply.triage_failed",
@@ -1499,7 +1512,7 @@ export async function labelLinkedInReplyBatch(opts: {
       const message_120 = ((err as Error)?.message ?? "").slice(0, 120);
       // The label row itself was not written: a failure, not a label.
       if (!store.messageIntent(accountKey, m.id)?.intent) {
-        store.recordMessageIntentFailure(accountKey, m.id, Date.now(), claim);
+        recordFailure(accountKey, m.id, claim);
         out.failed++;
         logEvent("linkedin.reply.label_store_failed", { message_120 }, "warn");
         continue;

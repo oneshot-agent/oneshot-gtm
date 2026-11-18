@@ -343,6 +343,23 @@ describe("labelLinkedInReplyBatch", () => {
     expect(store.messageIntent("account", "broken")).toBeNull();
   });
 
+  it("a failure that cannot be recorded still returns the batch's results", async () => {
+    store.saveMessages("account", [
+      message("ok", { sent_at: "2026-11-03T10:00:00Z" }),
+      message("bad", { sent_at: "2026-11-02T10:00:00Z" }),
+    ] as never);
+    vi.spyOn(store, "recordMessageIntentFailure").mockImplementation(() => {
+      throw new Error("database is locked");
+    });
+    const classify = vi.fn(async (e: { id?: string }) => {
+      if (e.id?.endsWith(":bad")) throw new Error("model down");
+      return label("question");
+    });
+    const out = await labelLinkedInReplyBatch({ classify, store });
+    expect(out).toMatchObject({ checked: 2, labelled: 1, failed: 1 });
+    expect(store.messageIntent("account", "ok")?.intent).toBe("question");
+  });
+
   it("a dry run classifies without storing", async () => {
     store.saveMessages("account", [message("dry")] as never);
     const out = await labelLinkedInReplyBatch({
