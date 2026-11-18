@@ -2,6 +2,7 @@ import { replyNeedsAttention } from "../lib/replies.ts";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createRootRouteWithContext, Link, useRouterState } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
+import type { CurrentMember } from "@oneshot-gtm/shared-types";
 import {
   Activity,
   BarChart3,
@@ -36,7 +37,7 @@ import { cn } from "../lib/cn.ts";
 import { useDocumentTitle } from "../lib/documentTitle.ts";
 import { applyWorkspaceFavicon } from "../lib/favicon.ts";
 import { pendingSplit } from "../lib/queue-helpers.ts";
-import { PrivacyProvider } from "../lib/privacy.tsx";
+import { PrivacyProvider, useMask } from "../lib/privacy.tsx";
 
 interface RootContext {
   queryClient: QueryClient;
@@ -324,13 +325,12 @@ function RootLayout() {
             </button>
             {/* Below md the line that names the member is hidden, so name them here. */}
             {me?.email ? (
-              <span
+              <SignedInAs
+                me={me}
                 className="min-w-0 flex-1 truncate px-3 text-right text-[11.5px] text-ink-cream md:hidden"
-                title={`${me.email} · ${me.role}`}
               >
                 <span className="sr-only">signed in as </span>
-                {me.name ?? me.email}
-              </span>
+              </SignedInAs>
             ) : null}
             <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
               workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
@@ -339,10 +339,7 @@ function RootLayout() {
               {me?.email ? (
                 <>
                   {" "}
-                  · signed in as{" "}
-                  <span className="text-ink-cream" title={`${me.email} · ${me.role}`}>
-                    {me.name ?? me.email}
-                  </span>
+                  · signed in as <SignedInAs me={me} className="text-ink-cream" />
                 </>
               ) : null}
             </div>
@@ -402,6 +399,30 @@ function RootLayout() {
         </div>
       </Frame>
     </PrivacyProvider>
+  );
+}
+
+/**
+ * The signed-in member's name, or their email when they have none, with the
+ * email and role in the tooltip. A component of its own because it has to
+ * read privacy mode from inside the provider the layout renders: with privacy
+ * on, a screenshot of the header must not name the member either.
+ */
+function SignedInAs({
+  me,
+  className,
+  children,
+}: {
+  me: CurrentMember;
+  className: string;
+  children?: ReactNode;
+}) {
+  const mask = useMask();
+  return (
+    <span className={className} title={`${mask("email", me.email)} · ${me.role}`}>
+      {children}
+      {mask("auto", me.name ?? me.email)}
+    </span>
   );
 }
 
