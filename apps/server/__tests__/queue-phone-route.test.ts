@@ -137,6 +137,7 @@ describe("POST /api/queue/:id/find-phone", () => {
 
   it.each([
     ["no number", { phone: null, lookup: "none" }, "none"],
+    ["another person's profile", { phone: null, lookup: "other_person" }, "other_person"],
     ["the provider unanswered", { phone: null, lookup: "unavailable" }, "unavailable"],
     ["a reveal still pending", { phone: null, lookup: "pending" }, "unavailable"],
   ])("records %s", async (_label, out, status) => {
@@ -145,6 +146,13 @@ describe("POST /api/queue/:id/find-phone", () => {
     await one(9);
     await settle();
     expect(h.writes[1]?.input).toMatchObject({ phone: null, lookup: { status } });
+  });
+
+  it("names the person by first and last name when the row has no full name", async () => {
+    row(9, "approved", { name: undefined, firstName: "Pat", lastName: "Lee" });
+    await one(9);
+    await settle();
+    expect(h.findPhone.mock.calls[0]?.[0]).toEqual({ linkedinUrl: linkedin(9), name: "Pat Lee" });
   });
 
   it("records the tool being down as unavailable, and another failure as an error", async () => {
@@ -230,19 +238,23 @@ describe("the bulk lookup", () => {
     row(4, "pending");
     row(5, "approved", { phoneLookup: { status: "none", at: "2026-11-01T00:00:00.000Z" } });
     row(6);
+    // Someone else's number came back last time: the same answer would again.
+    row(7, "approved", {
+      phoneLookup: { status: "other_person", at: "2026-11-01T00:00:00.000Z" },
+    });
     const preview = await findQueuePhonesPreviewRoute(
       new Request("http://localhost/api/queue/find-phones"),
     );
     expect(await preview.json()).toEqual({
       eligible: 2,
       ids: [1, 6],
-      skipped: { has_phone: 1, no_linkedin: 1, no_number: 1 },
+      skipped: { has_phone: 1, no_linkedin: 1, no_number: 2 },
     });
     const res = await bulk();
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({
       started: 2,
-      skipped: { has_phone: 1, no_linkedin: 1, no_number: 1 },
+      skipped: { has_phone: 1, no_linkedin: 1, no_number: 2 },
     });
     await settle();
     expect(

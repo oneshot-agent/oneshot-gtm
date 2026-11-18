@@ -7,12 +7,12 @@ import { linkedinUrlFor, phoneFor } from "./payloadIdentity.ts";
  * a shape check is the contract.
  */
 export interface PhoneLookupView {
-  status: "running" | "done" | "none" | "unavailable" | "error";
+  status: "running" | "done" | "none" | "other_person" | "unavailable" | "error";
   at: string;
   message?: string;
 }
 
-const STATUSES = new Set(["running", "done", "none", "unavailable", "error"]);
+const STATUSES = new Set(["running", "done", "none", "other_person", "unavailable", "error"]);
 
 export function phoneLookupFor(payload: unknown): PhoneLookupView | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
@@ -78,6 +78,9 @@ export function phoneLookupState(input: {
   switch (lookup.status) {
     case "none":
       return { kind: "none", at: lookup.at };
+    case "other_person":
+      // The number belonged to someone else's profile and was not kept.
+      return { kind: "retry", label: "Matched another person", at: lookup.at };
     case "unavailable":
       return { kind: "retry", label: "Unavailable, try again", at: lookup.at };
     case "error":
