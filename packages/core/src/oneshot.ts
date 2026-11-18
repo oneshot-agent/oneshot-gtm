@@ -1512,7 +1512,7 @@ function linkedinSlugOf(value: unknown): string | null {
  */
 function slugIdOf(slug: string): string | null {
   const last = slug.slice(slug.lastIndexOf("-") + 1);
-  return /^[a-z]?[0-9a-f]{5,11}$/.test(last) && /\d/.test(last) ? last : null;
+  return last.length >= 6 && /^[a-z]?[0-9a-f]{5,11}$/.test(last) && /\d/.test(last) ? last : null;
 }
 
 /** Credentials and suffixes that trail a name ("Pat Lee DDS", "Pat Lee Jr"). */

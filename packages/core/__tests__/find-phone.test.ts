@@ -120,6 +120,11 @@ describe("phoneOwnerMatches", () => {
       { linkedin_url: li("bob-jones-founder2024"), full_name: "Bob Jones" },
     ],
     [
+      "a short shared suffix is no id",
+      { linkedinUrl: li("alice-smith-12345"), name: "Alice Smith" },
+      { linkedin_url: li("bob-jones-12345"), full_name: "Bob Jones" },
+    ],
+    [
       "a shared given name with a different non-Latin surname",
       { linkedinUrl: li("pat-wang-1a2b3c4d"), name: "Pat 王" },
       { linkedin_url: li("pat-li-5e6f7a8b"), full_name: "Pat 李" },
@@ -213,6 +218,12 @@ describe("phoneOwnerMatches", () => {
       phoneOwnerMatches(
         { linkedinUrl: li("alice-smith-founder2024") },
         { linkedin_url: li("bob-jones-founder2024") },
+      ),
+    ).toBe(false);
+    expect(
+      phoneOwnerMatches(
+        { linkedinUrl: li("alice-smith-12345") },
+        { linkedin_url: li("bob-jones-12345") },
       ),
     ).toBe(false);
     for (const id of ["a63674108", "767758198", "2b96a646", "1a98b237", "306838195"])
