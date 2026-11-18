@@ -204,6 +204,50 @@ it("failed pending moves restore the decision history, including undecided, bulk
   }
 });
 
+it("failed expired moves restore the decision history, including undecided, bulk and machine rows", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: "refused" }, { status: 409 })),
+  );
+  for (const history of ["undecided", "human", "human_bulk", "machine"] as const) {
+    const id = row();
+    if (history === "human") {
+      ledger.setQueueStatus({
+        id,
+        status: "approved",
+        decidedBy: "human",
+        member: owner,
+        decisionReason: "fit",
+      });
+    } else if (history === "human_bulk") {
+      ledger.approveAllPending({ ids: [id], member: owner });
+    } else if (history === "machine") {
+      ledger.setQueueStatus({
+        id,
+        status: "rejected",
+        decidedBy: "machine",
+        decisionReason: "wrong_person",
+      });
+    }
+    ledger.setQueueStatus({ id, status: "expired" });
+    const before = ledger.getQueueRow(id)!;
+    expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
+      409,
+    );
+    const restored = ledger.getQueueRow(id)!;
+    expect(restored).toMatchObject({
+      status: "expired",
+      decision: before.decision,
+      decided_at: before.decided_at,
+      decided_by: before.decided_by,
+      decided_by_member: before.decided_by_member,
+      decision_reason: before.decision_reason,
+    });
+    expect(memberDecision(queue.toView(restored))).toBe(memberDecision(queue.toView(before)));
+    expect(describeDecision(queue.toView(restored))).toBe(describeDecision(queue.toView(before)));
+  }
+});
+
 it.each(["approved", "rejected"] as const)(
   "a failed move restores the full %s decision history",
   async (status) => {

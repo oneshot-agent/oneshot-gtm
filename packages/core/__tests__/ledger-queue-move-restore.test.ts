@@ -86,6 +86,56 @@ describe("Ledger.restoreQueueMoveIf", () => {
     });
   });
 
+  it("restores an expired row's decision and member, not the reservation's rejection", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { name: "Ada", email: "ada@example.com" },
+      dedupeKey: `k-${Math.random().toString(36).slice(2)}`,
+      source: "find:show-hn",
+    })!;
+    ledger.setQueueStatus({
+      id,
+      status: "approved",
+      decidedBy: "human",
+      member: "owner@example.com",
+      decisionReason: "fit",
+    });
+    ledger.setQueueStatus({ id, status: "expired" });
+    const before = ledger.getQueueRow(id)!;
+    ledger.setQueueStatus({
+      id,
+      status: "rejected",
+      decidedBy: "human",
+      member: "mia@example.com",
+      decisionReason: "other",
+      notes: "moved to alpha #1a2b3c4d",
+    });
+    expect(
+      ledger.restoreQueueMoveIf({
+        id,
+        reservedNotes: "moved to alpha #1a2b3c4d",
+        status: "expired",
+        notes: null,
+        member: before.decided_by_member,
+        previousDecision: {
+          decision: before.decision,
+          decided_at: before.decided_at,
+          decided_by: before.decided_by,
+          decision_reason: before.decision_reason,
+        },
+      }),
+    ).toBe(true);
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "expired",
+      notes: null,
+      decision: "approve",
+      decided_at: before.decided_at,
+      decided_by: "human",
+      decided_by_member: "owner@example.com",
+      decision_reason: "fit",
+    });
+  });
+
   it("leaves a row a later move re-reserved alone and says so", () => {
     const id = reserved(null);
     // A later move replaced the token.
