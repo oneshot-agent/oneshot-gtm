@@ -146,10 +146,19 @@ it("failed moves restore the prior member, including pending and legacy rows", a
       const id = row();
       ledger.setQueueStatus({ id, status: "approved", member: priorMember });
       ledger.setQueueStatus({ id, status, decidedBy: "human", member: priorMember });
+      const before = ledger.getQueueRow(id)!;
       expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
         409,
       );
-      expect(ledger.getQueueRow(id)).toMatchObject({ status, decided_by_member: priorMember });
+      const restored = ledger.getQueueRow(id)!;
+      expect(restored).toMatchObject({
+        status,
+        decision: before.decision,
+        decided_by: before.decided_by,
+        decided_by_member: priorMember,
+      });
+      expect(memberDecision(queue.toView(restored))).toBe(memberDecision(queue.toView(before)));
+      expect(describeDecision(queue.toView(restored))).toBe(describeDecision(queue.toView(before)));
     }
   }
 });
