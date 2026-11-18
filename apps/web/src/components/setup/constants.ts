@@ -90,6 +90,7 @@ export const SECTIONS = [
   { id: "calendar", eyebrow: "08.5 · Calendar", label: "Calendar" },
   { id: "calls", eyebrow: "08.6 · Calls", label: "Calls" },
   { id: "review", eyebrow: "09 · Review queue & time zone", label: "Queue & time zone" },
+  { id: "members", eyebrow: "09.5 · Members", label: "Members" },
   { id: "telemetry", eyebrow: "10 · Telemetry", label: "Telemetry" },
   { id: "credentials", eyebrow: "11 · Credentials", label: "Credentials" },
 ] as const;

@@ -226,6 +226,30 @@ describe("preview and send of a call step", () => {
     expect(brief.offer).toBe("We get every vendor renewal signed before it lapses.");
     expect(prompts).toHaveLength(1);
   });
+
+  it("writes no brief for someone the Calls page would not list", async () => {
+    callsOn();
+    const blocked = enroll("+15126531187", "dana@blocked.test");
+    atCallStep(blocked);
+    cfg = { ...cfg, doNotContact: { domains: ["blocked.test"] } };
+    expect(await previewCadenceStep({ prospectId: blocked, playName: PLAY })).toEqual({
+      skipped: true,
+      message: expect.stringContaining("not called"),
+    });
+    const optedOut = enroll("+15126531188", "lee@acme.test");
+    atCallStep(optedOut);
+    ledger.insertCall({
+      prospectId: optedOut,
+      startedAt: new Date().toISOString(),
+      outcome: "do_not_contact",
+    });
+    expect(await previewCadenceStep({ prospectId: optedOut, playName: PLAY })).toMatchObject({
+      skipped: true,
+    });
+    expect(prompts).toEqual([]);
+    expect(ledger.getCadenceDraft({ prospectId: blocked, playName: PLAY })).toBeNull();
+    expect(cadence(optedOut)).toMatchObject({ status: "active", current_step: 1 });
+  });
 });
 
 describe("recordCall", () => {
@@ -813,6 +837,50 @@ describe("review fixes", () => {
     );
   });
 
+  it("a due call's stored brief is written again once its offer was replaced", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const offer = (text: string) =>
+      ledger.setCadenceOffer({
+        prospectId: id,
+        playName: PLAY,
+        offer: { offer: text, steps: "a list in a week" },
+        origin: "derived",
+      });
+    offer("Audit your renewals");
+    responses.push(BRIEF_JSON, BRIEF_JSON);
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(1);
+    offer("Cut one vendor this quarter");
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("Cut one vendor this quarter");
+    await callBriefFor({ prospectId: id, playName: PLAY });
+    expect(prompts).toHaveLength(2);
+  });
+
+  it("a retried not_now keeps its hold deadline; a new date moves it", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const heldUntil = () => (cadence(id) as unknown as { held_until: string }).held_until;
+    const logged = new Date();
+    recordCall(id, { outcome: "not_now", clientKey: "k-notnow-0001" }, logged);
+    const first = heldUntil();
+    recordCall(
+      id,
+      { outcome: "not_now", clientKey: "k-notnow-0001" },
+      new Date(logged.getTime() + DAY),
+    );
+    expect(heldUntil()).toBe(first);
+    const later = new Date(Date.now() + 30 * DAY).toISOString().slice(0, 10);
+    recordCall(id, { outcome: "not_now", clientKey: "k-notnow-0001", holdUntil: later });
+    expect(heldUntil().slice(0, 10)).toBe(later);
+    expect(ledger.listCallsForProspect(id)).toHaveLength(1);
+  });
+
   it("a new log completes only the step its row was opened on", () => {
     callsOn();
     const id = enroll();
@@ -915,6 +983,10 @@ describe("review fixes", () => {
       .find((e) => e.channel === "email");
     expect(email!.status).toBe("sent");
     expect(cadence(id).status).toBe("replied");
+    // Corrected to an outcome that is no reply: the step is a plain call again.
+    recordCall(id, { outcome: "voicemail", callId: call.id });
+    expect(callEvents(id)[0]).toMatchObject({ status: "sent", replied_at: null });
+    expect(JSON.parse(callEvents(id)[0]!.metadata_json!)).toMatchObject({ outcome: "voicemail" });
   });
 
   it("a preview whose plan step was replaced meanwhile stores nothing", async () => {

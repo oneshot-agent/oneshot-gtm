@@ -13,7 +13,7 @@ import {
   canDial,
   findRow,
   localTimeNow,
-  newSaveKey,
+  saveKeyOf,
   nextRow,
   outcomeTitle,
   rowId,
@@ -81,19 +81,25 @@ export function CallsView({
   selectedPlay?: string;
   onOpen: (row: RowKey | null) => void;
 }) {
-  // When Call was pressed and the number it dialled, per prospect, until
-  // that prospect's call is logged: the panel's timer and log read it.
-  const [started, setStarted] = useState<Record<number, CallTimer>>({});
-  const start = (prospectId: number, phone: string | null) =>
-    setStarted((s) => ({ ...s, [prospectId]: { prospectId, at: Date.now(), phone } }));
   // Each row's next save id, kept here so a panel that remounts while its
-  // save runs retries with the same one; a logged save takes a new one.
+  // save runs retries with the same one; a logged save or a new call takes
+  // a new one.
   const saveKeys = useRef(new Map<string, string>());
-  const saveKeyFor = (row: RowKey) => {
-    const id = rowId(row);
-    const key = saveKeys.current.get(id) ?? newSaveKey();
-    saveKeys.current.set(id, key);
-    return key;
+  // When Call was pressed, the number it dialled and the step the row was
+  // on, per row (`rowId`), until that row's call is logged.
+  const [started, setStarted] = useState<Record<string, CallTimer>>({});
+  const start = (row: CallListRow, phone: string | null) => {
+    saveKeys.current.delete(rowId(row));
+    setStarted((s) => ({
+      ...s,
+      [rowId(row)]: {
+        prospectId: row.prospectId,
+        at: Date.now(),
+        phone,
+        currentStep: row.currentStep,
+        enrolledAt: row.enrolledAt,
+      },
+    }));
   };
   // The call window is read on this clock, so a row turns callable (or not)
   // as a boundary passes, without waiting on the next poll.
@@ -183,7 +189,7 @@ export function CallsView({
               onOpen={() => onOpen(r)}
               onStart={(phone) => {
                 onOpen(r);
-                start(r.prospectId, phone);
+                start(r, phone);
               }}
             />
           ))}
@@ -215,12 +221,11 @@ export function CallsView({
               window={data.window}
               now={now}
               onRefresh={refresh}
-              startedAt={started[row.prospectId]?.at ?? null}
-              dialledPhone={started[row.prospectId]?.phone ?? null}
-              saveKey={saveKeyFor(row)}
-              onStart={(phone) => start(row.prospectId, phone)}
+              started={started[rowId(row)] ?? null}
+              saveKey={saveKeyOf(saveKeys.current, row)}
+              onStart={(phone) => start(row, phone)}
               onLogged={(logged, at, key) => {
-                setStarted((s) => timersAfterLog(s, { prospectId: logged.prospectId, at }));
+                setStarted((s) => timersAfterLog(s, { row: logged, at }));
                 if (saveKeys.current.get(rowId(logged)) === key)
                   saveKeys.current.delete(rowId(logged));
               }}

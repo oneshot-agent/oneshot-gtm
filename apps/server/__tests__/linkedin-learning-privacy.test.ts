@@ -1,3 +1,5 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import type {
   LearningGuidanceResult,
@@ -194,9 +196,10 @@ beforeEach(async () => {
     "channel_events",
   ])
     ldb.exec(`DELETE FROM ${table}`);
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(
+    join(process.env["ONESHOT_GTM_HOME"]!, "privacy-shared-"),
+  );
   const db = getSharedDb();
-  for (const m of db.listMembers()) db.removeMember(m.email);
-  for (const host of db.allowedHosts()) db.disallowHost(host);
   db.addMember({ email: OWNER, name: "Olive Owner", role: "owner" });
   db.addMember({ email: MIA, name: "Mia Member", role: "member" });
   db.allowHost(TAILNET);
@@ -380,8 +383,10 @@ it("shows a prospect's LinkedIn reply behind an angle only to the member whose a
 });
 
 it("is unchanged on a single-user install: the host machine reads every example", async () => {
-  const db = getSharedDb();
-  for (const m of db.listMembers()) db.removeMember(m.email);
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(
+    join(process.env["ONESHOT_GTM_HOME"]!, "single-user-shared-"),
+  );
+  getSharedDb();
   const { body } = await proposals(local);
   expect(body.proposals[0]!.evidence.samples!.map((s) => s.sent)).toEqual([
     "Sent by olive, number 1",

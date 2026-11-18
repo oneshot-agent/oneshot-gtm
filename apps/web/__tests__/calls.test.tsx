@@ -23,6 +23,9 @@ import {
   newSaveKey,
   nextRow,
   OUTCOME_KEYS,
+  rowId,
+  saveKeyOf,
+  stepOfLog,
   timerAfterLog,
   timersAfterLog,
   type DialKeyEvent,
@@ -474,7 +477,11 @@ describe("calls page: review fixes", () => {
     });
     expect(findRow(d, 1, "hiring")).toMatchObject({ playName: "hiring", currentStep: 2 });
     expect(findRow(d, 1)).toMatchObject({ playName: "post-funding" });
-    expect(findRow(d, 1, "gone")).toMatchObject({ playName: "post-funding" });
+    // A play named whose row is gone opens nothing rather than another play's row.
+    expect(findRow(d, 1, "gone")).toBeNull();
+    expect(
+      render(<CallsView data={d} selected={1} selectedPlay="gone" onOpen={() => {}} />),
+    ).toContain("This person isn&#x27;t on the call list");
     expect(nextRow(d.due, d.due[0]!)).toBe(d.due[1]);
     const html = render(
       <CallsView data={d} selected={1} selectedPlay="hiring" onOpen={() => {}} />,
@@ -487,14 +494,52 @@ describe("calls page: review fixes", () => {
     );
   });
 
-  it("a log spends only its own prospect's started call", () => {
+  it("a log spends only its own row's started call", () => {
+    const funding = { prospectId: 1, playName: "post-funding" };
+    const hiring = { prospectId: 1, playName: "hiring" };
     const timers = {
-      1: { prospectId: 1, at: 1000, phone: "+15125551234" },
-      2: { prospectId: 2, at: 2000, phone: "+15125559999" },
+      "1|post-funding": { prospectId: 1, at: 1000, phone: "+15125551234" },
+      "1|hiring": { prospectId: 1, at: 2000, phone: "+15125559999" },
     };
-    expect(timersAfterLog(timers, { prospectId: 1, at: 1000 })).toEqual({ 2: timers[2] });
-    expect(timersAfterLog(timers, { prospectId: 1, at: 500 })).toBe(timers);
-    expect(timersAfterLog(timers, { prospectId: 3, at: 1000 })).toBe(timers);
+    expect(timersAfterLog(timers, { row: funding, at: 1000 })).toEqual({
+      "1|hiring": timers["1|hiring"],
+    });
+    // An older save never clears a newer attempt.
+    expect(timersAfterLog(timers, { row: hiring, at: 500 })).toBe(timers);
+    expect(timersAfterLog(timers, { row: { prospectId: 3, playName: null }, at: 1000 })).toBe(
+      timers,
+    );
+  });
+
+  it("a retry reuses its row's save id; a new call or a logged save takes a new one", () => {
+    const keys = new Map<string, string>();
+    const due = { prospectId: 1, playName: "post-funding" };
+    const first = saveKeyOf(keys, due);
+    expect(saveKeyOf(keys, due)).toBe(first);
+    expect(saveKeyOf(keys, { prospectId: 1, playName: "hiring" })).not.toBe(first);
+    // Call pressed again: the page drops the row's id, so the next save gets its own.
+    keys.delete(rowId(due));
+    expect(saveKeyOf(keys, due)).not.toBe(first);
+  });
+
+  it("a log names the step the row was on when Call was pressed", () => {
+    const now = row({ currentStep: 2, enrolledAt: "2026-11-12T10:00:00.000Z" });
+    const timer = {
+      prospectId: 1,
+      at: 1000,
+      phone: null,
+      currentStep: 1,
+      enrolledAt: "2026-11-10T10:00:00.000Z",
+    };
+    expect(stepOfLog(timer, now)).toEqual({
+      currentStep: 1,
+      enrolledAt: "2026-11-10T10:00:00.000Z",
+    });
+    // Logged by hand, with no call started here: the row as the panel opened on it.
+    expect(stepOfLog(null, now)).toEqual({
+      currentStep: 2,
+      enrolledAt: "2026-11-12T10:00:00.000Z",
+    });
   });
 
   it("posts the step the row was opened on and the save's id", () => {

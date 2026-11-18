@@ -265,9 +265,10 @@ export type StepPayload =
    * A call the founder places (never an AI voice; that is `voice`): its brief,
    * the number (E.164; empty when none is known yet) and the prospect's local
    * time when it was written. Never dispatched: the outcome the founder logs
-   * on the Calls page moves the cadence on (`recordCall`).
+   * on the Calls page moves the cadence on (`recordCall`). `offerKey` names
+   * the offer the brief restates, so a replaced offer makes it stale.
    */
-  | { kind: "call"; toPhone: string; brief: CallBrief; localTime?: string }
+  | { kind: "call"; toPhone: string; brief: CallBrief; localTime?: string; offerKey?: string }
   | {
       kind: "voice";
       objective: string;
@@ -2503,7 +2504,12 @@ export async function previewCadenceStep(input: {
         }
       : {}),
   };
-  // A call's brief is worth reading before a number is found (Find phone).
+  // A call's brief is worth reading before a number is found (Find phone),
+  // but not for someone the Calls page would not list. Reported only.
+  if (step.channel === "call") {
+    const refused = callRefusal(input.prospectId, cadence.prospect_email, cfg);
+    if (refused) return { skipped: true, message: refused };
+  }
   const missing = step.channel === "call" ? null : missingAddress(step.channel, cadence);
   const continuationInvite =
     step.channel === "linkedin" &&
@@ -4221,6 +4227,22 @@ export function completeCallStep(input: {
     if (input.status !== "replied") advancePastSentStep(input, seq, stepEntryIndex, step);
   });
   return true;
+}
+
+/**
+ * Why this person may not be called, by the Calls page's gates (the company
+ * list, an opt-out on any channel, an ICP reject, a meeting held); null when
+ * they may.
+ */
+function callRefusal(prospectId: number, email: string | null, cfg: OneShotConfig): string | null {
+  const ledger = getLedger();
+  const list = doNotContactOf(cfg);
+  const blocked =
+    list.domains.length > 0 || list.companies.length > 0
+      ? doNotContactMatch(ledger.contactIdentityFor({ prospectId, email }), list)
+      : null;
+  if (blocked) return `not called: ${describeDoNotContact(blocked)}`;
+  return ledger.callAllowed(prospectId) ? null : "not called: they can't be contacted";
 }
 
 /** Whether the cadence's next step is the founder's call. */

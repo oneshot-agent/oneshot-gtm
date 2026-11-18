@@ -108,6 +108,7 @@ import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { workspaceCreate, workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
+import { membersRoute, addMemberRoute, removeMemberRoute, memberRoleRoute } from "./api/members.ts";
 import { meRoute } from "./api/me.ts";
 import { currentMember, isAllowedOrigin, isAllowedRequestHost } from "./members.ts";
 import {
@@ -307,6 +308,10 @@ const routes: RouteEntry[] = [
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/me", meRoute),
+  route("GET", "/api/members", membersRoute),
+  route("POST", "/api/members", addMemberRoute),
+  route("POST", "/api/members/remove", removeMemberRoute),
+  route("POST", "/api/members/role", memberRoleRoute),
   route("GET", "/api/workspace", workspaceInfo),
   route("POST", "/api/workspace/launch", workspaceLaunch),
   route("POST", "/api/workspaces", (req) => workspaceCreate(req)),

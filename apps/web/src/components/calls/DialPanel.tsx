@@ -41,7 +41,9 @@ import {
   beginCall,
   localTimeNow,
   outcomeTitle,
+  stepOfLog,
   windowHint,
+  type CallTimer,
   type RowKey,
 } from "../../lib/dialler.ts";
 import { humanizeFlag } from "../../lib/flagLabels.ts";
@@ -105,8 +107,7 @@ export function DialPanel({
   window: callWindow,
   now,
   onRefresh,
-  startedAt,
-  dialledPhone,
+  started,
   saveKey,
   onStart,
   onLogged,
@@ -121,10 +122,8 @@ export function DialPanel({
   now: Date;
   /** Re-read the clock: Call found the window closed. */
   onRefresh: () => void;
-  /** When Call was pressed for this row (ms); null before. */
-  startedAt: number | null;
-  /** The number Call dialled, captured when it was pressed; null before. */
-  dialledPhone: string | null;
+  /** Call pressed for this row: when, the number it dialled and the step the row was on; null before. */
+  started: CallTimer | null;
   /** This row's next save id, held by the page: a retry, even from a remounted panel, sends the same. */
   saveKey: string;
   onStart: (phone: string | null) => void;
@@ -144,6 +143,13 @@ export function DialPanel({
     outcome: null,
     note: "",
     holdUntil: defaultHoldUntil(),
+  }));
+  const startedAt = started?.at ?? null;
+  // The step the row was on when it was opened: what a log without a call
+  // started here names, whatever a refresh shows since.
+  const [opened] = useState(() => ({
+    currentStep: row.currentStep,
+    enrolledAt: row.enrolledAt,
   }));
   const elapsed = useElapsed(startedAt);
 
@@ -202,6 +208,8 @@ export function DialPanel({
       qc.setQueryData(callKey(c.id), c);
       setStartedId(c.id);
       setRingPhone(row.phone);
+      // The page's started call: the row's step now, and a new save id.
+      onStart(row.phone);
       dispatch({ kind: "reset", holdUntil: defaultHoldUntil() });
     },
   });
@@ -270,10 +278,10 @@ export function DialPanel({
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
   });
-  // The step the row was opened on, for the call started from it: a bridged
-  // call reopened from another row lets the server judge its step.
+  // The step its log names, as for a tel: call (Call pressed here, else the
+  // panel's opening snapshot); a bridged call reopened from another play's
+  // row names none and lets the server judge its step.
   const sameRowCall = !call || (call.playName ?? null) === (row.playName ?? null);
-  const step = sameRowCall ? { currentStep: row.currentStep, enrolledAt: row.enrolledAt } : {};
   const bridgedOpts = call
     ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
     : null;
@@ -282,16 +290,15 @@ export function DialPanel({
     bridgedOpts
       ? {
           ...bridgedOpts,
-          ...step,
+          ...(sameRowCall ? stepOfLog(started, opened) : {}),
           clientKey: saveKey,
           commitments: commitmentsToSend(call?.suggestion ?? null, commitments, masked),
         }
       : {
           durationSec: startedAt != null ? elapsed : null,
           playName: row.playName,
-          phone: dialledNumber(startedAt, dialledPhone, row.phone),
-          currentStep: row.currentStep,
-          enrolledAt: row.enrolledAt,
+          phone: dialledNumber(startedAt, started?.phone ?? null, row.phone),
+          ...stepOfLog(started, opened),
           clientKey: saveKey,
         },
   );
@@ -338,7 +345,7 @@ export function DialPanel({
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {startedAt != null && (
+          {startedAt != null && !call && (
             <span className="font-mono text-[13px] text-ink-cream" aria-label="call time">
               {formatDuration(elapsed)}
             </span>

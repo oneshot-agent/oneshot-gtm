@@ -131,7 +131,8 @@ export function sectionRows(
 
 /**
  * The row to open: the Due row of this play when one is named (a cadence's
- * "Open call"), else the person's first row, Due first.
+ * "Open call"), and none when that play's row is gone, so the panel never
+ * logs against another play; else the person's first row, Due first.
  */
 export function findRow(
   data: CallListResponse,
@@ -139,7 +140,7 @@ export function findRow(
   playName?: string,
 ): CallListRow | null {
   const rows = [...data.due, ...data.list].filter((r) => r.prospectId === prospectId);
-  return (playName ? rows.find((r) => r.playName === playName) : undefined) ?? rows[0] ?? null;
+  return (playName ? rows.find((r) => r.playName === playName) : rows[0]) ?? null;
 }
 
 /** "4:07" */
@@ -283,6 +284,16 @@ export function logCallRequest(
 }
 
 /**
+ * A row's save id: the one its last unfinished save used (a retry sends it
+ * again), else a new one. `keys` is the page's, by `rowId`.
+ */
+export function saveKeyOf(keys: Map<string, string>, row: RowKey): string {
+  const key = keys.get(rowId(row)) ?? newSaveKey();
+  keys.set(rowId(row), key);
+  return key;
+}
+
+/**
  * A new id for one save. `getRandomValues`, not `randomUUID`: the dashboard
  * may be served over plain http on a tailnet, where only the former exists.
  */
@@ -291,11 +302,28 @@ export function newSaveKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** When Call was pressed, for whom, and the number it dialled: the dial panel's timer. */
+/**
+ * When Call was pressed, for whom, the number it dialled and the cadence
+ * step the row was on then: the dial panel's timer, and what its log names.
+ */
 export interface CallTimer {
   prospectId: number;
   at: number;
   phone: string | null;
+  currentStep?: number | null;
+  enrolledAt?: string | null;
+}
+
+/**
+ * The step a log names: the one the row was on when Call was pressed, else
+ * the one it was on when the panel opened (a refresh may have moved it since).
+ */
+export function stepOfLog(
+  timer: Pick<CallTimer, "currentStep" | "enrolledAt"> | null | undefined,
+  opened: Pick<CallListRow, "currentStep" | "enrolledAt">,
+): { currentStep: number | null; enrolledAt: string | null } {
+  const from = timer ?? opened;
+  return { currentStep: from.currentStep ?? null, enrolledAt: from.enrolledAt ?? null };
 }
 
 /**
@@ -310,14 +338,16 @@ export function timerAfterLog(
   return timer && timer.prospectId === logged.prospectId && timer.at === logged.at ? null : timer;
 }
 
-/** Each prospect's started call: a log spends only that prospect's (`timerAfterLog`). */
+/** Each row's started call (`rowId`): a log spends only that row's (`timerAfterLog`). */
 export function timersAfterLog(
-  timers: Readonly<Record<number, CallTimer>>,
-  logged: { prospectId: number; at: number | null },
-): Record<number, CallTimer> {
-  const timer = timers[logged.prospectId];
-  if (!timer || timerAfterLog(timer, logged)) return timers as Record<number, CallTimer>;
+  timers: Readonly<Record<string, CallTimer>>,
+  logged: { row: RowKey; at: number | null },
+): Record<string, CallTimer> {
+  const id = rowId(logged.row);
+  const timer = timers[id];
+  if (!timer || timerAfterLog(timer, { prospectId: logged.row.prospectId, at: logged.at }))
+    return timers as Record<string, CallTimer>;
   const rest = { ...timers };
-  delete rest[logged.prospectId];
+  delete rest[id];
   return rest;
 }
