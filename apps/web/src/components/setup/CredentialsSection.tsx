@@ -149,7 +149,7 @@ export function CredentialsSection({
       {
         title: "Gmail",
         caption:
-          "Google Cloud OAuth client, Desktop type, Gmail API on. Needed for Connect Gmail account.",
+          "Google Cloud OAuth client, Gmail API on. Desktop type on loopback; Web application type from another machine (see Email setup). Needed for Connect Gmail account.",
         keys: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
         inUse: (k) =>
           k === "GMAIL_REFRESH_TOKEN" ? isLegacyPool && cfg.emailProvider === "gmail" : true,

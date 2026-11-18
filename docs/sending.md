@@ -7,10 +7,28 @@ Mail leaves through a pool of sender identities: OneShot sending domains, your o
 ## Adding identities
 
 - **OneShot domain and mailbox.** Setup, or `identities add`. Pick an active address on a provisioned domain, or review and buy domain/address setup separately. Setup never sends an email. `domains list`, `pause` and `resume` manage them.
-- **Gmail or Workspace.** `gmail auth`, a one-time OAuth. It needs a Google Cloud Desktop client with the Gmail API on.
+- **Gmail or Workspace.** `gmail auth`, a one-time OAuth, or **Connect Gmail account** in Setup. Enable the Gmail API on your Google Cloud client. A Desktop client supports the CLI and loopback Setup; Setup from another machine needs a Web application client. With Web-client credentials, host connections also need registered loopback redirect URIs, as described below.
 - **Smartlead.** `smartlead connect`, or Setup. Smartlead warms and hosts the mailbox. oneshot-gtm sends through the mailbox's own SMTP when its credentials resolve, and through the Smartlead API otherwise. `doctor` names every mailbox still on the API and the command that switches it: `identities send-via <id> smtp`.
 
 `identities test-send <id> --to you@example.com --dry-run` shows what a test would send.
+
+## Connecting Gmail from another machine
+
+First configure [member access and an allowed HTTPS host](./members.md). Open that workspace's Setup page from the other machine. Under Email, copy the exact redirect URI shown: `<origin>/api/gmail/auth/callback`. The scheme, hostname, port and path must all match.
+
+1. In Google Cloud, enable the Gmail API and create an OAuth client of type **Web application**.
+2. Add the copied URI to that client's **Authorized redirect URIs**. Each workspace port needs its own URI.
+3. In Setup → Credentials, save `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` from that same Web client.
+4. Choose **Connect Gmail account** and sign in as the mailbox to connect.
+
+For `redirect_uri_mismatch` or an error saying the redirect must use loopback, register the exact URI and replace both credentials with the Web client's values, then retry. A Desktop client cannot use the remote hostname. Google can show this error without calling the app back; return to Setup yourself in that case. Callback errors that reach Setup explain the same fix.
+
+The workspace stores one `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` pair. After switching it to the Web client, loopback Setup uses that client too, and `gmail auth` defaults to those credentials. Register each loopback redirect you use on the same Web client's **Authorized redirect URIs**:
+
+- **Setup:** `<origin>/api/gmail/auth/callback`, with the exact scheme, loopback hostname (`localhost`, `127.0.0.1` or `[::1]`) and workspace port you open in the browser.
+- **`gmail auth`:** `http://127.0.0.1:<port>`, where the callback server chooses an ephemeral port on each run. Use the decoded `redirect_uri` from the consent URL printed by that run; register it and reopen that URL while the command is still waiting. This can fail: [Google says redirect URI changes can take five minutes to a few hours to apply](https://support.google.com/cloud/answer/15549257?hl=en), but the CLI stops waiting after five minutes. Retrying may choose a different port, so the previous registration may not help. If registration has not taken effect before the command times out, use loopback Setup on the host machine instead: register its exact callback URI as above, wait for the change to propagate, then choose **Connect Gmail account**. Its stable workspace port lets you retry with the same registered URI.
+
+Without these registrations, Google rejects the Web client's loopback redirect. Switching a workspace to Web-client credentials does not migrate previously connected mailboxes: reconnect them using that client.
 
 ## The rules
 
