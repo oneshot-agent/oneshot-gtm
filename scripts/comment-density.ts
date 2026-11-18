@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at c9b781d.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at f3b9696.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -97,17 +97,38 @@ function headerPath(l: string): string | null {
   return m ? (m[1] ?? m[2]) : null;
 }
 
+const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** A code line's code and trailing comment; quotes are tracked so `//` or `#` in a string stays code. */
+function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: string } {
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+    } else if (ext === 'c' ? ch === '/' && s[i + 1] === '/' : ch === '#' && /\s/.test(s[i - 1] ?? '')) {
+      return { code: squash(s.slice(0, i)), comment: squash(s.slice(i)) };
+    }
+  }
+  return { code: squash(s), comment: '' };
+}
+
 function kindOf(file: string | null): 'c' | 'hash' | null {
   if (!file || EXCLUDED.test(file)) return null;
   return C_LIKE.test(file) ? 'c' : HASH.test(file) ? 'hash' : null;
 }
 
-/** Measure the lines a `git diff -U0 -M` adds; removed lines only matter as the source of moved comments. */
+/** Measure the lines a `git diff -U0 -M` adds; removed lines only matter as the source of moved or edited comments. */
 export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}): CommentDensity {
   const lim = { ...DEFAULT_COMMENT_LIMITS, ...limits };
   const lines = diff.split('\n');
   // A comment the diff removes and adds back elsewhere was moved, not written.
   const removed = new Map<string, number>();
+  // Trailing comments of removed code lines, by their code, to pair with a re-added line.
+  const removedCode = new Map<string, string[]>();
   let removedComments = 0;
   let inHunk = false, oldExt: 'c' | 'hash' | null = null;
   let oldState: ScanState = { block: false, doc: null, template: false };
@@ -119,7 +140,14 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
       const s = l.slice(1).trim();
       if (!s) continue;
       removed.set(s, (removed.get(s) ?? 0) + 1);
-      if (oldExt && lineKind(oldExt, s, oldState) === 'comment') removedComments++;
+      if (!oldExt) continue;
+      const plain = !oldState.block && !oldState.template;
+      const kind = lineKind(oldExt, s, oldState);
+      if (kind === 'comment') removedComments++;
+      else if (kind === 'code' && plain) {
+        const { code, comment } = splitTrailing(oldExt, s);
+        removedCode.set(code, [...(removedCode.get(code) ?? []), comment]);
+      }
     }
   }
   let code = 0, comments = 0;
@@ -153,9 +181,21 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
     const at = lineNo++;
     const s = l.slice(1).trim();
     if (!s) continue;
+    const plain = !state.block && !state.template;
     const kind = lineKind(ext, s, state);
     if (kind === 'skip') continue;
-    if (kind === 'code') { code++; close(); continue; }
+    if (kind === 'code') {
+      close();
+      // Unchanged code whose trailing comment changed is a comment edit, not new code.
+      const split = plain ? splitTrailing(ext, s) : null;
+      const was = split ? removedCode.get(split.code) : undefined;
+      const i = split && was ? was.findIndex((c) => c !== split.comment) : -1;
+      if (!split || !was || i < 0) { code++; continue; }
+      const [old] = was.splice(i, 1);
+      if (old && !IGNORED.test(old)) removedComments++;
+      if (split.comment && !IGNORED.test(split.comment)) comments++;
+      continue;
+    }
     const moved = removed.get(s) ?? 0;
     if (moved) { removed.set(s, moved - 1); continue; }
     comments++;
