@@ -2600,16 +2600,22 @@ export async function previewCadenceStep(input: {
   // A LinkedIn touch restates the stored offer as it stands: one written for
   // the sequence under an older setup is written again first, and the touch
   // is drafted with whatever that leaves (never held for want of one).
-  const refreshOnly =
-    !mailDraft &&
-    step.channel === "linkedin" &&
-    playMakesSequenceOffer(input.playName, cfg) &&
-    sequenceOfferIsStale(
-      sequenceOfferRecord({ prospectId: input.prospectId, playName: input.playName, cadence }),
-      cfg,
-    );
+  const linkedInRecord =
+    !mailDraft && step.channel === "linkedin" && playMakesSequenceOffer(input.playName, cfg)
+      ? sequenceOfferRecord({ prospectId: input.prospectId, playName: input.playName, cadence })
+      : null;
+  const refreshOnly = !!linkedInRecord && sequenceOfferIsStale(linkedInRecord, cfg);
+  // An offer play's LinkedIn sequence starts with its row's offer; one whose
+  // follow-ups alone make offers starts with none, so its first message
+  // writes it (never the connection request, which is a first touch).
+  const writeMissing =
+    !!linkedInRecord &&
+    !linkedInRecord.offer &&
+    !playMakesOffer(input.playName, cfg) &&
+    step.id !== CONTINUATION_INVITE_ID &&
+    !reinvite;
   const derived =
-    offerStep || refreshOnly
+    offerStep || refreshOnly || writeMissing
       ? await deriveSequenceOffer({
           prospectId: input.prospectId,
           playName: input.playName,
