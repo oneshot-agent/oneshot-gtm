@@ -67,9 +67,15 @@ it("does not attach a different signed-in member", async () => {
     status: "completed",
     account: { id: "new", member_urn: "different", status: "connected" },
   });
-  await expect(adoptPendingLinkedInReplacements()).rejects.toThrow("does not match");
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await adoptPendingLinkedInReplacements();
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("does not match"));
+  warn.mockRestore();
   expect(store.account("wallet:old")?.account.id).toBe("old");
-  expect(store.progress("replacement:wallet:old")).toMatchObject({ stage: "failed" });
+  expect(store.progress("replacement:wallet:old")).toMatchObject({
+    stage: "failed",
+    error: expect.stringContaining("does not match"),
+  });
 });
 it("does not treat opening the login page as a completed grant", async () => {
   sdk.mockResolvedValue({ status: "pending" });
@@ -97,11 +103,37 @@ it("keeps a connection it cannot merge with the member who opened the login", as
   const { pendingLinkedInReplacementWallets } = await import("../src/linkedin-replacement.ts");
   // Until the login settles, discovery leaves the wallet's new accounts alone.
   expect([...pendingLinkedInReplacementWallets()]).toEqual(["wallet"]);
-  sdk.mockResolvedValue({
-    status: "completed",
-    account: { id: "new", member_urn: "different", status: "connected", allowed_actions: [] },
+  // A second account's login is ready in the same pass.
+  store.saveAccount({
+    key: "wallet:other",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: { id: "other", member_urn: "second", status: "revoked" } as never,
+    sync: null,
+    checkedAt: null,
+    error: null,
   });
-  await expect(adoptPendingLinkedInReplacements()).rejects.toThrow("does not match");
+  store.saveProgress("replacement:wallet:other", {
+    stage: "awaiting_login",
+    oldAccountKey: "wallet:other",
+    oldAccountId: "other",
+    member: "second",
+    intentId: "other-intent",
+  });
+  sdk.mockImplementation(async (_workspace, op: { intentId: string }) => ({
+    status: "completed",
+    account:
+      op.intentId === "intent"
+        ? { id: "new", member_urn: "different", status: "connected", allowed_actions: [] }
+        : { id: "next", member_urn: "second", status: "connected", allowed_actions: [] },
+  }));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  // The first login cannot be adopted; the pass goes on to the next one.
+  await adoptPendingLinkedInReplacements();
+  warn.mockRestore();
+  expect(store.progress("replacement:wallet:old")).toMatchObject({ stage: "failed" });
+  expect(store.account("wallet:other")?.account.id).toBe("next");
+  expect(store.progress("replacement:wallet:other")).toMatchObject({ stage: "complete" });
   expect(store.account("wallet:old")?.account.id).toBe("old");
   // The other LinkedIn member Mia signed in as is an account of its own, and hers.
   expect(store.account("wallet:new")).toMatchObject({
@@ -268,4 +300,67 @@ it.each([
       account: { id: "new" },
     });
   else expect(store.account("wallet:new")).toBeNull();
+});
+it("does not undo a resumed import when a slow poll returns after another pass completed the login", async () => {
+  store.saveProgress("replacement:wallet:old", {
+    stage: "awaiting_login",
+    oldAccountKey: "wallet:old",
+    oldAccountId: "old",
+    member: "owner",
+    intentId: "intent",
+    pauseBackfill: true,
+  });
+  const resumed = {
+    accountKey: "wallet:old",
+    stage: "waiting",
+    pending: { kind: "sync", idempotencyKey: "key", requestId: "request" },
+  };
+  const connected = {
+    id: "new",
+    member_urn: "owner",
+    status: "connected",
+    allowed_actions: ["read", "reply", "view_profile"],
+  };
+  sdk.mockImplementation(async () => {
+    // While this poll waits, another pass adopts the same login and the member resumes the import.
+    store.replaceAccount("wallet:old", connected as never, []);
+    store.saveProgress("replacement:wallet:old", {
+      stage: "complete",
+      oldAccountKey: "wallet:old",
+      oldAccountId: "old",
+      member: "owner",
+      intentId: "intent",
+      pauseBackfill: true,
+      newAccountId: "new",
+    });
+    store.saveProgress("backfill:wallet:old", resumed);
+    return { status: "completed", account: connected };
+  });
+  await adoptPendingLinkedInReplacements();
+  expect(store.progress("backfill:wallet:old")).toEqual(resumed);
+  expect(store.progress("replacement:wallet:old")).toMatchObject({ stage: "complete" });
+});
+it("lets discovery go on for the wallet's other accounts once the open login's account is known", async () => {
+  const { pendingLinkedInReplacementWallets } = await import("../src/linkedin-replacement.ts");
+  connectedByMia();
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: { id: "new", member_urn: "owner", status: "connected" } as never,
+    sync: null,
+    checkedAt: null,
+    error: null,
+    ownerMember: "bob@example.com",
+  });
+  expect([...pendingLinkedInReplacementWallets()]).toEqual(["wallet"]);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await adoptPendingLinkedInReplacements();
+  warn.mockRestore();
+  // Still open, and its account is on record, so the wallet is no longer held back.
+  expect(store.progress("replacement:wallet:old")).toMatchObject({
+    stage: "awaiting_login",
+    newAccountId: "new",
+  });
+  expect(pendingLinkedInReplacementWallets().size).toBe(0);
 });

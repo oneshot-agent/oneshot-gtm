@@ -188,6 +188,20 @@ describe("the Replies view", () => {
     expect(archived.status).toBe(200);
     expect((await archived.json()).archivedAt).toEqual(expect.any(String));
   });
+
+  it("never treats a signed-in member as the only user, even when the members list reads empty after them", async () => {
+    seedMembers();
+    // The last member is removed between the request's member lookup and the count.
+    const db = getSharedDb();
+    const count = vi.spyOn(db, "listMembers").mockReturnValue([]);
+    try {
+      const mia = await list(as(MIA));
+      expect(mia.threads.map((t) => t.key)).toEqual([miaThread]);
+      expect(JSON.stringify(mia)).not.toContain("A private note on the olive account");
+    } finally {
+      count.mockRestore();
+    }
+  });
 });
 
 describe("acting on a thread of another member's account", () => {
@@ -279,20 +293,26 @@ describe("background jobs", () => {
     const known = ["olive", "mia", "old"].map((id) => store.account(`wallet:${id}`)!.account);
     // The same LinkedIn account, as the provider returns it after Mia's sign-in.
     const again = { ...store.account("wallet:old")!.account, allowed_actions: ["read"] };
+    // Discovery lists the account as it was: only the login's adoption carries the sign-in.
     sdk.mockImplementation(async (_workspace, op) => {
       if (op.kind === "connect") return { intent_id: "intent-old", url: "https://example.com/in" };
       if (op.kind === "connection") return { status: "completed", account: again };
-      if (op.kind === "accounts")
-        return { wallet: "wallet", accounts: known.map((a) => (a.id === "old" ? again : a)) };
+      if (op.kind === "accounts") throw new Error("accounts unavailable");
       if (op.kind === "status") return { sync_state: "complete", coverage: { complete: true } };
       if (op.kind === "conversations") return { conversations: [], has_more: false };
       if (op.kind === "messages") return { messages: [], has_more: false };
       throw new Error(`Unexpected operation ${op.kind}`);
     });
+    sdk.mockImplementationOnce(async () => ({ wallet: "wallet", accounts: known }));
     expect((await repliesLinkedInRoute(post(as(MIA), { action: "connect" }))).status).toBe(200);
     await refreshLinkedInInbox(true);
 
-    // The sign-in was adopted onto the existing record, which stays the owner's.
+    // Sync settled Mia's login, and the sign-in was adopted onto the existing record,
+    // which stays the owner's.
+    expect(store.progress("connect:intent-old")).toMatchObject({ complete: true });
+    expect(
+      sdk.mock.calls.some(([, op]) => op.kind === "connection" && op.intentId === "intent-old"),
+    ).toBe(true);
     expect(store.account("wallet:old")?.account.allowed_actions).toEqual(["read"]);
     expect(store.account("wallet:old")?.ownerMember).toBeUndefined();
     const mia = await list(as(MIA));
@@ -445,6 +465,20 @@ describe("a force reconnect whose new connection is adopted late", () => {
     });
     expect(store.allMessages("wallet:mia").map((m) => m.text)).toContain(AFTER);
     expect(JSON.stringify(await list(as(OWNER)))).not.toContain(AFTER);
+    expect(JSON.stringify(await list(as(MIA)))).toContain(AFTER);
+  });
+
+  it("keeps an account a login connected with the member even when the login ends unfinished", async () => {
+    // The provider reports the login failed, yet the wallet already lists what it connected.
+    login = { status: "failed", failure_reason: "checkpoint", account: again };
+    await refreshLinkedInInbox(true);
+    expect(store.progress("replacement:wallet:mia")).toMatchObject({ stage: "failed" });
+    expect(store.account("wallet:mia2")).toMatchObject({ ownerMember: MIA });
+    for (const headers of [as(OWNER), local]) {
+      const owner = await list(headers);
+      expect(owner.accounts.find((a) => a.key === "wallet:mia2")).toMatchObject({ mine: false });
+      expect(JSON.stringify(owner)).not.toContain(AFTER);
+    }
     expect(JSON.stringify(await list(as(MIA)))).toContain(AFTER);
   });
 });

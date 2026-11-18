@@ -392,3 +392,46 @@ it("is unchanged on a single-user install: the host machine reads every example"
   ]);
   expect(body.proposals[0]!.evidence.withheld).toBeUndefined();
 });
+
+it("answers a committed decision or setting when an example cannot be checked, without that example", async () => {
+  // The review store cannot read the send behind one of the owner's examples.
+  const learning = review.learning;
+  const sendOrigin = learning.sendOrigin.bind(learning);
+  const lookup = vi.spyOn(learning, "sendOrigin").mockImplementation((id: string) => {
+    if (id === sendIds[0]) throw new Error("database is locked");
+    return sendOrigin(id);
+  });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const id = (await proposals(as(OWNER))).body.proposals[0]!.id;
+    const approved = await read<{
+      ok: boolean;
+      proposal: {
+        status: string;
+        evidence: { withheld?: number; samples?: Array<{ sent?: string }> };
+      };
+    }>(await approveLearningProposalRoute(post(as(OWNER), {}), { id }));
+    expect(approved.body).toMatchObject({ ok: true, proposal: { status: "approved" } });
+    // The two examples that could be checked are still there; the third is left out.
+    expect(approved.body.proposal.evidence.samples!.map((s) => s.sent)).toEqual([
+      "Sent by olive, number 2",
+      "Sent by olive, number 3",
+    ]);
+    expect(approved.body.proposal.evidence.withheld).toBe(3);
+    expect(approved.text).not.toContain("Sent by olive, number 1");
+
+    const preferenceId = (await guidance(as(OWNER))).body.guidance[0]!.id;
+    const saved = await read<ReplyLearningStatus>(
+      await replyLearningRoute(post(as(OWNER), { enabled: false, preferenceId })),
+    );
+    expect(saved.body.preferences[0]).toMatchObject({ id: preferenceId, enabled: false });
+    expect(saved.body.preferences[0]!.evidence.map((e) => e.body)).toEqual([
+      "Sent by olive, number 2",
+      "Sent by olive, number 3",
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("database is locked"));
+  } finally {
+    lookup.mockRestore();
+    warn.mockRestore();
+  }
+});

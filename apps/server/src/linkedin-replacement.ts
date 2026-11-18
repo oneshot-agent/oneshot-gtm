@@ -4,6 +4,7 @@ import {
   LinkedInReplacementOwnerMismatchError,
   linkedInMatches,
 } from "@oneshot-gtm/core";
+import type { LinkedInAccountRecord } from "@oneshot-gtm/core";
 import type { LinkedInAccount } from "@oneshot-agent/sdk";
 import { callLinkedIn } from "./linkedin-client.ts";
 
@@ -29,19 +30,44 @@ function awaitingLogin(accountKey: string): Replacement | null {
 }
 
 /**
- * Wallets where a replacement login is still open. An account that appears on
- * one may be what that login connected, and it belongs to the member who
- * started it, so discovery leaves it to the adoption below instead of
- * recording it with no member. Re-read after discovery's await, like
+ * Wallets where a replacement login is still open and what it connected is not
+ * known yet. An account that appears on one may be what that login connected,
+ * and it belongs to the member who started it, so discovery leaves it to the
+ * adoption below instead of recording it with no member. Once the login's
+ * account is known and recorded (`newAccountId`), the wallet's other accounts
+ * are discovered as usual. Re-read after discovery's await, like
  * `pendingLinkedInConnectionWallets`.
  */
 export function pendingLinkedInReplacementWallets(): Set<string> {
   return new Set(
     getLinkedInInboxStore()
       .accounts()
-      .filter((a) => awaitingLogin(a.key))
+      .filter((a) => {
+        const open = awaitingLogin(a.key);
+        return open && !open.newAccountId;
+      })
       .map((a) => a.wallet),
   );
+}
+
+/**
+ * The login was opened from this account, so what it connected belongs to the
+ * same member from here on, merged yet or not. Recorded before the replacement
+ * stops being open, so discovery never finds the connection with no member.
+ */
+function keepForMember(a: LinkedInAccountRecord, connected: LinkedInAccount) {
+  const store = getLinkedInInboxStore();
+  if (store.accounts().some((x) => x.wallet === a.wallet && x.account.id === connected.id)) return;
+  store.saveAccount({
+    key: `${a.wallet}:${connected.id}`,
+    wallet: a.wallet,
+    workspace: a.workspace,
+    ownerMember: a.ownerMember || undefined,
+    account: connected,
+    sync: null,
+    checkedAt: null,
+    error: null,
+  });
 }
 
 /** Only consumes an explicitly authorized, persisted replacement intent. Never revokes accounts. */
@@ -60,10 +86,13 @@ export async function adoptPendingLinkedInReplacements() {
       account?: LinkedInAccount | null;
     }>(a.workspace, { kind: "connection", intentId: replacement.intentId }).catch(() => null);
     if (!result || ["pending", "verifying"].includes(result.status)) continue;
-    // A force reconnect during the poll may have stored a newer intent for this account.
-    // Progress is written only while the stored record is still the intent polled here.
-    const current = () =>
-      store.progress<Replacement>(progressKey)?.intentId === replacement.intentId;
+    // A force reconnect during the poll may have stored a newer intent for this account, or
+    // another pass may have settled this one. Progress is written, and a merge made, only
+    // while the stored record is still this intent and still open.
+    const current = () => {
+      const stored = store.progress<Replacement>(progressKey);
+      return stored?.stage === "awaiting_login" && stored.intentId === replacement.intentId;
+    };
     const saveIfCurrent = (data: Replacement) =>
       store.db
         .transaction(() => {
@@ -71,6 +100,8 @@ export async function adoptPendingLinkedInReplacements() {
         })
         .immediate();
     if (result.status !== "completed" || !result.account) {
+      // A login that ended unfinished can still have connected an account the wallet lists.
+      if (result.account) keepForMember(a, result.account);
       saveIfCurrent({
         ...replacement,
         stage: "failed",
@@ -80,32 +111,15 @@ export async function adoptPendingLinkedInReplacements() {
     }
     const connected = result.account;
     const newKey = `${a.wallet}:${connected.id}`;
-    // The login was opened from this account, so what it connected belongs to the
-    // same member from here on, merged yet or not. Recorded before the replacement
-    // stops being open, so discovery never finds the connection with no member.
-    const keepForMember = () => {
-      if (store.accounts().some((x) => x.wallet === a.wallet && x.account.id === connected.id))
-        return;
-      store.saveAccount({
-        key: newKey,
-        wallet: a.wallet,
-        workspace: a.workspace,
-        ownerMember: a.ownerMember || undefined,
-        account: connected,
-        sync: null,
-        checkedAt: null,
-        error: null,
-      });
-    };
     if (!current()) {
       // Superseded: the newer intent's record stays as it is, and this login's connection
       // is never merged into the account it reconnects. It stays the member's own account.
-      keepForMember();
+      keepForMember(a, connected);
       continue;
     }
     if (a.removedAt) {
       // Nothing to merge into: the new connection stays an account of its own.
-      keepForMember();
+      keepForMember(a, connected);
       saveIfCurrent({
         ...replacement,
         stage: "failed",
@@ -136,7 +150,7 @@ export async function adoptPendingLinkedInReplacements() {
       if (claims.length !== required || store.account(a.key)?.removedAt) {
         // Another server is still capturing, or the account was removed meanwhile. The
         // new connection is captured under the member until the next pass settles it.
-        keepForMember();
+        keepForMember(a, connected);
         continue;
       }
       // An import of the new connection has asked the provider for something that is not
@@ -147,9 +161,10 @@ export async function adoptPendingLinkedInReplacements() {
         store.progress<{ pending?: unknown }>(`backfill:${newKey}`)?.pending &&
         !store.account(newKey)?.removedAt
       ) {
-        keepForMember();
+        keepForMember(a, connected);
         saveIfCurrent({
           ...replacement,
+          newAccountId: connected.id,
           error:
             "The new connection's history import is waiting on LinkedIn. The accounts merge when it finishes.",
         });
@@ -158,7 +173,7 @@ export async function adoptPendingLinkedInReplacements() {
       // Force reconnect stores a new intent only while holding this account's leases, so
       // with them held the record checked here is the one the merge completes.
       if (!current()) {
-        keepForMember();
+        keepForMember(a, connected);
         continue;
       }
       store.replaceAccount(a.key, connected, linkedInMatches());
@@ -189,16 +204,26 @@ export async function adoptPendingLinkedInReplacements() {
         console.warn(
           `linkedin: replacement of ${a.key} left open: ${e.sourceKey} (owner: ${ownerLabel(e.sourceOwner)}) and ${a.key} (owner: ${ownerLabel(e.destinationOwner)}) have different owners`,
         );
-        saveIfCurrent({ ...replacement, error: e.message });
+        // With the new connection's record known, discovery goes on for the wallet's others.
+        const recorded = store
+          .accounts()
+          .some((x) => x.wallet === a.wallet && x.account.id === connected.id);
+        saveIfCurrent({
+          ...replacement,
+          ...(recorded ? { newAccountId: connected.id } : {}),
+          error: e.message,
+        });
         continue;
       }
-      keepForMember();
+      keepForMember(a, connected);
       saveIfCurrent({
         ...replacement,
         stage: "failed",
         error: (e as Error).message,
       });
-      throw e;
+      // Settled as failed, where the account shows it. One login that cannot be adopted
+      // does not stop the logins after it, or the discovery and capture that follow.
+      console.warn(`linkedin: replacement of ${a.key} failed: ${(e as Error).message}`);
     } finally {
       for (const [key, token] of claims) review.release(key, token);
     }

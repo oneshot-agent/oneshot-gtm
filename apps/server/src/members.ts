@@ -164,7 +164,9 @@ export function linkedInViewer(req: Request): LinkedInViewer {
   return {
     email: member.email,
     installOwner: listed.owner ? member.email === listed.owner : member.email === null,
-    onlyUser: listed.count === 0,
+    // Only the local owner of an install with no members. A member signed in through the
+    // tailnet has an email, so a members list read empty after theirs never makes them it.
+    onlyUser: listed.count === 0 && member.email === null,
   };
 }
 

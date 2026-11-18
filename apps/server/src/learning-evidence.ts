@@ -22,7 +22,8 @@ import type {
  * A sample stays only when its account is known. One whose account cannot
  * be told (an outreach draft, a send no longer on record) is left out: for
  * everyone but the one person using an install with no members, who reads
- * everything as before.
+ * everything as before. A sample whose lookup fails cannot be verified and
+ * is left out too, so a decision already committed still gets its answer.
  */
 export function evidenceFor(
   viewer: LinkedInViewer,
@@ -31,11 +32,20 @@ export function evidenceFor(
 ): LearningEvidence {
   const samples = evidence.samples ?? [];
   if (viewer.onlyUser || samples.length === 0) return evidence;
-  const kept = samples.filter((s, i) =>
-    carriesMessage(s)
-      ? messageVisible(viewer, s, evidence.refs[i])
-      : about.kind !== "prospect_angle" || prospectReplyVisible(viewer, s, about.scope?.prospectId),
-  );
+  let failure: unknown = null;
+  const kept = samples.filter((s, i) => {
+    try {
+      return carriesMessage(s)
+        ? messageVisible(viewer, s, evidence.refs[i])
+        : about.kind !== "prospect_angle" ||
+            prospectReplyVisible(viewer, s, about.scope?.prospectId);
+    } catch (e) {
+      failure ??= e;
+      return false;
+    }
+  });
+  if (failure)
+    console.warn(`learning: evidence withheld, a lookup failed: ${(failure as Error).message}`);
   if (kept.length === samples.length) return evidence;
   return { ...evidence, samples: kept, withheld: samples.length - kept.length };
 }
