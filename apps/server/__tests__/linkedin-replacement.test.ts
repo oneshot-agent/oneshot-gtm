@@ -122,3 +122,40 @@ it("settles a login finished after its account was removed, and keeps the member
   await adoptPendingLinkedInReplacements();
   expect(sdk).toHaveBeenCalledTimes(1);
 });
+it("retries an account whose login could not be checked, and still adopts the others", async () => {
+  store.saveAccount({
+    key: "wallet:other",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: { id: "other", member_urn: "second", status: "revoked" } as never,
+    sync: null,
+    checkedAt: null,
+    error: null,
+  });
+  store.saveProgress("replacement:wallet:other", {
+    stage: "awaiting_login",
+    oldAccountKey: "wallet:other",
+    oldAccountId: "other",
+    member: "second",
+    intentId: "other-intent",
+  });
+  const connected = { status: "connected", allowed_actions: ["read", "reply", "view_profile"] };
+  const poll = (intentId: string, unreachable: boolean) =>
+    intentId === "intent"
+      ? unreachable
+        ? Promise.reject(new Error("worker timeout"))
+        : { status: "completed", account: { id: "new", member_urn: "owner", ...connected } }
+      : { status: "completed", account: { id: "next", member_urn: "second", ...connected } };
+  sdk.mockImplementation(async (_workspace, op: { intentId: string }) => poll(op.intentId, true));
+  await adoptPendingLinkedInReplacements();
+  expect(store.account("wallet:other")?.account.id).toBe("next");
+  expect(store.progress("replacement:wallet:other")).toMatchObject({ stage: "complete" });
+  // The one that could not be checked is as it was, for the next pass.
+  expect(store.account("wallet:old")?.account.id).toBe("old");
+  const waiting = store.progress<Record<string, unknown>>("replacement:wallet:old");
+  expect(waiting).toMatchObject({ stage: "awaiting_login", intentId: "intent" });
+  expect(waiting?.error).toBeUndefined();
+  sdk.mockImplementation(async (_workspace, op: { intentId: string }) => poll(op.intentId, false));
+  await adoptPendingLinkedInReplacements();
+  expect(store.account("wallet:old")?.account.id).toBe("new");
+});

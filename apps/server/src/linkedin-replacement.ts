@@ -44,12 +44,14 @@ export async function adoptPendingLinkedInReplacements() {
     const progressKey = `replacement:${a.key}`;
     const replacement = awaitingLogin(a.key);
     if (!replacement?.intentId) continue;
+    // A login that cannot be checked right now (a worker timeout, say) stays open for the
+    // next pass, like a connect intent. It does not stop the accounts after it.
     const result = await callLinkedIn<{
       status: string;
       failure_reason?: string;
       account?: LinkedInAccount | null;
-    }>(a.workspace, { kind: "connection", intentId: replacement.intentId });
-    if (["pending", "verifying"].includes(result.status)) continue;
+    }>(a.workspace, { kind: "connection", intentId: replacement.intentId }).catch(() => null);
+    if (!result || ["pending", "verifying"].includes(result.status)) continue;
     if (result.status !== "completed" || !result.account) {
       store.saveProgress(progressKey, {
         ...replacement,
