@@ -228,6 +228,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         if (row) row.next_step_draft_json = JSON.stringify(persistedDraft);
       },
       getCadenceDraft: () => persistedDraft,
+      cadenceOfferKey: () => "[null,null,null]",
       clearCadenceDraft: () => {
         persistedDraft = null;
       },

@@ -539,7 +539,7 @@ function mailStep(dayOffset: number): SequenceStep {
 /** The id of the call step in a plan (`calls.cadenceStep`). */
 export const CALL_STEP_ID = "call";
 
-/** A preview finished after its cadence moved on; nothing was stored. */
+/** A preview finished after its cadence moved on or its offer was replaced; nothing was stored. */
 export const PREVIEW_STEP_MOVED =
   "cadence changed while the preview was written; refresh and retry";
 

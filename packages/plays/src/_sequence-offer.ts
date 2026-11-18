@@ -181,7 +181,8 @@ export function sequenceOfferRecord(input: {
  * Make `offer` the sequence's active offer, on the cadence. Replaces the
  * stored offer whole, so an approval or judge label the old one carried does
  * not survive; with `merge`, patches the stored offer key by key instead (an
- * approval stamp). `expect` guards the write on fields of the offer as
+ * approval stamp). A write that changes what a draft restates (text, steps,
+ * return) drops the stored preview written for the old offer. `expect` guards the write on fields of the offer as
  * stored (offer key → scalar, null: absent), e.g. an approval bound to the
  * offer the founder read. `offerCandidates` absent keeps the stored list.
  * Lands only while the cadence is active and holds no send, checked in the

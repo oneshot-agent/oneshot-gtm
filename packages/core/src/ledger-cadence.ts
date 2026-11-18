@@ -173,9 +173,8 @@ export function enrollCadence(
  * scalar, null: absent), e.g. an approval bound to the offer the founder
  * read. The stored `close` and `closeSkip` are kept, except a close whose
  * text the new offer has. A write that changes what a draft restates
- * (`cadenceOfferKey`) drops the stored next-step preview with it, its open
- * versions closed as `regenerate`; an approval stamp keeps it. False when
- * nothing was written.
+ * (`cadenceOfferKey`) drops the stored preview, its open versions closed as
+ * `regenerate`; an approval stamp keeps it. False when nothing was written.
  */
 export function setCadenceOffer(
   db: Database,
@@ -251,10 +250,9 @@ export function setCadenceOffer(
 }
 
 /**
- * What a draft restates of a cadence's stored offer (its text, steps and
- * return) as one comparable string: equal keys, same offer to a reader.
- * Judge labels, approval stamps and the close are not part of it. Null when
- * there is no such cadence.
+ * What a draft restates of a cadence's stored offer (text, steps, return) as
+ * one comparable string; judge labels, approval stamps and the close are not
+ * part of it. Null when there is no such cadence.
  */
 export function cadenceOfferKey(
   db: Database,
