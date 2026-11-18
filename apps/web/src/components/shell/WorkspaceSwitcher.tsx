@@ -354,7 +354,11 @@ export function WorkspaceSwitcher() {
             setNewName(draft);
           }}
           onCreate={onCreate}
-          onDismissSetup={() => setRemoteSetup(null)}
+          onDismissSetup={() => {
+            // Dismiss unmounts under its own focus.
+            focusOpener();
+            setRemoteSetup(null);
+          }}
         />
       )}
     </div>

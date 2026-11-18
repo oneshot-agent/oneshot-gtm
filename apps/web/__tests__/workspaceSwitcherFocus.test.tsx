@@ -154,4 +154,22 @@ describe("workspace switcher focus", () => {
     expect(button("New workspace")!.disabled).toBe(true);
     expect(document.activeElement).toBe(chip());
   });
+
+  it("returns focus to New workspace when a member's setup step is dismissed", async () => {
+    mocks.create.mockResolvedValue({
+      name: "acme",
+      port: 4031,
+      url: "https://host.tailnet.ts.net:4031/",
+      running: true,
+    });
+    await press(button("New workspace")!);
+    await type(nameField()!, "acme");
+    await press(button("Create workspace")!);
+    expect(host.querySelector('[role="status"]')!.textContent).toContain("port 4031");
+
+    await press(button("Dismiss")!);
+
+    expect(host.querySelector('[role="status"]')).toBeNull();
+    expect(document.activeElement).toBe(button("New workspace"));
+  });
 });
