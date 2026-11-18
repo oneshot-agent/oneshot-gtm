@@ -66,6 +66,7 @@ const SEEDS = [
   "/replies",
   "/meetings",
   "/setup",
+  "/members",
   "/setup/domains",
   "/direct-mail",
   "/linkedin/invites",
