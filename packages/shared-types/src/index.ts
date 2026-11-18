@@ -2442,6 +2442,11 @@ export interface ImportQueueRowRequest {
   /** Already stripped of workspace-specific keys by the sender; stripped again on receipt. */
   payload: Record<string, unknown>;
   movedFrom: { workspace: string; queueId: number };
+  /**
+   * The workspace the sender means to reach. A receiver that is not it
+   * refuses with 409; a sender from an older build omits it and is not checked.
+   */
+  toWorkspace?: string;
 }
 
 export interface ImportQueueRowResult {
@@ -2473,8 +2478,17 @@ export interface WorkspaceInfo {
     port: number;
     isCurrent: boolean;
     isDefault: boolean;
-    /** Live-probed server-side (~300ms /api/health ping). */
+    /**
+     * Live-probed server-side (~300ms /api/health ping). False when the port
+     * is silent or a different workspace answers on it.
+     */
     running: boolean;
+    /**
+     * The server on `port` named this workspace in its health answer. False
+     * while `running` for a server from a build before health carried the
+     * name: it is up, but which workspace it serves is unknown.
+     */
+    verified: boolean;
   }>;
 }
 

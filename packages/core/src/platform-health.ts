@@ -25,6 +25,7 @@ export interface PlatformError {
   kind: PlatformErrorKind;
   /** The provider's reason code when it gave one (`settlement_pending`), else a short label. */
   reason: string;
+  requestId?: string;
   paymentAttemptId?: string;
   quoteId?: string;
   stage?: string;
@@ -38,8 +39,14 @@ export class PlatformUnavailableError extends Error {
     readonly kind: PlatformErrorKind,
     readonly reason: string,
     readonly method: string,
+    readonly retryAt?: number,
+    readonly requestId?: string,
   ) {
-    super(`OneShot unavailable: ${pauseReason(kind)} (${reason}); ${method} not called`);
+    const detail =
+      reason === "service_auth" ? "tool unavailable—support required" : pauseReason(kind);
+    const retry = retryAt ? `; next attempt ${new Date(retryAt).toISOString()}` : "";
+    const ref = requestId ? ` (request ${requestId})` : "";
+    super(`OneShot unavailable: ${detail} (${reason}); ${method} not called${retry}${ref}`);
     this.name = "PlatformUnavailableError";
   }
 }
@@ -62,6 +69,9 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
   if (err instanceof PlatformUnavailableError) return { kind: err.kind, reason: err.reason };
   const e = err as {
     name?: unknown;
+    code?: unknown;
+    jobId?: unknown;
+    requestId?: unknown;
     message?: unknown;
     reason?: unknown;
     statusCode?: unknown;
@@ -74,8 +84,12 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
   const name = str(e.name) ?? "";
   const message = err instanceof Error ? err.message : String(str(e.message) ?? err);
   const lower = message.toLowerCase();
+  const code = str(e.code);
+  // A recognized code outranks the message; payment wording alone only classifies uncoded errors.
+  const typed =
+    !!code && (TRANSIENT_TOOL_CODES.has(code) || VERDICT_CODES.has(code) || name === "JobError");
 
-  if (name === "PaymentError" || lower.includes("payment rejected")) {
+  if (name === "PaymentError" || (!typed && lower.includes("payment rejected"))) {
     const reason =
       str(e.reason) ?? /payment rejected:\s*([a-z0-9_]+)/i.exec(message)?.[1] ?? "payment rejected";
     const ids: Omit<PlatformError, "kind" | "reason"> = {};
@@ -90,6 +104,17 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
     const network = str(e.expected?.network);
     if (network) ids.network = network;
     return { kind: WALLET_REASONS.test(reason) ? "wallet" : "payment", reason, ...ids };
+  }
+  if (code) {
+    const requestId = str(e.jobId) ?? str(e.requestId);
+    const ref = requestId ? { requestId } : {};
+    if (TRANSIENT_TOOL_CODES.has(code)) {
+      return { kind: "tool", reason: code, ...ref };
+    }
+    if (code === "insufficient_funds") return { kind: "wallet", reason: code, ...ref };
+    if (code === "payment_failed") return { kind: "payment", reason: code, ...ref };
+    // A typed job error is authoritative; misleading prose cannot turn a verdict into an outage.
+    if (name === "JobError" || VERDICT_CODES.has(code)) return null;
   }
   if (name === "InsufficientCreditsError" || WALLET_MESSAGE.test(lower)) {
     return { kind: "wallet", reason: "insufficient credits" };
@@ -132,11 +157,28 @@ export const PLATFORM_WINDOW = 10;
 export const PLATFORM_TRIP = 6;
 /** How long a pause lasts before one call probes. */
 export const PLATFORM_COOLDOWN_MS = 60_000;
+/** OneShot codes for a tool that is down or throttled; send-routing retries them, the breaker pauses them. */
+export const TRANSIENT_TOOL_CODES: ReadonlySet<string> = new Set([
+  "service_auth",
+  "service_unavailable",
+  "rate_limited",
+]);
+/** OneShot codes that are an answer about the input, never an outage, whatever the message says. */
+export const VERDICT_CODES: ReadonlySet<string> = new Set([
+  "invalid_input",
+  "enrichment_exhausted",
+  "target_unreachable",
+  "source_unsupported",
+]);
+export const TOOL_AUTH_COOLDOWN_MS = 30 * 60_000;
+export const TOOL_MAX_COOLDOWN_MS = 15 * 60_000;
 
 interface Breaker {
   outcomes: boolean[];
   open: boolean;
   openedAt: number;
+  cooldownMs?: number;
+  requestId?: string;
   /** The one probe after a cooldown, while it is out: which call, and when it went. */
   probe: { id: number; at: number } | null;
   kind: PlatformErrorKind;
@@ -162,7 +204,7 @@ function breakerFor(key: string): Breaker {
  */
 function decides(b: Breaker, now: number, probeId: number): boolean {
   if (b.probe) return b.probe.id === probeId;
-  return now - b.openedAt >= PLATFORM_COOLDOWN_MS;
+  return now - b.openedAt >= (b.cooldownMs ?? PLATFORM_COOLDOWN_MS);
 }
 
 function record(key: string, failed: PlatformError | null, now: number, probeId = 0): void {
@@ -174,21 +216,43 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
       b.openedAt = 0;
       b.probe = null;
       b.outcomes = [];
+      b.cooldownMs = PLATFORM_COOLDOWN_MS;
+      b.requestId = undefined;
     }
     b.outcomes.push(false);
   } else {
     b.outcomes.push(true);
-    b.kind = failed.kind;
-    b.reason = failed.reason;
+    // Only a failure that sets the pause names it; a late one leaves the active pause's reason.
+    const setPause = () => {
+      b.kind = failed.kind;
+      b.reason = failed.reason;
+      b.requestId = failed.requestId;
+      b.openedAt = now;
+    };
     if (b.open) {
-      // The probe failed: wait another cooldown before the next one.
-      if (decides(b, now, probeId)) {
-        b.openedAt = now;
+      // The probe failed: wait another cooldown before the next one. A service_auth failure
+      // from any call starts the authentication pause from now, even inside a shorter pause.
+      const authLonger =
+        failed.reason === "service_auth" &&
+        (b.cooldownMs ?? PLATFORM_COOLDOWN_MS) < TOOL_AUTH_COOLDOWN_MS;
+      if (authLonger || decides(b, now, probeId)) {
+        b.cooldownMs =
+          failed.reason === "service_auth"
+            ? TOOL_AUTH_COOLDOWN_MS
+            : failed.kind === "tool"
+              ? Math.min((b.cooldownMs ?? PLATFORM_COOLDOWN_MS) * 2, TOOL_MAX_COOLDOWN_MS)
+              : PLATFORM_COOLDOWN_MS;
+        setPause();
         b.probe = null;
       }
-    } else if (b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP) {
+    } else if (
+      failed.reason === "service_auth" ||
+      b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP
+    ) {
       b.open = true;
-      b.openedAt = now;
+      setPause();
+      b.cooldownMs =
+        failed.reason === "service_auth" ? TOOL_AUTH_COOLDOWN_MS : PLATFORM_COOLDOWN_MS;
       logEvent(
         "oneshot.platform_paused",
         { key, kind: failed.kind, reason: failed.reason, text: pauseReason(failed.kind) },
@@ -206,7 +270,7 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
 function pausedBreaker(key: string, now: number): Breaker | null {
   const b = breakers.get(key);
   if (!b?.open) return null;
-  if (now - b.openedAt < PLATFORM_COOLDOWN_MS) return b;
+  if (now - b.openedAt < (b.cooldownMs ?? PLATFORM_COOLDOWN_MS)) return b;
   // A probe that never answered (a hung call) frees the slot after a cooldown.
   if (b.probe && now - b.probe.at < PLATFORM_COOLDOWN_MS) return b;
   return null;
@@ -380,7 +444,15 @@ export function watchAgent<T extends object>(agent: T): T {
           const paused = pausedBreaker("platform", now) ?? pausedBreaker(key, now);
           if (paused) {
             noteScope({ kind: paused.kind, reason: paused.reason }, true);
-            return Promise.reject(new PlatformUnavailableError(paused.kind, paused.reason, prop));
+            return Promise.reject(
+              new PlatformUnavailableError(
+                paused.kind,
+                paused.reason,
+                prop,
+                paused.openedAt + (paused.cooldownMs ?? PLATFORM_COOLDOWN_MS),
+                paused.requestId,
+              ),
+            );
           }
           // Past a cooldown this call is the one probe; others wait for its answer.
           probes.platform = admitProbe("platform", now);

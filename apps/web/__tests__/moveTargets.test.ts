@@ -17,6 +17,7 @@ const ws = (
   isCurrent: false,
   isDefault: false,
   running: false,
+  verified: false,
   ...over,
 });
 

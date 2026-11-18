@@ -1384,6 +1384,15 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
       req,
     );
   }
+  // The sender checked who held this port before posting; a different
+  // workspace that took the port since must not keep the row.
+  if (body.toWorkspace !== undefined && body.toWorkspace !== currentWorkspaceName()) {
+    return jsonResponse(
+      { error: `this server is workspace "${currentWorkspaceName()}", not the move's destination` },
+      409,
+      req,
+    );
+  }
   const playName = body.playName.trim();
   if (!(playName in PLAYS) && !(playName in MANUAL_PLAYS)) {
     return jsonResponse({ error: `unknown play '${playName}'` }, 400, req);
@@ -1564,6 +1573,7 @@ export async function moveQueueRowRoute(
       source: row.source ?? "manual",
       payload: portable,
       movedFrom: { workspace: currentWorkspaceName(), queueId: row.id },
+      toWorkspace: workspace,
     };
     let imported: ImportQueueRowResult;
     try {

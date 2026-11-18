@@ -151,9 +151,9 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   return message;
 }
 
-export async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string, init?: { signal?: AbortSignal }): Promise<T> {
   if (IS_DEMO) return demoGet<T>(path);
-  const res = await fetch(BASE + path);
+  const res = await fetch(BASE + path, init);
   if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
@@ -426,6 +426,8 @@ export const api = {
   setMemberRole: (email: string, role: CurrentMember["role"]) =>
     postJson<{ ok: boolean }>("/members/role", { email, role }),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
+  // The roster for a caller with a deadline: aborting `signal` ends a stalled request.
+  workspaceWithin: (signal: AbortSignal) => getJson<WorkspaceInfo>("/workspace", { signal }),
   workspaceCreate: (name: string) => postJson<WorkspaceCreateResult>("/workspaces", { name }),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {

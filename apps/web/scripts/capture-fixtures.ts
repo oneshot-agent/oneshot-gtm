@@ -240,6 +240,7 @@ function scrubWorkspace(body: unknown): unknown {
     isCurrent: true,
     isDefault: true,
     running: true,
+    verified: true,
   };
   return { current: { name: one.name, home: one.home, port: one.port }, workspaces: [one] };
 }

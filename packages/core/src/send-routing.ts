@@ -3,6 +3,7 @@ import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { LEGACY_GMAIL_ID, LEGACY_ONESHOT_ID, resolveIdentities } from "./identities.ts";
 import { getLedger } from "./ledger.ts";
+import { TRANSIENT_TOOL_CODES, VERDICT_CODES } from "./platform-health.ts";
 import { sqliteToIso, toSqliteUtc } from "./time.ts";
 import type { EmailIdentity } from "./types.ts";
 
@@ -101,9 +102,15 @@ export function rateLimitRetryAfterS(err: unknown): number | null {
  */
 export function isTransientToolError(err: unknown): boolean {
   if (isSettlementAmbiguous(err)) return false;
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string") {
+    if (TRANSIENT_TOOL_CODES.has(code)) return true;
+    if (VERDICT_CODES.has(code)) return false;
+  }
   const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
   if (!msg) return false;
   return (
+    msg.includes("temporarily unavailable") ||
     msg.includes("tool execution failed") || // OneShot worker crash (generic)
     msg.includes("tool request failed") || // SDK: the tool's HTTP request itself failed (generic, not a verdict)
     msg.includes("timed out") || // job/operation timeout
