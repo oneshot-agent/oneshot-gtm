@@ -53,6 +53,16 @@ const startAlpha = async () => {
   return () => act(async () => settle({ status: "already-running", port }));
 };
 
+/** Submit the form from this machine; the creation stays pending until the returned call. */
+const startCreating = async () => {
+  let settle!: (setup: null) => void;
+  mocks.create.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  await press(button("New workspace")!);
+  await type(nameField()!, "acme");
+  await press(button("Create workspace")!);
+  return () => act(async () => settle(null));
+};
+
 /** A click as the browser makes it: the button takes focus, then fires. */
 const press = (el: HTMLElement) =>
   act(async () => {
@@ -154,6 +164,33 @@ describe("workspace switcher focus", () => {
 
     expect(button("New workspace")!.disabled).toBe(true);
     expect(document.activeElement).toBe(chip());
+  });
+
+  it("focuses the chip when a creation finishes with the popover still open", async () => {
+    const finish = await startCreating();
+
+    await finish();
+
+    expect(nameField()).toBeNull();
+    expect(document.activeElement).toBe(chip());
+  });
+
+  it("leaves focus where the member put it when a creation finishes after the popover was dismissed", async () => {
+    const finish = await startCreating();
+    const elsewhere = document.createElement("button");
+    document.body.append(elsewhere);
+    // A click outside closes the popover, and its target takes focus.
+    await act(async () => {
+      elsewhere.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      elsewhere.focus();
+    });
+    expect(nameField()).toBeNull();
+
+    await finish();
+
+    const focused = document.activeElement;
+    elsewhere.remove();
+    expect(focused).toBe(elsewhere);
   });
 
   it("returns focus to New workspace when a member's setup step is dismissed", async () => {

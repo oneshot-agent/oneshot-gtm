@@ -77,6 +77,7 @@ describe("workspace switcher panel", () => {
     // A popover reopened on a kept draft focuses the field again.
     expect(formFocusTarget(true, true)).toBe("name");
     expect(formFocusTarget(false, true)).toBe("invoker");
+    // A close that did not ask for focus leaves it where it is.
     expect(formFocusTarget(false, false)).toBeNull();
   });
 

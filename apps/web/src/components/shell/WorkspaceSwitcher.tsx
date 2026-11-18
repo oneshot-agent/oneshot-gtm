@@ -45,14 +45,15 @@ type RosterRow = WorkspaceInfo["workspaces"][number];
 
 /**
  * Where focus goes when the new-workspace form opens or closes: into the name
- * field, then back to the control that opened it. Null leaves focus alone.
+ * field, then back to the control that opened it when the exit asked for that.
+ * Null leaves focus alone.
  */
 export function formFocusTarget(
   formOpen: boolean,
-  formWasOpen: boolean,
+  restoreOnClose: boolean,
 ): "name" | "invoker" | null {
   if (formOpen) return "name";
-  return formWasOpen ? "invoker" : null;
+  return restoreOnClose ? "invoker" : null;
 }
 
 export interface WorkspacePanelProps {
@@ -237,7 +238,7 @@ export function WorkspaceSwitcher() {
   const nameRef = useRef<HTMLInputElement>(null);
   const newButtonRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const formWasOpen = useRef(false);
+  const restoreFocus = useRef(false);
 
   const ws = useQuery({
     queryKey: ["workspace"],
@@ -267,8 +268,8 @@ export function WorkspaceSwitcher() {
   }, [open]);
 
   // Opening the form unmounts the button that was focused: move focus into
-  // the name field, and back to that button when the form closes. `open` is a
-  // dependency so a popover reopened on a kept draft focuses the field again.
+  // the name field, and back to that button when an exit asks for it. `open` is
+  // a dependency so a popover reopened on a kept draft focuses the field again.
   const formOpen = newName !== null;
   // New workspace is disabled during a launch and a disabled button cannot
   // take focus; the chip always can.
@@ -276,11 +277,19 @@ export function WorkspaceSwitcher() {
     const button = newButtonRef.current;
     (button && !button.disabled ? button : triggerRef.current)?.focus();
   };
+  // A creation can finish after the member dismissed the popover or moved to
+  // another control, and their focus is then theirs. Focus on the page itself
+  // counts as the form's: a control disabled while creating can lose it there.
+  const formOwnsFocus = () => {
+    const active = document.activeElement;
+    if (nameRef.current === null) return false;
+    return !active || active === document.body || !!rootRef.current?.contains(active);
+  };
   useEffect(() => {
-    const target = formFocusTarget(formOpen, formWasOpen.current);
+    const target = formFocusTarget(formOpen, restoreFocus.current);
     if (target === "name") nameRef.current?.focus();
     if (target === "invoker") focusOpener();
-    formWasOpen.current = formOpen;
+    restoreFocus.current = false;
   }, [formOpen, open]);
 
   const current = ws.data?.current;
@@ -306,6 +315,7 @@ export function WorkspaceSwitcher() {
     // A member sees the port and serve step while the new server is still checked.
     void createAndOpenWorkspace(name, setRemoteSetup)
       .then((setup) => {
+        restoreFocus.current = formOwnsFocus();
         setNewName(null);
         // A member's address: keep the popover open on the setup step.
         if (setup) setRemoteSetup(setup);
@@ -357,6 +367,8 @@ export function WorkspaceSwitcher() {
               setCreateError(null);
               setRemoteSetup(null);
             }
+            // Cancel unmounts under its own focus.
+            if (draft === null) restoreFocus.current = true;
             setNewName(draft);
           }}
           onCreate={onCreate}
