@@ -99,6 +99,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_draft_versions_slot",
+      "sql": "CREATE INDEX idx_draft_versions_slot
+          ON draft_versions(play_name, prospect_key, step_index, outcome)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
       "name": "idx_draft_versions_voice",
       "sql": "CREATE INDEX idx_draft_versions_voice
         ON draft_versions(play_name, voice_key)",
@@ -272,6 +279,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
     {
       "name": "idx_prospects_email",
       "sql": "CREATE UNIQUE INDEX idx_prospects_email ON prospects(email) WHERE email IS NOT NULL",
+      "tbl_name": "prospects",
+      "type": "index",
+    },
+    {
+      "name": "idx_prospects_email_lower",
+      "sql": "CREATE INDEX idx_prospects_email_lower ON prospects(lower(email))",
       "tbl_name": "prospects",
       "type": "index",
     },
