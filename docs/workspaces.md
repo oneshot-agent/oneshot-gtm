@@ -4,6 +4,12 @@ One workspace is one product: one voice, one ICP, one ledger, one sender pool. A
 
 Every install starts with one workspace named `default` at `~/.oneshot-gtm`.
 
+To add another from the dashboard, open the workspace switcher and choose **New workspace**. Enter 1–32 lowercase letters, digits or hyphens, starting with a letter or digit. Names must be unique. The dashboard creates its home and default profile, assigns a port, and opens a new tab once its server answers `/api/health`. Complete the new workspace's profile and keys in Setup; it does not copy the current workspace's settings or credentials.
+
+On macOS it writes and loads a launchd agent; on Linux it writes and enables a systemd user unit. When no user service manager is available, it starts an unsupervised server and warns that it won't survive a reboot. Services start at user login; see [background monitoring](./background-monitoring.md) for headless Linux startup.
+
+From the CLI:
+
 ```bash
 bun run cli -- workspace create acme          # ~/.oneshot-gtm-workspaces/acme, next free port
 bun run cli -- --workspace acme init          # its own profile, keys, identities
@@ -72,4 +78,4 @@ To hand a person to another product, use **move →** on the queue row. The dest
 
 A chip in the masthead names the workspace and its port. Click it, or `⌘K → Workspaces`, to see every workspace with a live status dot. A running one opens in a new tab, on the hostname this page was opened with; a stopped one starts first. If it is not up within 15 seconds you get the command to start it by hand.
 
-To bring each dashboard back after a restart, install it as a [service](./background-monitoring.md).
+Workspaces created with **New workspace** install their service automatically when a user service manager is available. For CLI-created workspaces, install a [service](./background-monitoring.md) to bring the dashboard back after a restart.
