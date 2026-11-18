@@ -612,17 +612,11 @@ function callGatesSql(db: Database): string {
 
 /**
  * Everyone with a number the Calls page may list, best first, capped at
- * `limit`. Gates in SQL: contact still allowed on every channel
- * (`contactAllowedSetClause`, which includes a call logged do-not-contact), not
- * rejected off-ICP, no meeting held, no cadence stopped as do-not-contact.
- * A bounced email does not block a call: the number is a different address.
- * The company do-not-contact list is the caller's (it is config).
- *
- * Order: a positive latest answer (an email reply's intent, or a call's
- * outcome, whichever is newer) with no meeting booked or held yet; then
- * connected on LinkedIn (an accepted invite or a known connection); then in a
- * live cadence, by its queue row's priority score; then the rest, most
- * recently touched first.
+ * `limit`. The gates run in SQL over sets (`contactAllowedSetClause`): the
+ * per-prospect clause took minutes on a real ledger. A bounced email does not
+ * block a call, since the number is a different address. The company
+ * do-not-contact list is config, so the caller applies it. Ranking is in
+ * docs/calls.md.
  */
 export function listCallCandidates(
   db: Database,

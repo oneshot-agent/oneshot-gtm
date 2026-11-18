@@ -1,15 +1,10 @@
 /**
- * A prospect's phone number as the dialler reads it: normalised to E.164, and
- * the clock where it rings, so the Calls page shows their local time and keeps
- * calls inside the workspace's call window.
- *
- * The zone comes from the number's prefix in libphonenumber's time-zone data
- * (vendored with its refresh script and provenance in
- * packages/core/vendor/phone-timezones/). A prefix that spans zones, or only
- * the country's calling code, gives every zone it may be in, and the call
- * window must hold in all of them. A number that places nobody gives no zone:
- * the caller does not guess one. People keep their numbers when they move, so
- * this is a hint, never a promise.
+ * A prospect's number in E.164, and the clock where it rings, from
+ * libphonenumber's prefix data (vendored with its refresh script in
+ * packages/core/vendor/phone-timezones/). A prefix that spans zones gives
+ * every zone, and the call window must hold in all of them; a number that
+ * places nobody gives none, so nothing is guessed. People keep their numbers
+ * when they move: this is a hint, never a promise.
  */
 import data from "../vendor/phone-timezones/phone-timezones.json";
 
