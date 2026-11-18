@@ -216,6 +216,8 @@ describe("POST /api/queue/:id/move", () => {
     expect(sent["dedupeKey"]).toBe("acc:ada@example.com");
     expect(sent["source"]).toBe("find:accelerator-batch:yc-w26");
     expect(sent["movedFrom"]).toEqual({ workspace: "default", queueId: 746 });
+    // The destination checks this against its own name before it writes.
+    expect(sent["toWorkspace"]).toBe("alpha");
     const payload = sent["payload"] as Record<string, unknown>;
     expect(payload).toEqual({ name: "Ada", email: "ada@example.com", cohort: "yc-w26" });
     expect(statusCalls).toEqual([

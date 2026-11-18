@@ -8,7 +8,7 @@ To add another from the dashboard, open the workspace switcher and choose **New 
 
 From a member's address (anything but `localhost` on the host machine) no tab opens. The switcher shows the assigned port and the command the host operator runs to serve it, then a link to the new workspace; see [serve each workspace port](./members.md#serve-each-workspace-port).
 
-The switcher and a queue move apply the same check: a workspace whose port answers as a different workspace shows as stopped, and starting it or moving a row to it is refused until that server is stopped. A dashboard from an older build does not name itself; it still counts as running.
+The switcher and a queue move apply the same check: a workspace whose port answers as a different workspace shows as stopped, and starting it or moving a row to it is refused until that server is stopped. A dashboard from an older build does not name itself; it still counts as running. A move also names its destination in the hand-over, and a server that is not that workspace refuses the row.
 
 On macOS it writes and loads a launchd agent; on Linux it writes and enables a systemd user unit. When no user service manager is available, it starts an unsupervised server and warns that it won't survive a reboot. Services start at user login; see [background monitoring](./background-monitoring.md) for headless Linux startup.
 

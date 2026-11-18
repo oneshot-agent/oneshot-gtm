@@ -2426,6 +2426,11 @@ export interface ImportQueueRowRequest {
   /** Already stripped of workspace-specific keys by the sender; stripped again on receipt. */
   payload: Record<string, unknown>;
   movedFrom: { workspace: string; queueId: number };
+  /**
+   * The workspace the sender means to reach. A receiver that is not it
+   * refuses with 409; a sender from an older build omits it and is not checked.
+   */
+  toWorkspace?: string;
 }
 
 export interface ImportQueueRowResult {
