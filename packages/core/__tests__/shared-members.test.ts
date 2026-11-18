@@ -121,4 +121,31 @@ describe("allowed hosts", () => {
     }
     expect(db.allowedHosts()).toEqual([]);
   });
+
+  it("refuses a line break wherever it sits", () => {
+    for (const bad of [
+      "gtm-host.ts.net\nother.ts.net",
+      "gtm-host.ts.net/queue\nx",
+      "gtm-host.ts.net/a\nb/c",
+      "gtm-host.ts.net\r\n/queue",
+      "gtm-host.ts.net/queue\u2028x",
+      "gtm-host.ts.net#a\u2029b",
+    ]) {
+      expect(normalizeAllowedHost(bad)).toBeNull();
+      expect(db.isAllowedHost(bad)).toBe(false);
+    }
+    // Spaces and tabs after the hostname are part of the path, as before.
+    expect(normalizeAllowedHost("gtm-host.ts.net/a b\tc")).toBe("gtm-host.ts.net");
+  });
+
+  it("normalizes a long input of path characters in linear time", () => {
+    // Each `#` used to start a scan that ran to the line break and failed:
+    // 80,000 of them took 5.5s, and this many took over 30s.
+    const long = `${"#".repeat(200_000)}\nx`;
+    const started = performance.now();
+    expect(normalizeAllowedHost(long)).toBeNull();
+    expect(normalizeAllowedHost(`gtm-host.ts.net${"#".repeat(200_000)}`)).toBe("gtm-host.ts.net");
+    expect(normalizeAllowedHost(`${"/".repeat(200_000)}x`)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
 });

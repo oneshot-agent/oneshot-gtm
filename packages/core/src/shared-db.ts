@@ -153,11 +153,14 @@ export function normalizeMemberEmail(input: string): string | null {
  * those, and only for requests made on the host machine itself.
  */
 export function normalizeAllowedHost(input: string): string | null {
-  const host = input
-    .trim()
-    .toLowerCase()
+  const typed = input.trim().toLowerCase();
+  // No hostname holds a line break. Refused here, so the path cut below always
+  // runs to the end of the string from the first `/`, `?` or `#`: one pass,
+  // however long the input (with `.*$` a line break made it quadratic).
+  if (/[\n\r\u2028\u2029]/.test(typed)) return null;
+  const host = typed
     .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
-    .replace(/[/?#].*$/, "")
+    .replace(/[/?#].*/, "")
     .replace(/:\d+$/, "")
     .replace(/\.$/, "");
   if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(host)) {
