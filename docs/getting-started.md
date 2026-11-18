@@ -4,6 +4,8 @@ Setup ends when you read a draft you would send. That takes four steps, and none
 
 Install [Bun](https://bun.sh), run `bunx oneshot-gtm-server`, and open the address it prints. `--port <n>` picks the port; otherwise it uses `PORT`, then your workspace's port, then 3030. For the CLI or a source checkout, use the [repository setup](../README.md#setup).
 
+Already have a dashboard running? Open its workspace switcher and choose **New workspace** to create another product workspace. Enter a name; its dashboard opens when ready, with a fresh profile to complete below.
+
 ## 1. Describe the business
 
 A new workspace opens **Onboarding**. Three screens, each saved as you finish it:

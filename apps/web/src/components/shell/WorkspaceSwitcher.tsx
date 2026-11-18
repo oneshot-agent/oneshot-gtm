@@ -3,6 +3,7 @@ import { Check, Circle, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { openWorkspace } from "../../lib/openWorkspace.ts";
+import { WORKSPACE_NAME_PATTERN, createAndOpenWorkspace } from "../../lib/createWorkspace.ts";
 import { cn } from "../../lib/cn.ts";
 import { workspaceHue } from "../../lib/workspaceHue.ts";
 
@@ -38,6 +39,9 @@ export function WorkspaceSwitcher() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [launching, setLaunching] = useState<string | null>(null);
+  const [newName, setNewName] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const ws = useQuery({
@@ -114,7 +118,7 @@ export function WorkspaceSwitcher() {
               type="button"
               role="menuitem"
               onClick={() => void onRowClick(row)}
-              disabled={launching !== null && launching !== row.name}
+              disabled={creating || (launching !== null && launching !== row.name)}
               className={cn(
                 "flex w-full items-center gap-2 rounded-[var(--radius-xs)] px-2 py-1.5 text-left",
                 "font-mono text-[11.5px] transition-colors hover:bg-ink-surface/80",
@@ -140,6 +144,76 @@ export function WorkspaceSwitcher() {
               </span>
             </button>
           ))}
+          {newName === null ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full px-2 py-1.5 text-left text-xs text-ink-cream hover:bg-ink-surface/80"
+              disabled={launching !== null}
+              onClick={() => {
+                setNewName("");
+                setCreateError(null);
+              }}
+            >
+              New workspace
+            </button>
+          ) : (
+            <form
+              className="border-t border-ink-rule mt-1 p-2 space-y-2 text-xs"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (creating) return;
+                setCreating(true);
+                setCreateError(null);
+                void createAndOpenWorkspace(newName)
+                  .then(() => {
+                    setNewName(null);
+                    setOpen(false);
+                  })
+                  .catch((err: unknown) => {
+                    setCreateError((err as Error).message);
+                  })
+                  .finally(() => {
+                    setCreating(false);
+                    void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+                  });
+              }}
+            >
+              <label className="block text-ink-cream">
+                Workspace name
+                <input
+                  className="mt-1 w-full rounded border border-ink-rule bg-ink-bg p-1 text-ink-cream"
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                  required
+                  pattern={WORKSPACE_NAME_PATTERN}
+                  maxLength={32}
+                  title="1–32 lowercase letters, digits or hyphens; start with a letter or digit"
+                  disabled={creating}
+                />
+              </label>
+              {createError && (
+                <p role="alert" className="text-ink-cream-2">
+                  {createError}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={creating}
+                className="text-ink-cream disabled:opacity-50"
+              >
+                {creating ? "Starting workspace…" : "Create workspace"}
+              </button>
+              <button
+                type="button"
+                disabled={creating}
+                onClick={() => setNewName(null)}
+                className="ml-2 text-ink-faint"
+              >
+                Cancel
+              </button>
+            </form>
+          )}
           <div className="border-t border-ink-rule mt-1 px-2 py-1.5 text-[10px] text-ink-faint">
             click a stopped workspace to start + open it
           </div>
