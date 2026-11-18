@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at 024c10d.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at fdc4d75.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -16,7 +16,7 @@ export interface CommentLimits {
 export const DEFAULT_COMMENT_LIMITS: CommentLimits = { share: 0.25, minLines: 30, block: 8 };
 
 export const COMMENT_RULE_TEXT =
-  'Keep why: invariants, security reasons, non-obvious constraints. Delete history, dates, issue and review-round refs, and comments that restate the code; longer explanations belong in a README or doc.';
+  'New comments say only why: invariants, security reasons, non-obvious constraints. Leave out history, dates, issue and review-round refs, and anything the code already says; longer explanations belong in a README or doc. Comments the branch did not add are not judged.';
 
 export interface CommentBlock { file: string; line: number; length: number }
 
@@ -35,31 +35,64 @@ const EXCLUDED = /(^|\/)(tests?|__tests__|fixtures?|vendor|dist|node_modules|mig
 const IGNORED = /eslint-(disable|enable)|@ts-(expect-error|ignore|nocheck)|\bnoqa\b|nosemgrep|type:\s*ignore|prettier-ignore|biome-ignore|(istanbul|c8) ignore|shellcheck (disable|source)|BEGIN GENERATED|END GENERATED|LOOKUPS:(START|END)|SPDX-License-Identifier|@license\b/i;
 
 type Kind = 'comment' | 'code' | 'skip';
+interface ScanState { block: boolean; doc: string | null; template: boolean }
 
-function lineKind(ext: 'c' | 'hash', s: string, state: { block: boolean; doc: string | null }): Kind {
-  if (IGNORED.test(s)) return 'skip';
+/** Unescaped backticks: an odd count opens or closes a template literal. */
+function backticks(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\') i++;
+    else if (s[i] === '`') n++;
+  }
+  return n;
+}
+
+/** Code after the block comment closes makes the line code. */
+function afterClose(s: string, end: number): Kind {
+  return s.slice(end + 2).trim() ? 'code' : 'comment';
+}
+
+function lineKind(ext: 'c' | 'hash', s: string, st: ScanState): Kind {
+  let kind: Kind;
   if (ext === 'c') {
-    if (state.block) {
-      if (s.includes('*/')) state.block = false;
-      return 'comment';
+    if (st.template) {
+      if (backticks(s) % 2) st.template = false;
+      return 'code';
     }
-    if (s.startsWith('/*')) {
-      if (!s.includes('*/', 2)) state.block = true;
-      return 'comment';
+    if (st.block) {
+      const end = s.indexOf('*/');
+      if (end >= 0) st.block = false;
+      kind = end >= 0 ? afterClose(s, end) : 'comment';
+    } else if (s.startsWith('/*')) {
+      const end = s.indexOf('*/', 2);
+      if (end < 0) st.block = true;
+      kind = end >= 0 ? afterClose(s, end) : 'comment';
+    } else if (s.startsWith('//') || s.startsWith('*')) {
+      kind = 'comment';
+    } else {
+      if (backticks(s) % 2) st.template = true;
+      kind = 'code';
     }
-    return s.startsWith('//') || s.startsWith('*') ? 'comment' : 'code';
-  }
-  // Python docstrings are strings, and some are behaviour (LangChain @tool).
-  if (state.doc) {
-    if (s.includes(state.doc)) state.doc = null;
+  } else if (st.doc) {
+    // Python docstrings are strings, and some are behaviour (LangChain @tool).
+    if (s.includes(st.doc)) st.doc = null;
     return 'skip';
+  } else {
+    const q = s.match(/^[rRbBuUfF]{0,2}("""|''')/)?.[1];
+    if (q) {
+      if (s.split(q).length - 1 === 1) st.doc = q;
+      return 'skip';
+    }
+    kind = s.startsWith('#') && !s.startsWith('#!') ? 'comment' : 'code';
   }
-  const q = s.match(/^[rRbBuUfF]{0,2}("""|''')/)?.[1];
-  if (q) {
-    if (s.split(q).length - 1 === 1) state.doc = q;
-    return 'skip';
-  }
-  return s.startsWith('#') && !s.startsWith('#!') ? 'comment' : 'code';
+  // Tooling reads these; only a comment line can be one.
+  return kind === 'comment' && IGNORED.test(s) ? 'skip' : kind;
+}
+
+/** `+++ b/path` or Git's quoted `+++ "b/p\303\251th"`; null for a deleted file. */
+function headerPath(l: string): string | null {
+  const m = l.match(/^\+\+\+ (?:"b\/(.*)"|b\/(.*))$/);
+  return m ? (m[1] ?? m[2]) : null;
 }
 
 /** Measure the lines a `git diff -U0 -M` adds; removed lines only matter as the source of moved comments. */
@@ -68,8 +101,11 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   const lines = diff.split('\n');
   // A comment the diff removes and adds back elsewhere was moved, not written.
   const removed = new Map<string, number>();
+  let inHunk = false;
   for (const l of lines) {
-    if (l.startsWith('-') && !l.startsWith('---')) {
+    if (l.startsWith('diff --git ')) inHunk = false;
+    else if (l.startsWith('@@ ')) inHunk = true;
+    else if (inHunk && l.startsWith('-')) {
       const s = l.slice(1).trim();
       if (s) removed.set(s, (removed.get(s) ?? 0) + 1);
     }
@@ -78,25 +114,28 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   const blocks: CommentBlock[] = [];
   let file: string | null = null, ext: 'c' | 'hash' | null = null;
   let lineNo = 0, run: CommentBlock | null = null;
-  let state = { block: false, doc: null as string | null };
+  let state: ScanState = { block: false, doc: null, template: false };
+  inHunk = false;
   const close = () => {
     if (run && run.length > lim.block) blocks.push(run);
     run = null;
   };
   for (const l of lines) {
-    if (l.startsWith('+++ ')) {
-      close();
-      file = l.startsWith('+++ b/') ? l.slice(6) : null;
+    if (l.startsWith('diff --git ')) { close(); inHunk = false; file = null; ext = null; continue; }
+    if (!inHunk && l.startsWith('+++ ')) {
+      file = headerPath(l);
       ext = file && !EXCLUDED.test(file) ? (C_LIKE.test(file) ? 'c' : HASH.test(file) ? 'hash' : null) : null;
       continue;
     }
     const hunk = l.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
     if (hunk) {
       close();
+      inHunk = true;
       lineNo = Number(hunk[1]);
-      state = { block: false, doc: null };
+      state = { block: false, doc: null, template: false };
       continue;
     }
+    if (!inHunk) continue;
     if (l.startsWith(' ')) { lineNo++; close(); continue; }
     if (!l.startsWith('+') || !file || !ext) continue;
     const at = lineNo++;
@@ -119,7 +158,7 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
     violations.push(`the diff adds ${comments} comment lines to ${code} code lines (${(share * 100).toFixed(1)}%, limit ${Math.round(lim.share * 100)}%)`);
   }
   if (blocks.length) {
-    const worst = [...blocks].sort((a, b) => b.length - a.length);
+    const worst = blocks.toSorted((a, b) => b.length - a.length);
     const named = worst.slice(0, 5).map((b) => `${b.file}:${b.line} (${b.length} lines)`).join(', ');
     const more = worst.length > 5 ? ` and ${worst.length - 5} more` : '';
     violations.push(`comment blocks longer than ${lim.block} lines: ${named}${more}`);
