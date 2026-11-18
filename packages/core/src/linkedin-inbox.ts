@@ -76,14 +76,19 @@ export interface LinkedInViewer {
   /** No member is listed: the one person using the install sees every account. */
   onlyUser?: boolean;
 }
-/** Whether a viewer may read an account. A missing record has no recorded member, like an unowned account. */
+/**
+ * Whether a viewer may read an account. A missing record proves nobody's
+ * ownership: what is still saved under its key (a review copy left behind when
+ * a replacement connection was merged into the original account) is refused to
+ * every member, the install's owner included.
+ */
 export function linkedInAccountVisible(
   account: Pick<LinkedInAccountRecord, "ownerMember"> | null,
   viewer?: LinkedInViewer,
 ): boolean {
   if (!viewer || viewer.onlyUser) return true;
-  const owner = account?.ownerMember || null;
-  return owner ? owner === viewer.email : viewer.installOwner;
+  if (!account) return false;
+  return account.ownerMember ? account.ownerMember === viewer.email : viewer.installOwner;
 }
 export interface LinkedInOwner {
   workspace: string;

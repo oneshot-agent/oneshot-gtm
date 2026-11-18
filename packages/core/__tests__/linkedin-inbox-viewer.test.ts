@@ -114,3 +114,18 @@ it("leaves an account saved with no member with the install's owner when a membe
   expect(store.visibleTo("old-account", ANA)).toBe(true);
   expect(store.messages("old-account", "old-account-chat", BEN)).toEqual([]);
 });
+
+it("shows what is saved under a missing account record to no member, the owner included", () => {
+  // A replacement connection merged into the original account leaves no record behind.
+  store.db.query("DELETE FROM accounts WHERE key=?").run("old-account");
+  expect(store.visibleTo("old-account", ANA)).toBe(false);
+  expect(store.visibleTo("old-account", BEN)).toBe(false);
+  expect(store.threads(undefined, ANA).map((t) => t.accountKey)).toEqual(["ana-account"]);
+  expect(store.thread("linkedin:old-account:old-account-chat", ANA)).toBeNull();
+  expect(store.messages("old-account", "old-account-chat", ANA)).toEqual([]);
+  // A background job, and the one person using an install with no members, still read it.
+  expect(store.messages("old-account", "old-account-chat")).toHaveLength(1);
+  expect(store.visibleTo("old-account", { email: null, installOwner: true, onlyUser: true })).toBe(
+    true,
+  );
+});
