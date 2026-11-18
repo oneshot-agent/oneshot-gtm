@@ -928,9 +928,8 @@ const whole = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
  * `bridge` (set by `calls setup`, never by this form) survives a Setup save.
  * Each key present replaces the stored one; `cadenceStep: null` removes the
  * step (the Calls page only). A position under 2 (the first email is 1), a
- * delay or hold that is not a whole number of days up to a year (a hold of
- * at least one), or a window that is not two HH:MM times with the start
- * first is a 400.
+ * delay outside 0 to `MAX_CALL_STEP_DAYS` whole days or a hold outside 1 to
+ * it, or a window not two HH:MM times with the start first, is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],
