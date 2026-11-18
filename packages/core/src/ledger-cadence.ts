@@ -269,11 +269,7 @@ export function cadenceOfferKey(
   return row?.k ?? null;
 }
 
-/**
- * The key (`cadenceOfferKey`) a cadence has while `offer` is its stored
- * offer: what a draft written from that value restates. Built by the same
- * JSON functions, so the two compare as strings.
- */
+/** `cadenceOfferKey` as it reads while `offer` is the stored offer, built by the same JSON functions. */
 export function cadenceOfferKeyOf(db: Database, offer: Record<string, unknown>): string {
   const row = db
     .query(
@@ -969,9 +965,8 @@ export function setCadenceDraft(
      * stored, so a draft never lands on the step after the one it was for.
      * `stepId` is the plan step it was written for: a settings change can
      * replace the step at the same index of a saved plan. `offerKey` is the
-     * offer it restates (`cadenceOfferKeyOf` the value drafted from, else
-     * `cadenceOfferKey` read before drafting): an offer replaced since
-     * refuses it.
+     * offer it restates (`cadenceOfferKeyOf` the value drafted from): an offer
+     * replaced since refuses it.
      */
     expect?: {
       currentStep: number;

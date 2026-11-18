@@ -2632,9 +2632,8 @@ export async function previewCadenceStep(input: {
     });
   }
   const seqOffer = derived && derived.status !== "none" && offerStep ? derived : null;
-  // The draft is stored only while the cadence still holds the offer it
-  // restates: the one handed to the builder, else the stored one as the
-  // builder is about to read it. A read of its own could see a later offer.
+  // Keyed to the offer handed to the builder (else the stored one, read
+  // before the builder reads it): a later read could name a newer offer.
   const drafting = guarded.expect
     ? {
         ...guarded,
