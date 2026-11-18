@@ -110,7 +110,7 @@ const call = (over: Partial<CallRecordView> = {}): CallRecordView => ({
   id: 7,
   prospectId: 1,
   playName: "post-funding",
-  member: "jo@oneshot.dev",
+  member: "jo@example.com",
   startedAt: "2026-11-18T16:00:00Z",
   durationSec: null,
   outcome: null,
@@ -201,13 +201,13 @@ describe("bridged call logic", () => {
   });
 
   it("names who called: you, another member's email, or the owner", () => {
-    const jo = { email: "jo@oneshot.dev", name: "Jo", role: "member" as const };
+    const jo = { email: "jo@example.com", name: "Jo", role: "member" as const };
     const owner = { email: null, name: null, role: "owner" as const };
-    expect(callerLabel("jo@oneshot.dev", jo)).toBe("you");
-    expect(callerLabel("sam@oneshot.dev", jo)).toBe("sam@oneshot.dev");
+    expect(callerLabel("jo@example.com", jo)).toBe("you");
+    expect(callerLabel("sam@example.com", jo)).toBe("sam@example.com");
     expect(callerLabel(null, jo)).toBe("the owner");
     expect(callerLabel(null, owner)).toBe("you");
-    expect(callerLabel("jo@oneshot.dev", undefined)).toBe("jo@oneshot.dev");
+    expect(callerLabel("jo@example.com", undefined)).toBe("jo@example.com");
   });
 
   it("picks up the newest unlogged bridged call from the last few hours", () => {
@@ -515,7 +515,7 @@ describe("the dial panel in bridge mode", () => {
 });
 
 describe("call history", () => {
-  const jo = { email: "jo@oneshot.dev", name: "Jo", role: "member" as const };
+  const jo = { email: "jo@example.com", name: "Jo", role: "member" as const };
   const history = (calls: CallRecordView[], masked = false) =>
     render(
       <CallHistory
@@ -538,11 +538,11 @@ describe("call history", () => {
   it("says who called and folds the transcript away", () => {
     const html = history([
       logged,
-      call({ id: 8, member: "sam@oneshot.dev", outcome: "no_answer", provider: "tel" }),
+      call({ id: 8, member: "sam@example.com", outcome: "no_answer", provider: "tel" }),
       call({ id: 9, member: null, status: "ended" }),
     ]);
     expect(html).toContain("by you");
-    expect(html).toContain("by sam@oneshot.dev");
+    expect(html).toContain("by sam@example.com");
     expect(html).toContain("by the owner");
     expect(html).toContain("Not logged yet");
     expect(html).toMatch(/<details[^>]*><summary[^>]*>Transcript<\/summary>/);
@@ -552,11 +552,11 @@ describe("call history", () => {
   it("privacy mode masks the caller's email and hides the transcript", () => {
     privacy.masked = true;
     const html = history(
-      [logged, call({ id: 8, member: "sam@oneshot.dev", outcome: "no_answer" })],
+      [logged, call({ id: 8, member: "sam@example.com", outcome: "no_answer" })],
       true,
     );
-    expect(html).not.toContain("sam@oneshot.dev");
-    expect(html).toContain("sam•••@oneshot.dev");
+    expect(html).not.toContain("sam@example.com");
+    expect(html).toContain("sam•••@example.com");
     expect(html).not.toContain("I have two minutes.");
     expect(html).toContain("transcript hidden");
   });

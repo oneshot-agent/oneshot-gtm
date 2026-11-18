@@ -368,8 +368,8 @@ function whole(raw: string | undefined, min: number, what: string, fallback?: nu
 /**
  * Show or set the dialler (`calls`); off by default. Subcommands: `on|off`,
  * `step <position> [delay] [hold]` (position counts the first email as 1),
- * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`. Anything but whole
- * numbers is refused rather than saved, and `bridge` is never touched here.
+ * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`, `record on|off`.
+ * Anything but whole numbers is refused rather than saved.
  */
 export async function configCalls(action?: string, args: string[] = []): Promise<void> {
   header("Calls");

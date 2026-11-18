@@ -923,14 +923,11 @@ const whole = (v: unknown, min: number) => typeof v === "number" && Number.isInt
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
- * `bridge` survives a Setup save. Bridged calls need no setting here (the
- * provider keys live in `.env`, each member's phone in the shared database);
- * `record` is the one bridge key this form sets, and a bridge switched off
- * (`bridge: null`, edited in config.json) stays off. Each key present
- * replaces the stored one; `cadenceStep: null` removes the step (the Calls
- * page only). A position under 2 (the first email is 1), a negative or
- * fractional delay, a hold under a day, a window that is not two HH:MM times
- * with the start first, or `record` that is not a boolean is a 400.
+ * `bridge` survives a Setup save. `record` is the only bridge key this form
+ * sets (keys live in `.env`, phones in the shared database), and a bridge
+ * switched off in config.json stays off. `cadenceStep: null` removes the step.
+ * Anything callsOf would read as a default is a 400 here, so a typo is never
+ * saved silently.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],

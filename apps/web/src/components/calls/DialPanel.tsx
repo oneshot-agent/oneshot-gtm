@@ -88,13 +88,10 @@ export function dialledNumber(
 }
 
 /**
- * The open row: the brief to read, Call, the outcome keys, a note, and
- * Save & next. One panel per prospect (keyed by the page), so nothing typed
- * for one person carries over to the next.
- *
- * With the bridge, Call rings the member's own phone and then the
- * prospect's; the panel follows the call live, then fills in the outcome and
- * note the transcript suggests. Nothing is logged until Save.
+ * The open row: brief, Call, outcome keys, note, Save & next. Keyed per
+ * prospect by the page, so nothing typed for one person carries over. With
+ * the bridge, the panel follows the call live and pre-fills what the
+ * transcript suggests; nothing is logged until Save.
  */
 export function DialPanel({
   row,

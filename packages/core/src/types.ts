@@ -856,13 +856,10 @@ export interface CallsConfig {
   /** The recipient's local hours for a call; default 09:00–17:00 on weekdays. */
   window?: { start: string; end: string; weekdays?: boolean };
   /**
-   * Bridged calls (phase 2): Call rings the member's own verified phone,
-   * then dials the prospect, and the call is recorded and transcribed. On
-   * whenever the provider keys are in the workspace's `.env`
-   * (`TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`);
-   * absent = the defaults below, `null` = off (`tel:` links only, even with
-   * the keys). Holds no secret and no phone: each member's phone is theirs,
-   * kept install-wide (shared database `member_phones`).
+   * Call rings the member's verified phone, then the prospect, recorded and
+   * transcribed. On whenever the Twilio keys are in the workspace's `.env`;
+   * absent = these defaults, `null` = `tel:` links only. Holds no secret and
+   * no phone: phones are per member, in the shared database.
    */
   bridge?: {
     provider: "twilio";
