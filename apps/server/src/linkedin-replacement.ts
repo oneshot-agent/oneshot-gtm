@@ -1,4 +1,9 @@
-import { getLinkedInInboxStore, getReplyReviewStore, linkedInMatches } from "@oneshot-gtm/core";
+import {
+  getLinkedInInboxStore,
+  getReplyReviewStore,
+  LinkedInReplacementOwnerMismatchError,
+  linkedInMatches,
+} from "@oneshot-gtm/core";
 import type { LinkedInAccount } from "@oneshot-agent/sdk";
 import { callLinkedIn } from "./linkedin-client.ts";
 
@@ -13,6 +18,9 @@ interface Replacement {
   newAccountId?: string;
   error?: string;
 }
+
+/** Who owns a record, for a log line that names no member. */
+const ownerLabel = (member: string | null) => (member ? "a member" : "no member");
 
 /** A replacement login that has been opened and has not been adopted or given up yet. */
 function awaitingLogin(accountKey: string): Replacement | null {
@@ -52,8 +60,18 @@ export async function adoptPendingLinkedInReplacements() {
       account?: LinkedInAccount | null;
     }>(a.workspace, { kind: "connection", intentId: replacement.intentId }).catch(() => null);
     if (!result || ["pending", "verifying"].includes(result.status)) continue;
+    // A force reconnect during the poll may have stored a newer intent for this account.
+    // Progress is written only while the stored record is still the intent polled here.
+    const current = () =>
+      store.progress<Replacement>(progressKey)?.intentId === replacement.intentId;
+    const saveIfCurrent = (data: Replacement) =>
+      store.db
+        .transaction(() => {
+          if (current()) store.saveProgress(progressKey, data);
+        })
+        .immediate();
     if (result.status !== "completed" || !result.account) {
-      store.saveProgress(progressKey, {
+      saveIfCurrent({
         ...replacement,
         stage: "failed",
         error: result.failure_reason ?? result.status,
@@ -79,10 +97,16 @@ export async function adoptPendingLinkedInReplacements() {
         error: null,
       });
     };
+    if (!current()) {
+      // Superseded: the newer intent's record stays as it is, and this login's connection
+      // is never merged into the account it reconnects. It stays the member's own account.
+      keepForMember();
+      continue;
+    }
     if (a.removedAt) {
       // Nothing to merge into: the new connection stays an account of its own.
       keepForMember();
-      store.saveProgress(progressKey, {
+      saveIfCurrent({
         ...replacement,
         stage: "failed",
         error: "This LinkedIn connection has been removed.",
@@ -124,11 +148,17 @@ export async function adoptPendingLinkedInReplacements() {
         !store.account(newKey)?.removedAt
       ) {
         keepForMember();
-        store.saveProgress(progressKey, {
+        saveIfCurrent({
           ...replacement,
           error:
             "The new connection's history import is waiting on LinkedIn. The accounts merge when it finishes.",
         });
+        continue;
+      }
+      // Force reconnect stores a new intent only while holding this account's leases, so
+      // with them held the record checked here is the one the merge completes.
+      if (!current()) {
+        keepForMember();
         continue;
       }
       store.replaceAccount(a.key, connected, linkedInMatches());
@@ -145,15 +175,25 @@ export async function adoptPendingLinkedInReplacements() {
             error: "Connection replaced. Resume the history import when you are ready.",
           });
       }
-      store.saveProgress(progressKey, {
+      saveIfCurrent({
         ...replacement,
         stage: "complete",
         newAccountId: connected.id,
         error: undefined,
       });
     } catch (e) {
+      if (e instanceof LinkedInReplacementOwnerMismatchError) {
+        // Nothing was merged and both records are as they were. The login stays open, so a
+        // later pass retries once the records agree. No record is saved for the new
+        // connection either: that would claim history whose owner is not proven.
+        console.warn(
+          `linkedin: replacement of ${a.key} left open: ${e.sourceKey} (owner: ${ownerLabel(e.sourceOwner)}) and ${a.key} (owner: ${ownerLabel(e.destinationOwner)}) have different owners`,
+        );
+        saveIfCurrent({ ...replacement, error: e.message });
+        continue;
+      }
       keepForMember();
-      store.saveProgress(progressKey, {
+      saveIfCurrent({
         ...replacement,
         stage: "failed",
         error: (e as Error).message,

@@ -90,6 +90,23 @@ export function linkedInAccountVisible(
   if (!account) return false;
   return account.ownerMember ? account.ownerMember === viewer.email : viewer.installOwner;
 }
+/**
+ * A replacement merge refused because the record it would move conversations
+ * from is not the destination owner's. Nothing was written; the replacement
+ * can be retried once the records agree.
+ */
+export class LinkedInReplacementOwnerMismatchError extends Error {
+  constructor(
+    readonly sourceKey: string,
+    readonly sourceOwner: string | null,
+    readonly destinationOwner: string | null,
+  ) {
+    super(
+      "The new LinkedIn connection's saved conversations do not belong to this account's owner, so they were not merged into it.",
+    );
+    this.name = "LinkedInReplacementOwnerMismatchError";
+  }
+}
 export interface LinkedInOwner {
   workspace: string;
   prospectId: number;
@@ -302,6 +319,23 @@ export class LinkedInInboxStore {
         if (previous.account.id === account.id) return;
         const discoveredKey = `${previous.wallet}:${account.id}`;
         const imported = this.threads(discoveredKey);
+        // A conversation never changes owner. Conversations move only from a record saved
+        // for the destination's owner; an unset owner is the install owner's, so it matches
+        // only another unset owner. History under a key with no record has no proven owner.
+        const source = this.account(discoveredKey);
+        const sourceOwner = source?.ownerMember || null;
+        const destinationOwner = previous.ownerMember || null;
+        const hasHistory =
+          imported.length > 0 ||
+          !!this.db
+            .query<{ one: number }, [string]>("SELECT 1 AS one FROM messages WHERE account_key=?")
+            .get(discoveredKey);
+        if (source ? sourceOwner !== destinationOwner : hasHistory)
+          throw new LinkedInReplacementOwnerMismatchError(
+            discoveredKey,
+            sourceOwner,
+            destinationOwner,
+          );
         if (imported.some((t) => t.owner?.manual))
           throw new Error(
             "Replacement already has manual assignments; review before merging accounts",

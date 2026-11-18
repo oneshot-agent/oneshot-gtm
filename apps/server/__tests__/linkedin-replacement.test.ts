@@ -190,3 +190,82 @@ it("waits for the new connection's unfinished provider work, then merges", async
   expect(merged).toMatchObject({ stage: "complete", newAccountId: "new" });
   expect(merged?.error).toBeUndefined();
 });
+it("leaves a connection saved for another member unmerged and the login open", async () => {
+  connectedByMia();
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: { id: "new", member_urn: "owner", status: "connected" } as never,
+    sync: null,
+    checkedAt: null,
+    error: null,
+    ownerMember: "bob@example.com",
+  });
+  store.saveConversation(
+    "wallet:new",
+    { id: "chat", provider_chat_id: "chat", attendees: [], updated_at: "2026-01-01" } as never,
+    [],
+    "new",
+  );
+  store.saveMessages("wallet:new", [
+    { id: "m", conversation_id: "chat", provider_message_id: "m", text: "Bob's" } as never,
+  ]);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  await adoptPendingLinkedInReplacements();
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("different owners"));
+  expect(store.account("wallet:old")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "old" },
+  });
+  expect(store.threads("wallet:old")).toHaveLength(0);
+  expect(store.account("wallet:new")).toMatchObject({ ownerMember: "bob@example.com" });
+  expect(store.threads("wallet:new")).toHaveLength(1);
+  expect(store.allMessages("wallet:new")).toHaveLength(1);
+  expect(store.progress("replacement:wallet:old")).toMatchObject({
+    stage: "awaiting_login",
+    intentId: "intent",
+    error: expect.stringContaining("do not belong to this account's owner"),
+  });
+  // Still open: the next pass checks the login again.
+  await adoptPendingLinkedInReplacements();
+  warn.mockRestore();
+  expect(sdk).toHaveBeenCalledTimes(2);
+});
+/** A force reconnect that stores a newer intent while this pass waits on the poll. */
+const newerIntent = {
+  stage: "awaiting_login",
+  oldAccountKey: "wallet:old",
+  oldAccountId: "old",
+  member: "owner",
+  pauseBackfill: true,
+  intentId: "newer",
+  expiresAt: "2026-12-01T00:00:00Z",
+};
+it.each([
+  [
+    "completes",
+    {
+      status: "completed",
+      account: { id: "new", member_urn: "owner", status: "connected", allowed_actions: [] },
+    },
+  ],
+  ["fails", { status: "failed", failure_reason: "expired" }],
+])("leaves a newer intent's record alone when the superseded login %s", async (_, outcome) => {
+  connectedByMia();
+  sdk.mockImplementation(async () => {
+    store.saveProgress("replacement:wallet:old", newerIntent);
+    return outcome;
+  });
+  await adoptPendingLinkedInReplacements();
+  expect(store.progress("replacement:wallet:old")).toEqual(newerIntent);
+  expect(store.account("wallet:old")).toMatchObject({ account: { id: "old" } });
+  expect(store.account("wallet:old")?.previousAccountIds).toBeUndefined();
+  if ("account" in outcome)
+    // The superseded login's connection stays Mia's own account, not merged.
+    expect(store.account("wallet:new")).toMatchObject({
+      ownerMember: "mia@example.com",
+      account: { id: "new" },
+    });
+  else expect(store.account("wallet:new")).toBeNull();
+});
