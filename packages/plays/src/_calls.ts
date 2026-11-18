@@ -1,14 +1,6 @@
 /**
- * The dialler: the founder calls prospects from the dashboard. Three parts
- * live here, on top of the call step in `_cadence.ts`:
- *
- *   - the call brief (`buildCallBrief`), written by the preview of a due call
- *     step or on demand for anyone else on the Calls page (`callBriefFor`);
- *   - logging an outcome (`recordCall`), which moves or stops cadences the way
- *     a sent step or a reply does;
- *   - the Calls page's lists (`listCalls`).
- *
- * Off unless `calls.enabled`. Nothing here dials: phase 1 is a `tel:` link.
+ * The dialler on top of the call step in `_cadence.ts`: the call brief, logging
+ * an outcome, and the Calls page's lists. Off unless `calls.enabled`.
  */
 import { createHash } from "node:crypto";
 import {
@@ -429,29 +421,12 @@ export class CallLogError extends Error {
 }
 
 /**
- * Log a call's outcome. Every outcome writes the `calls` row and a
- * `channel_events` touch (channel `call`). When the prospect's cadence has
- * the call step next, the step is recorded (a `call` sequence event carrying
- * the outcome). Then, per outcome:
- *
- *   - no_answer, voicemail, gatekeeper, wrong_person: the step is done and
- *     the cadence moves on, as after a sent step;
- *   - wrong_number: the same, and the prospect's number is cleared (the call
- *     row keeps it, and that number is never offered again);
- *   - interested: as a reply: live cadences stop as replied, and the call
- *     step (else the latest email) is marked replied;
- *   - meeting_booked: as interested, plus a `meeting_booked` outcome;
- *   - not_interested: as a reply;
- *   - not_now: the step is done and every live cadence is held until
- *     `holdUntil` (default two weeks);
- *   - do_not_contact: every cadence stops as unsubscribed, and the call's
- *     outcome blocks every channel (`contactAllowedClause`). It is final: a
- *     later log on the same call that changes it is refused (409).
- *
- * A log on an existing call (`callId`) completes only the call step of the
- * cadence that call was made in, when it recorded one. A new call records
- * `req.phone`, the number the founder dialled, when it parses, so a
- * wrong_number lands on that number even if the stored one changed since.
+ * Log a call's outcome: the `calls` row, a `call` channel touch, and the call
+ * step when it is next. Each outcome moves or stops cadences as a sent step or
+ * a reply would (table in docs/calls.md). do_not_contact is final: a later log
+ * that changes it is refused (409). A new call records `req.phone`, the number
+ * actually dialled, so a wrong_number lands on it even if the stored one
+ * changed since.
  */
 export function recordCall(
   prospectId: number,
@@ -592,12 +567,9 @@ function tierReason(c: CallCandidate): string {
 
 /**
  * The Calls page: due call steps first, then everyone else with a usable
- * number, ranked (`listCallCandidates`), at most `CALL_LIST_LIMIT`. Every row
- * passes the send gates: the company do-not-contact list, an opt-out on any
- * channel (a call logged do-not-contact included), an ICP reject, a meeting
- * already held. A due step is listed without a number (the page offers Find
- * phone); the call list only lists people with one. Calls off: nothing is
- * read beyond the config.
+ * number (`listCallCandidates`), at most `CALL_LIST_LIMIT`, all through the
+ * send gates. A due step is listed without a number so the page can offer
+ * Find phone. With calls off nothing is read beyond the config.
  */
 export function listCalls(
   now: Date = new Date(),

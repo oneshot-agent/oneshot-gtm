@@ -1,14 +1,8 @@
 /**
- * The dialler's routes (plays `_calls.ts`):
- *  - GET /api/calls: the Calls page's lists. Cheap when calls are off: the
- *    nav reads it to decide whether to show the page.
- *  - POST /api/calls/brief {prospectId, playName?, regenerate?}: the brief
- *    for the dial panel. A due call step's stored preview, else a cached
- *    on-demand brief; a paid completion only when none is stored or
- *    `regenerate` (body, or `?regenerate=1`) asks for a new one.
- *  - POST /api/prospects/:id/call (LogCallRequest): log an outcome. 409
- *    when it would change a call logged do-not-contact.
- *  - GET /api/prospects/:id/calls: the prospect's calls, newest first.
+ * The dialler's routes (plays `_calls.ts`). GET /api/calls stays cheap when
+ * calls are off, since the nav reads it to decide whether to show the page.
+ * POST /api/calls/brief pays for a completion only when no brief is stored or
+ * `regenerate` asks for one.
  */
 import { callsOf, getLedger, loadConfig } from "@oneshot-gtm/core";
 import {

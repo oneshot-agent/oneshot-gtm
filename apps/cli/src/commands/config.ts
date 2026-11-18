@@ -365,21 +365,10 @@ function whole(raw: string | undefined, min: number, what: string, fallback?: nu
 }
 
 /**
- * Show or set the dialler (`calls`). Off by default.
- *   calls                              show the settings
- *   calls on | off                     switch it for this workspace
- *   calls step <position> [delay] [hold]
- *                                      put a call step in NEW email cadences
- *                                      (position counts the first email as 1;
- *                                      delay = days after the touch before it,
- *                                      default 3; hold = days an unlogged call
- *                                      waits before the emails carry on,
- *                                      default 3)
- *   calls step off                     no call step (the Calls page only)
- *   calls window <HH:MM-HH:MM> [weekdays|every-day]
- *                                      the prospect's local hours for a call
- * Whole numbers only; anything else is refused rather than saved. A `bridge`
- * (set by phase 2's `calls setup`) is never touched here.
+ * Show or set the dialler (`calls`); off by default. Subcommands: `on|off`,
+ * `step <position> [delay] [hold]` (position counts the first email as 1),
+ * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`. Anything but whole
+ * numbers is refused rather than saved, and `bridge` is never touched here.
  */
 export async function configCalls(action?: string, args: string[] = []): Promise<void> {
   header("Calls");
