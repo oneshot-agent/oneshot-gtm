@@ -41,7 +41,8 @@ const linkedin = getLinkedInInboxStore();
 const req = (body: unknown, origin = "http://localhost:3030") =>
   new Request("http://localhost:3030/api/replies", {
     method: "POST",
-    headers: { "content-type": "application/json", origin },
+    // The Host the request gate requires: on the host machine, so the owner.
+    headers: { "content-type": "application/json", origin, host: "localhost:3030" },
     body: JSON.stringify(body),
   });
 const drafts = (): ReplyDraftSet => ({
