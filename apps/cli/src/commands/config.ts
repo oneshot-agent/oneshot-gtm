@@ -3,6 +3,7 @@ import {
   getLedger,
   dailySpendStatus,
   DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
+  MAX_CALL_STEP_DAYS,
   loadConfig,
   saveConfig,
   saveSecrets,
@@ -350,16 +351,24 @@ export async function configLinkedInInviteExpiry(valueArg?: string): Promise<voi
 }
 
 /**
- * A whole-number argument, at least `min`; `fallback` when it was left out.
+ * A whole-number argument, `min` to `max`; `fallback` when it was left out.
  * Decimal digits only, so "3abc", "1e3", "0x10" and "2.0" are refused rather
  * than saved as numbers, and a value past a safe integer is refused too.
  */
-function whole(raw: string | undefined, min: number, what: string, fallback?: number): number {
+function whole(
+  raw: string | undefined,
+  min: number,
+  what: string,
+  fallback?: number,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
   if (raw === undefined && fallback !== undefined) return fallback;
   const digits = raw?.trim() ?? "";
   const n = Number(digits);
-  if (!/^\d+$/.test(digits) || !Number.isSafeInteger(n) || n < min) {
-    throw new Error(`invalid ${what} '${raw ?? ""}' — pass a whole number, ${min} or more`);
+  if (!/^\d+$/.test(digits) || !Number.isSafeInteger(n) || n < min || n > max) {
+    throw new Error(
+      `invalid ${what} '${raw ?? ""}' — pass a whole number, ${min} or more${max < Number.MAX_SAFE_INTEGER ? ` and ${max} at most` : ""}`,
+    );
   }
   return n;
 }
@@ -412,8 +421,14 @@ export async function configCalls(action?: string, args: string[] = []): Promise
       return;
     }
     const position = whole(args[0], 2, "position");
-    const delayDays = whole(args[1], 0, "delay", 3);
-    const holdDays = whole(args[2], 1, "hold", current.cadenceStep?.holdDays ?? 3);
+    const delayDays = whole(args[1], 0, "delay", 3, MAX_CALL_STEP_DAYS);
+    const holdDays = whole(
+      args[2],
+      1,
+      "hold",
+      current.cadenceStep?.holdDays ?? 3,
+      MAX_CALL_STEP_DAYS,
+    );
     saveConfig({ ...cfg, calls: { ...current, cadenceStep: { position, delayDays, holdDays } } });
     ok(
       `new email cadences get a call at position ${position}, ${delayDays} days after the touch before it; skipped after ${holdDays} days unlogged`,

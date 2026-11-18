@@ -38,6 +38,7 @@ import {
   isSlackWebhookUrl,
   getLedger,
   callsOf,
+  MAX_CALL_STEP_DAYS,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -919,15 +920,17 @@ export function mergeLinkedIn(
 
 const CALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const whole = (v: unknown, min: number) => typeof v === "number" && Number.isInteger(v) && v >= min;
+const whole = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
  * `bridge` (set by `calls setup`, never by this form) survives a Setup save.
  * Each key present replaces the stored one; `cadenceStep: null` removes the
  * step (the Calls page only). A position under 2 (the first email is 1), a
- * negative or fractional delay, a hold under a day, or a window that is not
- * two HH:MM times with the start first is a 400.
+ * delay or hold that is not a whole number of days up to a year (a hold of
+ * at least one), or a window that is not two HH:MM times with the start
+ * first is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],
@@ -954,13 +957,13 @@ export function mergeCalls(
         throw new SetupValidationError(
           "calls.cadenceStep.position must be a whole number, 2 or more (the first email is 1)",
         );
-      if (!whole(step.delayDays, 0))
+      if (!whole(step.delayDays, 0, MAX_CALL_STEP_DAYS))
         throw new SetupValidationError(
-          "calls.cadenceStep.delayDays must be a whole number of days",
+          `calls.cadenceStep.delayDays must be a whole number of days, ${MAX_CALL_STEP_DAYS} at most`,
         );
-      if (step.holdDays !== undefined && !whole(step.holdDays, 1))
+      if (step.holdDays !== undefined && !whole(step.holdDays, 1, MAX_CALL_STEP_DAYS))
         throw new SetupValidationError(
-          "calls.cadenceStep.holdDays must be a whole number, 1 or more",
+          `calls.cadenceStep.holdDays must be a whole number, 1 to ${MAX_CALL_STEP_DAYS}`,
         );
       next.cadenceStep = {
         position: step.position,

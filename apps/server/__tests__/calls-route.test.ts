@@ -244,6 +244,8 @@ describe("mergeCalls", () => {
     [{ cadenceStep: { position: 1, delayDays: 2 } }],
     [{ cadenceStep: { position: 3, delayDays: -1 } }],
     [{ cadenceStep: { position: 3, delayDays: 2, holdDays: 0 } }],
+    [{ cadenceStep: { position: 3, delayDays: 366 } }],
+    [{ cadenceStep: { position: 3, delayDays: 2, holdDays: 1e9 } }],
     [{ window: { start: "17:00", end: "09:00" } }],
     [{ window: { start: "9am", end: "5pm" } }],
   ])("refuses %j", (incoming) => {

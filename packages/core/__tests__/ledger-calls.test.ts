@@ -68,6 +68,20 @@ describe("callsOf", () => {
     expect(out.window).toEqual({ start: "09:00", end: "17:00", weekdays: true });
     expect(out.bridge).toBeNull();
   });
+
+  it("drops a step delay past a year and falls back from a hold past one", () => {
+    const step = (cadenceStep: Record<string, number>) =>
+      callsOf({ calls: { enabled: true, cadenceStep } }).cadenceStep;
+    expect(step({ position: 3, delayDays: 365, holdDays: 365 })).toEqual({
+      position: 3,
+      delayDays: 365,
+      holdDays: 365,
+    });
+    expect(step({ position: 3, delayDays: 366 })).toBeNull();
+    expect(step({ position: 3, delayDays: 2, holdDays: 1e9 })?.holdDays).toBe(
+      DEFAULT_CALL_HOLD_DAYS,
+    );
+  });
 });
 
 describe("callReplyIntent", () => {
