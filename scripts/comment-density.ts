@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at f3b9696.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at e372e1b4.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -97,23 +97,69 @@ function headerPath(l: string): string | null {
   return m ? (m[1] ?? m[2]) : null;
 }
 
-const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+/** A `/` after one of these starts a regex literal rather than a division. */
+const REGEX_BEFORE = /(^|[(,=:[!&|?{};+\-*%<>~^]|\b(return|typeof|case|in|of|void|delete|throw|new|yield|await))\s*$/;
 
-/** A code line's code and trailing comment; quotes are tracked so `//` or `#` in a string stays code. */
+/** End of the quoted string opened at `i`; an unclosed one runs to the end of the line. */
+function quoteEnd(s: string, i: number): number {
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') j++;
+    else if (s[j] === s[i]) return j + 1;
+  }
+  return s.length;
+}
+
+/** End of the regex literal opened at `i`, or -1 when the `/` never closes. */
+function regexEnd(s: string, i: number): number {
+  let inClass = false;
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') j++;
+    else if (s[j] === '[') inClass = true;
+    else if (s[j] === ']') inClass = false;
+    else if (s[j] === '/' && !inClass) return j + 1;
+  }
+  return -1;
+}
+
+/**
+ * A code line's code, and its comments as written: closed inline block comments and the trailing one.
+ * Literals stay verbatim in the code, so `//` or `#` inside them is code and a change inside them is a code change.
+ */
 function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: string } {
-  let quote: string | null = null;
-  for (let i = 0; i < s.length; i++) {
+  let code = '';
+  const comments: string[] = [];
+  const space = () => { if (code && !code.endsWith(' ')) code += ' '; };
+  let i = 0;
+  while (i < s.length) {
     const ch = s[i];
-    if (quote) {
-      if (ch === '\\') i++;
-      else if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-    } else if (ext === 'c' ? ch === '/' && s[i + 1] === '/' : ch === '#' && /\s/.test(s[i - 1] ?? '')) {
-      return { code: squash(s.slice(0, i)), comment: squash(s.slice(i)) };
+    let end = -1;
+    if (ch === '"' || ch === "'" || ch === '`') end = quoteEnd(s, i);
+    else if (ext === 'c' && ch === '/') {
+      if (s[i + 1] === '/') break;
+      if (s[i + 1] === '*') {
+        const close = s.indexOf('*/', i + 2);
+        if (close >= 0) {
+          comments.push(s.slice(i, close + 2));
+          space();
+          i = close + 2;
+          continue;
+        }
+        end = s.length;
+      } else if (REGEX_BEFORE.test(code)) end = regexEnd(s, i);
+    } else if (ext === 'hash' && ch === '#' && /\s/.test(s[i - 1] ?? '')) break;
+    if (end > i) {
+      code += s.slice(i, end);
+      i = end;
+    } else if (/\s/.test(ch)) {
+      space();
+      while (/\s/.test(s[i] ?? '')) i++;
+    } else {
+      code += ch;
+      i++;
     }
   }
-  return { code: squash(s), comment: '' };
+  if (i < s.length) comments.push(s.slice(i));
+  return { code: code.trim(), comment: comments.join(' ') };
 }
 
 function kindOf(file: string | null): 'c' | 'hash' | null {
@@ -127,13 +173,13 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   const lines = diff.split('\n');
   // A comment the diff removes and adds back elsewhere was moved, not written.
   const removed = new Map<string, number>();
-  // Trailing comments of removed code lines, by their code, to pair with a re-added line.
+  // Trailing comments of removed code lines, by file entry and code, to pair with a re-added line.
   const removedCode = new Map<string, string[]>();
   let removedComments = 0;
-  let inHunk = false, oldExt: 'c' | 'hash' | null = null;
+  let inHunk = false, oldExt: 'c' | 'hash' | null = null, entry = 0;
   let oldState: ScanState = { block: false, doc: null, template: false };
   for (const l of lines) {
-    if (l.startsWith('diff --git ')) { inHunk = false; oldExt = null; }
+    if (l.startsWith('diff --git ')) { inHunk = false; oldExt = null; entry++; }
     else if (!inHunk && l.startsWith('--- ')) oldExt = kindOf(l.startsWith('--- a/') ? l.slice(6) : null);
     else if (l.startsWith('@@ ')) { inHunk = true; oldState = { block: false, doc: null, template: false }; }
     else if (inHunk && l.startsWith('-')) {
@@ -146,7 +192,8 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
       if (kind === 'comment') removedComments++;
       else if (kind === 'code' && plain) {
         const { code, comment } = splitTrailing(oldExt, s);
-        removedCode.set(code, [...(removedCode.get(code) ?? []), comment]);
+        const key = `${entry}\n${code}`;
+        removedCode.set(key, [...(removedCode.get(key) ?? []), comment]);
       }
     }
   }
@@ -156,12 +203,13 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
   let lineNo = 0, run: CommentBlock | null = null;
   let state: ScanState = { block: false, doc: null, template: false };
   inHunk = false;
+  entry = 0;
   const close = () => {
     if (run && run.length > lim.block) blocks.push(run);
     run = null;
   };
   for (const l of lines) {
-    if (l.startsWith('diff --git ')) { close(); inHunk = false; file = null; ext = null; continue; }
+    if (l.startsWith('diff --git ')) { close(); inHunk = false; file = null; ext = null; entry++; continue; }
     if (!inHunk && l.startsWith('+++ ')) {
       file = headerPath(l);
       ext = kindOf(file);
@@ -188,7 +236,7 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
       close();
       // Unchanged code whose trailing comment changed is a comment edit, not new code.
       const split = plain ? splitTrailing(ext, s) : null;
-      const was = split ? removedCode.get(split.code) : undefined;
+      const was = split ? removedCode.get(`${entry}\n${split.code}`) : undefined;
       const i = split && was ? was.findIndex((c) => c !== split.comment) : -1;
       if (!split || !was || i < 0) { code++; continue; }
       const [old] = was.splice(i, 1);
