@@ -140,6 +140,86 @@ describe("Ledger.setCadenceOffer", () => {
     expect(ledger.setCadenceOffer({ prospectId: 999, playName: PLAY, offer })).toBe(false);
   });
 
+  const preview = { subject: "Re: renewals", body: "get every renewal signed", flags: [] };
+  const versions = (c: { prospectId: number; playName: string }) =>
+    ledger.draftVersionsFor({ ...c, stepIndex: 1 }).map((v) => [v.outcome, v.discard_reason]);
+
+  it("drops the preview written for the offer it replaces, and keeps one the write leaves as it reads", () => {
+    const c = enrolled({ offer });
+    ledger.setCadenceDraft({ ...c, draft: { ...preview, payload: { kind: "email" } } });
+
+    // An approval stamp, and the same offer written again: the preview still restates it.
+    expect(ledger.setCadenceOffer({ ...c, offer: { weakApprovedAt: "now" }, merge: true })).toBe(
+      true,
+    );
+    expect(ledger.setCadenceOffer({ ...c, offer: { ...offer, relevance: "relevant" } })).toBe(true);
+    expect(ledger.getCadenceDraft(c)?.body).toBe(preview.body);
+    expect(versions(c)).toEqual([["open", null]]);
+
+    expect(ledger.setCadenceOffer({ ...c, offer: other })).toBe(true);
+    expect(ledger.getCadenceDraft(c)).toBeNull();
+    expect(ledger.getCadence(c.prospectId, c.playName)?.next_step_drafted_at).toBeNull();
+    expect(versions(c)).toEqual([["discarded", "regenerate"]]);
+  });
+
+  it("drops the preview when only the steps or the return change, and when a merge changes the text", () => {
+    const c = enrolled({ offer });
+    const draft = { ...preview, payload: { kind: "email" } };
+    ledger.setCadenceDraft({ ...c, draft });
+    expect(ledger.setCadenceOffer({ ...c, offer: { ...offer, steps: "signs it" } })).toBe(true);
+    expect(ledger.getCadenceDraft(c)).toBeNull();
+
+    ledger.setCadenceDraft({ ...c, draft });
+    expect(ledger.setCadenceOffer({ ...c, offer: { return: "a day back" }, merge: true })).toBe(
+      true,
+    );
+    expect(ledger.getCadenceDraft(c)).toBeNull();
+
+    ledger.setCadenceDraft({ ...c, draft });
+    expect(ledger.setCadenceOffer({ ...c, offer: { offer: other.offer }, merge: true })).toBe(true);
+    expect(ledger.getCadenceDraft(c)).toBeNull();
+  });
+
+  it("keeps the preview when the write does not land", () => {
+    const c = enrolled({ offer });
+    ledger.setCadenceDraft({ ...c, draft: { ...preview, payload: { kind: "email" } } });
+    expect(ledger.setCadenceOffer({ ...c, offer: other, expect: { offer: other.offer } })).toBe(
+      false,
+    );
+    ledger.claimCadenceSendingMarker({ ...c, startedAtIso: new Date().toISOString() });
+    expect(ledger.setCadenceOffer({ ...c, offer: other })).toBe(false);
+    expect(ledger.getCadenceDraft(c)?.body).toBe(preview.body);
+    expect(versions(c)).toEqual([["open", null]]);
+  });
+
+  it("refuses to store a preview drafted from an offer replaced since", () => {
+    const c = enrolled({ offer });
+    const cadence = ledger.getCadence(c.prospectId, c.playName)!;
+    const expect_ = {
+      currentStep: cadence.current_step,
+      enrolledAt: cadence.enrolled_at,
+      offerKey: ledger.cadenceOfferKey(c),
+    };
+    const draft = { ...preview, payload: { kind: "email" } };
+    // Judge labels and stamps are not what a draft restates.
+    ledger.setCadenceOffer({ ...c, offer: { weakApprovedAt: "now" }, merge: true });
+    expect(ledger.setCadenceDraft({ ...c, draft, expect: expect_ })).toBe(true);
+
+    ledger.setCadenceOffer({ ...c, offer: other });
+    expect(ledger.setCadenceDraft({ ...c, draft, expect: expect_ })).toBe(false);
+    expect(ledger.getCadenceDraft(c)).toBeNull();
+    const now = { ...expect_, offerKey: ledger.cadenceOfferKey(c) };
+    expect(ledger.setCadenceDraft({ ...c, draft, expect: now })).toBe(true);
+  });
+
+  it("reads one key for a cadence with no offer and none for no cadence", () => {
+    const bare = enrolled();
+    expect(ledger.cadenceOfferKey(bare)).toBe("[null,null,null]");
+    expect(ledger.cadenceOfferKey({ prospectId: 999, playName: PLAY })).toBeNull();
+    ledger.setCadenceOffer({ ...bare, offer });
+    expect(ledger.cadenceOfferKey(bare)).toBe(JSON.stringify([offer.offer, offer.steps, null]));
+  });
+
   it("refuses an expect key that is not a plain identifier", () => {
     const c = enrolled({ offer });
     expect(() =>

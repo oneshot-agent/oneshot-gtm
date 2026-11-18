@@ -2632,6 +2632,11 @@ export async function previewCadenceStep(input: {
     });
   }
   const seqOffer = derived && derived.status !== "none" && offerStep ? derived : null;
+  // The draft restates the offer as it is stored now: one replaced before
+  // the completion returns leaves nothing stored.
+  const drafting = guarded.expect
+    ? { ...guarded, expect: { ...guarded.expect, offerKey: ledger.cadenceOfferKey(input) } }
+    : guarded;
   const intro = mailDraft
     ? null
     : await introThreadForStep(seq, stepEntryIndex, input.prospectId, input.playName);
@@ -2728,7 +2733,7 @@ export async function previewCadenceStep(input: {
                 : []),
             ]
           : [];
-  return storePreview(guarded, cfg, seq, stepEntryIndex, step, {
+  return storePreview(drafting, cfg, seq, stepEntryIndex, step, {
     subject,
     body,
     flags,
@@ -2742,7 +2747,12 @@ function storePreview(
     prospectId: number;
     playName: string;
     rotateAngle?: boolean;
-    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+    expect?: {
+      currentStep: number;
+      enrolledAt: string;
+      stepId?: string;
+      offerKey?: string | null;
+    };
   },
   cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,

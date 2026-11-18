@@ -37,6 +37,7 @@ import {
   advanceCadence as cadAdvanceCadence,
   breakupReviveHoldFor as cadBreakupReviveHoldFor,
   cadencePlansFor as cadCadencePlansFor,
+  cadenceOfferKey as cadCadenceOfferKey,
   cadenceQueueRow as cadCadenceQueueRow,
   cadencesForQueueRows as cadCadencesForQueueRows,
   type CadenceOfferJson,
@@ -596,7 +597,7 @@ export class Ledger {
     this.syncCadencePresence([input.prospectId]);
   }
 
-  /** Change an active cadence's offer while no send holds it (ledger-cadence.ts). */
+  /** Change an active cadence's offer while no send holds it; a changed offer drops the stored preview (ledger-cadence.ts). */
   setCadenceOffer(input: {
     prospectId: number;
     playName: string;
@@ -606,7 +607,12 @@ export class Ledger {
     merge?: boolean;
     expect?: Record<string, string | null>;
   }): boolean {
-    return cadSetCadenceOffer(this.db, input);
+    return cadSetCadenceOffer(this.db, this.drafts, input);
+  }
+
+  /** What a draft restates of a cadence's stored offer, as one comparable string (ledger-cadence.ts). */
+  cadenceOfferKey(input: { prospectId: number; playName: string }): string | null {
+    return cadCadenceOfferKey(this.db, input);
   }
 
   /** Keep the offer writer's refusal on an active cadence with no offer, or in place of a weak one (ledger-cadence.ts). */
@@ -855,8 +861,13 @@ export class Ledger {
     };
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
-    /** Store only while the cadence is still on this step of this enrolment (ledger-cadence.ts). */
-    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+    /** Store only while the cadence is still on this step of this enrolment, with this offer (ledger-cadence.ts). */
+    expect?: {
+      currentStep: number;
+      enrolledAt: string;
+      stepId?: string;
+      offerKey?: string | null;
+    };
   }): boolean {
     return cadSetCadenceDraft(this.db, this.drafts, input);
   }
