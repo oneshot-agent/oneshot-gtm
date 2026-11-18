@@ -23,6 +23,8 @@ process.env["PORT"] = "3030";
 
 /** What the stubbed destination does: health answers only once `up`; import answers `importReply`. */
 let up = true;
+/** The health body: `{}` is a build from before health named its workspace. */
+let healthBody: Record<string, unknown> = {};
 let importReply: { status: number; body: unknown } = {
   status: 201,
   body: { queueId: 77, reused: false },
@@ -34,7 +36,7 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
   const url = String(input instanceof Request ? input.url : input);
   if (url.endsWith("/api/health")) {
     if (!up) throw new Error("down");
-    return new Response("{}", { status: 200 });
+    return new Response(JSON.stringify(healthBody), { status: 200 });
   }
   if (url.endsWith("/api/queue/import")) {
     importBodies.push(JSON.parse(String(init?.body)));
@@ -150,6 +152,7 @@ beforeEach(() => {
   noteCalls.length = 0;
   restoreCalls.length = 0;
   sentDuringImport = false;
+  healthBody = {};
   fetchMock.mockClear();
   _setLaunchSpawn();
   row = {
@@ -245,6 +248,27 @@ describe("POST /api/queue/:id/move", () => {
     const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
     expect(res.status).toBe(200);
     expect(spawned).toEqual(["alpha:3999"]);
+    expect(importBodies).toHaveLength(1);
+  });
+
+  it("never imports into a different workspace answering on the destination's port, and restores the row", async () => {
+    row!.status = "approved";
+    row!.notes = "looks good";
+    healthBody = { ok: true, workspace: "beta" };
+    const spawn = vi.fn();
+    _setLaunchSpawn(spawn);
+    const res = await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      'workspace "beta" is answering',
+    );
+    expect(importBodies).toEqual([]);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ status: "approved", notes: "looks good" });
+
+    // The same port answering as the destination itself takes the row.
+    healthBody = { ok: true, workspace: "alpha" };
+    expect((await moveQueueRowRoute(req({ workspace: "alpha" }), { id: "746" })).status).toBe(200);
     expect(importBodies).toHaveLength(1);
   });
 
