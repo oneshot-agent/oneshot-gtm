@@ -221,6 +221,7 @@ describe("POST /api/queue/:id/move", () => {
         status: "rejected",
         decidedBy: "human",
         decisionReason: "other",
+        member: null,
         notes: expect.stringMatching(movedTo("alpha")),
       },
     ]);
@@ -264,6 +265,14 @@ describe("POST /api/queue/:id/move", () => {
       {
         id: 746,
         reservedNotes: statusCalls[0]?.["notes"],
+        member: null,
+        previousDecision: {
+          reviewed_at: null,
+          decision: null,
+          decided_at: null,
+          decided_by: null,
+          decision_reason: null,
+        },
         status: "approved",
         notes: "looks good",
         landed: true,

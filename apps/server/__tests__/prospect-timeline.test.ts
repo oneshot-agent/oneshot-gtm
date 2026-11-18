@@ -186,6 +186,20 @@ describe("buildProspectTimeline ordering", () => {
 
 describe("describeDecision (shared vocabulary)", () => {
   it("names who decided, the same way the table and the history do", () => {
+    expect(
+      describeDecision({
+        decision: "approve",
+        decidedBy: "human",
+        decidedByMember: "mia@example.com",
+      }),
+    ).toBe("approved by mia@example.com");
+    expect(
+      describeDecision({
+        decision: "reject",
+        decidedBy: "machine",
+        decidedByMember: "mia@example.com",
+      }),
+    ).toBe("auto-rejected");
     expect(describeDecision({ decision: "auto_reject", decidedBy: "machine" })).toBe(
       "auto-rejected",
     );

@@ -1,9 +1,6 @@
-import {
-  loadConfig,
-  saveConfig,
-  motionMailPolicy,
-  type MotionMailSettings,
-} from "@oneshot-gtm/core";
+import { currentMember } from "../members.ts";
+import { saveServerConfig } from "./_config-save.ts";
+import { loadConfig, motionMailPolicy, type MotionMailSettings } from "@oneshot-gtm/core";
 import {
   defaultSequence,
   PLAY_DESCRIPTIONS,
@@ -258,7 +255,11 @@ export async function setCadenceRoute(
     const motions = { ...cfg.directMailMotions };
     if (mail) motions[name] = mail;
     else motions[name] = null;
-    saveConfig({ ...cfg, directMailMotions: motions });
+    saveServerConfig(
+      { ...cfg, directMailMotions: motions },
+      currentMember(req)?.email ?? null,
+      `plays.${name}.directMail`,
+    );
     applyCadencePlans(name, previous);
     return jsonResponse({ ok: true }, 200, req);
   }
@@ -266,10 +267,14 @@ export async function setCadenceRoute(
   // Reset path: clear this play's override.
   if (body.days === null || body.days === undefined) {
     delete overrides[name];
-    saveConfig({
-      ...cfg,
-      cadenceOverrides: Object.keys(overrides).length > 0 ? overrides : null,
-    });
+    saveServerConfig(
+      {
+        ...cfg,
+        cadenceOverrides: Object.keys(overrides).length > 0 ? overrides : null,
+      },
+      currentMember(req)?.email ?? null,
+      `plays.${name}.cadence`,
+    );
     applyCadencePlans(name, previous);
     return jsonResponse({ ok: true }, 200, req);
   }
@@ -295,7 +300,11 @@ export async function setCadenceRoute(
   // Cumulative → relative offsets (each ≥ 1, guaranteed by the checks above).
   const relative = days.map((d, i) => (i === 0 ? d : d - (days[i - 1] as number)));
   overrides[name] = relative;
-  saveConfig({ ...cfg, cadenceOverrides: overrides });
+  saveServerConfig(
+    { ...cfg, cadenceOverrides: overrides },
+    currentMember(req)?.email ?? null,
+    `plays.${name}.cadence`,
+  );
   applyCadencePlans(name, previous);
   return jsonResponse({ ok: true }, 200, req);
 }

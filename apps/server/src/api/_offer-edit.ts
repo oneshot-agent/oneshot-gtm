@@ -100,6 +100,7 @@ export async function selectOfferCandidate(
 export async function founderOffer(
   body: OfferEditBody,
   input: OfferInput,
+  member: string | null = null,
 ): Promise<ProspectOffer | OfferEditError> {
   const text = typeof body.offer === "string" ? body.offer.trim() : "";
   if (!text) return { error: "offer must be a non-empty string", status: 400 };
@@ -124,7 +125,7 @@ export async function founderOffer(
       ...(ret ? { return: ret } : {}),
       version: OFFER_PROMPT_VERSION,
       inputHash: "founder",
-      editedBy: "founder",
+      editedBy: member ?? "founder",
       derivedAt: new Date().toISOString(),
     },
     input,
@@ -145,7 +146,12 @@ export function weakApproval(stored: unknown): {
   expect: Record<string, string | null>;
 } | null {
   const offer = isProspectOffer(stored) ? stored : null;
-  if (!offer || offer.relevance !== "weak" || offer.editedBy === "founder") return null;
+  if (
+    !offer ||
+    offer.relevance !== "weak" ||
+    (typeof offer.editedBy === "string" && !!offer.editedBy?.trim())
+  )
+    return null;
   const weakApprovedAt = new Date().toISOString();
   const text = (key: string): string | null => {
     const v = (offer as unknown as Record<string, unknown>)[key];

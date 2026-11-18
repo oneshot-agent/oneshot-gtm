@@ -10,6 +10,14 @@ Every member sees every workspace and can do everything in its dashboard: review
 
 The header names who is signed in; `GET /api/me` returns their email, name and role. The CLI stays on the host machine.
 
+## Action attribution
+
+Queue approvals, rejections, moves and manual sends record the requesting member's email. The open queue case shows “Approved by …”, “Rejected by …” or “Sent by …”. The decision kind (`human`, `human_bulk`, `machine`) remains separate. Approval and rejection members stay in `decided_by_member`; the sender is recorded separately in `sent_by_member`. An unattended send retains its existing approval and shows no sending member. Machine decisions and rows from before member attribution have no member. A local owner without a listed email also remains unattributed.
+
+Regenerated drafts record their requester as `editedBy`, separately from the row's approval. Offer edits, code-answer decisions and saved inbox drafts also record the member. Member-written offers keep the same protection from automatic rewriting as older founder edits.
+
+Server setup saves and play cadence/mail settings append a `config_changes` row in the workspace ledger: `member`, `section` and `changed_at`. Sections are `setup`, `plays.<name>.cadence` and `plays.<name>.directMail`; configuration values and secrets are not copied into this audit table.
+
 ## Add members
 
 Run these on the host. A member's email is their Tailscale login name, matched without regard to case.

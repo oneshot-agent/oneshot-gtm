@@ -140,7 +140,7 @@ export function selectRejudgeRows(rows: readonly QueueRow[]): {
     const candidates = offerCandidatesOf(payload);
     const active = offerOf(payload);
     if (candidates.length === 0 || !active) continue;
-    if (active.editedBy === "founder") {
+    if (typeof active.editedBy === "string" && !!active.editedBy?.trim()) {
       founderEdited++;
       continue;
     }
@@ -389,7 +389,7 @@ function failing(o: Pick<ProspectOffer, "relevance">): boolean {
 /** Every offer is weak or irrelevant, and the active one is no founder's text or approval. */
 function allWeak(active: ProspectOffer | null, candidates: readonly ProspectOffer[]): boolean {
   if (!active || candidates.length === 0) return false;
-  if (active.editedBy === "founder") return false;
+  if (typeof active.editedBy === "string" && !!active.editedBy?.trim()) return false;
   if (typeof active.weakApprovedAt === "string" && active.weakApprovedAt.trim()) return false;
   return failing(active) && candidates.every(failing);
 }
@@ -737,7 +737,7 @@ export function selectStaleSequences(
     out.active++;
     const key = `sequence ${cadence.prospect_id}/${cadence.play_name}`;
     const own =
-      offer.editedBy === "founder" ||
+      (typeof offer.editedBy === "string" && !!offer.editedBy?.trim()) ||
       (typeof offer.weakApprovedAt === "string" && !!offer.weakApprovedAt.trim());
     if (own) {
       out.kept++;

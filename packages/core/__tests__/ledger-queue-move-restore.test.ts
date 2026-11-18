@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ beforeEach(() => {
   ledger = new Ledger(dbPath);
 });
 afterEach(() => {
+  vi.useRealTimers();
   ledger.close();
   for (const suffix of ["", "-wal", "-shm"]) {
     try {
@@ -78,6 +79,67 @@ describe("Ledger.restoreQueueMoveIf", () => {
       status: "pending",
       notes: null,
       reviewed_at: null,
+      decision: null,
+      decided_at: null,
+      decided_by: null,
+      decided_by_member: null,
+      decision_reason: null,
+    });
+  });
+
+  it("restores an expired row's decision and member, not the reservation's rejection", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { name: "Ada", email: "ada@example.com" },
+      dedupeKey: `k-${Math.random().toString(36).slice(2)}`,
+      source: "find:show-hn",
+    })!;
+    ledger.setQueueStatus({
+      id,
+      status: "approved",
+      decidedBy: "human",
+      member: "owner@example.com",
+      decisionReason: "fit",
+    });
+    ledger.setQueueStatus({ id, status: "expired" });
+    const before = ledger.getQueueRow(id)!;
+    expect(before.reviewed_at).toBe("2026-11-18T10:00:00.000Z");
+    vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
+    ledger.setQueueStatus({
+      id,
+      status: "rejected",
+      decidedBy: "human",
+      member: "mia@example.com",
+      decisionReason: "other",
+      notes: "moved to alpha #1a2b3c4d",
+    });
+    expect(
+      ledger.restoreQueueMoveIf({
+        id,
+        reservedNotes: "moved to alpha #1a2b3c4d",
+        status: "expired",
+        notes: null,
+        member: before.decided_by_member,
+        previousDecision: {
+          reviewed_at: before.reviewed_at,
+          decision: before.decision,
+          decided_at: before.decided_at,
+          decided_by: before.decided_by,
+          decision_reason: before.decision_reason,
+        },
+      }),
+    ).toBe(true);
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "expired",
+      notes: null,
+      reviewed_at: before.reviewed_at,
+      decision: "approve",
+      decided_at: before.decided_at,
+      decided_by: "human",
+      decided_by_member: "owner@example.com",
+      decision_reason: "fit",
     });
   });
 
