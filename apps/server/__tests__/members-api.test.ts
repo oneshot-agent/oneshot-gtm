@@ -128,3 +128,28 @@ it("the local owner can add the first member without a listed identity", async (
   expect(response.status).toBe(200);
   expect(getSharedDb().activeMember(member)?.role).toBe("member");
 });
+
+it.each(["x-forwarded-for", "x-forwarded-host", "forwarded", "tailscale-funnel-request"])(
+  "refuses member reads and writes through a loopback proxy carrying %s without allowed hosts",
+  async (header) => {
+    getSharedDb().disallowHost(host);
+    const before = getSharedDb().listMembers();
+    for (const path of ["", "/remove", "/role"]) {
+      const response = await handler(
+        new Request(`http://127.0.0.1:3030/api/members${path}`, {
+          method: "POST",
+          headers: { host: "127.0.0.1:3030", [header]: "hooks.example.com" },
+          body: JSON.stringify({ email: member, role: "owner" }),
+        }),
+      );
+      expect(response.status).toBe(403);
+    }
+    const response = await handler(
+      new Request("http://127.0.0.1:3030/api/members", {
+        headers: { host: "127.0.0.1:3030", [header]: "hooks.example.com" },
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect(getSharedDb().listMembers()).toEqual(before);
+  },
+);

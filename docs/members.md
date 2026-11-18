@@ -102,5 +102,5 @@ Read from Tailscale's source (`ipn/ipnlocal/serve.go`), since the gate depends o
 
 ## Limits
 
-- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md).
+- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md). Member routes (`/api/members` and its subpaths) always refuse this loopback proxy exception, even with no host allowed; use direct local access or an allowed host with a member identity. A public webhook proxy must forward only `/api/triggers/signup` and `/api/triggers/cal-no-show`, since the webhook secret does not protect other routes.
 - **One sign-in method.** Identity comes from Tailscale only.

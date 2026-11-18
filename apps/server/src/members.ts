@@ -132,8 +132,11 @@ export function currentMember(req: Request): CurrentMember | null {
     if (identity !== null) return null;
     // Through `tailscale serve`, so not local. This holds with no host allowed too.
     if (forwardedUnderLoopbackHost(req)) return null;
-    // With a host allowed, a proxied request is not local, whatever Host it claims.
-    if (PROXY_HEADERS.some((h) => req.headers.has(h)) && anyHostAllowed()) return null;
+    // Membership management always requires direct local access or an authenticated identity.
+    const managingMembers = /^\/api\/members(?:\/|$)/.test(new URL(req.url).pathname);
+    if (PROXY_HEADERS.some((h) => req.headers.has(h)) && (managingMembers || anyHostAllowed())) {
+      return null;
+    }
     return localOwner();
   }
 
