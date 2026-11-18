@@ -6,7 +6,7 @@ Every install starts with one workspace named `default` at `~/.oneshot-gtm`.
 
 To add another from the dashboard, open the workspace switcher and choose **New workspace**. Enter 1–32 lowercase letters, digits or hyphens, starting with a letter or digit. Names must be unique. The dashboard creates its home and default profile, assigns a port, and opens a new tab once its server answers `/api/health` as that workspace. A server that answers on the port under a different name is never opened. Complete the new workspace's profile and keys in Setup; it does not copy the current workspace's settings or credentials.
 
-From a non-loopback address (anything but a loopback one on the host machine, such as `http://127.0.0.1:3030` or `localhost`) no tab opens. The switcher shows the assigned port and the command the host operator runs to serve it, then a link to the new workspace; see [serve each workspace port](./members.md#serve-each-workspace-port).
+From a non-loopback address (anything but a loopback one on the host machine, such as `http://127.0.0.1:3030` or `localhost`) no tab opens. The switcher shows the assigned port and the command the host operator runs to serve it, then a link to the new workspace, and says so when the new server has not answered yet; see [serve each workspace port](./members.md#serve-each-workspace-port).
 
 The switcher and a queue move apply the same check: a workspace whose port answers as a different workspace shows as stopped, and starting it or moving a row to it is refused until that server is stopped. A dashboard from an older build does not name itself; it still counts as running. A move also names its destination in the hand-over, and a server that is not that workspace refuses the row.
 

@@ -195,7 +195,9 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           className="border-t border-ink-rule mt-1 p-2 space-y-2 text-xs text-ink-cream"
         >
           <p>
-            Workspace {remoteSetup.name} is running on port {remoteSetup.port}.
+            {remoteSetup.running
+              ? `Workspace ${remoteSetup.name} is running on port ${remoteSetup.port}.`
+              : `Workspace ${remoteSetup.name} was created on port ${remoteSetup.port} but is not answering yet. Start it from the list above.`}
           </p>
           <p className="text-ink-cream-2">
             It opens from this address once the host operator serves that port on the host machine:

@@ -69,10 +69,28 @@ describe("new workspace navigation", () => {
       port: 4031,
       // The host the member browses to is kept; only the port changes.
       url: "https://host.tailnet.ts.net:4031/",
+      running: true,
     });
     expect(open).not.toHaveBeenCalled();
     expect(assign).not.toHaveBeenCalled();
     expect(servePortCommand(4031)).toBe("tailscale serve --bg --https=4031 http://127.0.0.1:4031");
+  });
+
+  it.each([
+    ["the roster request fails", () => mocks.roster.mockRejectedValue(new Error("500"))],
+    ["the server never answers", () => mocks.roster.mockResolvedValue(roster({}))],
+  ])("still returns a member's setup step, not yet running, when %s", async (_case, arrange) => {
+    browseFrom("https://host.tailnet.ts.net:3030/");
+    arrange();
+    const result = createAndOpenWorkspace("acme");
+    await vi.runAllTimersAsync();
+    expect(await result).toEqual({
+      name: "acme",
+      port: 4031,
+      url: "https://host.tailnet.ts.net:4031/",
+      running: false,
+    });
+    expect(mocks.create).toHaveBeenCalledOnce();
   });
 
   it("treats only the host machine's own addresses as local", () => {

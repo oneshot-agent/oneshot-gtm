@@ -95,12 +95,9 @@ describe("workspace switcher panel", () => {
   });
 
   it("shows a member the assigned port and the host's serve step before the link", () => {
+    const setup = { name: "acme", port: 4031, url: "https://host.tailnet.ts.net:4031/" };
     const html = renderToStaticMarkup(
-      <WorkspacePanel
-        {...props({
-          remoteSetup: { name: "acme", port: 4031, url: "https://host.tailnet.ts.net:4031/" },
-        })}
-      />,
+      <WorkspacePanel {...props({ remoteSetup: { ...setup, running: true } })} />,
     );
     const port = html.indexOf("Workspace acme is running on port 4031.");
     const step = html.indexOf("tailscale serve --bg --https=4031 http://127.0.0.1:4031");
@@ -109,5 +106,13 @@ describe("workspace switcher panel", () => {
     expect(step).toBeGreaterThan(port);
     expect(link).toBeGreaterThan(step);
     expect(html).toContain("host operator");
+
+    // Created but not seen answering: the same step, with no claim that it runs.
+    const unconfirmed = renderToStaticMarkup(
+      <WorkspacePanel {...props({ remoteSetup: { ...setup, running: false } })} />,
+    );
+    expect(unconfirmed).toContain("Workspace acme was created on port 4031 but is not answering");
+    expect(unconfirmed).not.toContain("is running");
+    expect(unconfirmed).toContain("tailscale serve --bg --https=4031 http://127.0.0.1:4031");
   });
 });

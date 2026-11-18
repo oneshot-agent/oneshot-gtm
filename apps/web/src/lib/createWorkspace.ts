@@ -34,13 +34,16 @@ export interface RemoteWorkspaceSetup {
   port: number;
   /** Where the workspace opens once the host serves `port`. */
   url: string;
+  /** Its own server answered on `port`. False: created, but not confirmed up. */
+  running: boolean;
 }
 
 /**
  * Create a workspace and wait until its own server answers on its port. On the
  * host machine the new dashboard then opens; call this directly from form
  * submission, because the tab is reserved before the server is awaited. On any
- * other address nothing opens: the returned setup step is shown first.
+ * other address nothing opens: the returned setup step is shown first, and it
+ * is returned whether or not the server was seen answering.
  */
 export async function createAndOpenWorkspace(name: string): Promise<RemoteWorkspaceSetup | null> {
   // Keep the host used to reach this dashboard (including a remote host or tunnel).
@@ -59,28 +62,37 @@ export async function createAndOpenWorkspace(name: string): Promise<RemoteWorksp
     url.pathname = "/";
     url.search = "";
     url.hash = "";
-    while (!expired.signal.aborted) {
-      // The roster probes /api/health on the server, avoiding cross-origin browser fetches.
-      const info = await api.workspaceWithin(expired.signal).catch((err: unknown) => {
-        if (expired.signal.aborted) return null;
-        throw err;
-      });
-      // `verified`: the server on the assigned port said it is this workspace.
-      // A name match alone could be another dashboard that holds the port.
-      const up = info?.workspaces.some(
-        (w) => w.name === created.name && w.port === created.port && w.verified,
-      );
-      if (up) {
-        if (remote) return { name: created.name, port: created.port, url: url.href };
-        if (win && !win.closed) win.location.href = url.href;
-        else window.location.assign(url.href);
-        return null;
+    const answers = async (): Promise<boolean> => {
+      while (!expired.signal.aborted) {
+        // The roster probes /api/health on the server, avoiding cross-origin browser fetches.
+        const info = await api.workspaceWithin(expired.signal).catch((err: unknown) => {
+          if (expired.signal.aborted) return null;
+          throw err;
+        });
+        // `verified`: the server on the assigned port said it is this workspace.
+        // A name match alone could be another dashboard that holds the port.
+        const up = info?.workspaces.some(
+          (w) => w.name === created.name && w.port === created.port && w.verified,
+        );
+        if (up) return true;
+        if (!expired.signal.aborted) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }
-      if (!expired.signal.aborted) await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+      return false;
+    };
+    if (remote) {
+      // The workspace exists now and cannot be created again, so a failed or
+      // expired check must not cost the member its port and serve step.
+      const running = await answers().catch(() => false);
+      return { name: created.name, port: created.port, url: url.href, running };
     }
-    throw new Error(
-      `Workspace ${created.name} was created but is not answering yet. Start it from the workspace switcher.`,
-    );
+    if (!(await answers())) {
+      throw new Error(
+        `Workspace ${created.name} was created but is not answering yet. Start it from the workspace switcher.`,
+      );
+    }
+    if (win && !win.closed) win.location.href = url.href;
+    else window.location.assign(url.href);
+    return null;
   } catch (err) {
     win?.close();
     throw err;
