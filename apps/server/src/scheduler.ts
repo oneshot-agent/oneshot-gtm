@@ -4,6 +4,7 @@ import { refreshReplyLearning } from "./reply-learning.ts";
 import { refreshIcpProposal } from "./icp-proposals.ts";
 import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
+import { startLoopLagMonitor } from "./loop-lag.ts";
 import {
   demoMode,
   getLedger,
@@ -152,31 +153,42 @@ export function startScheduler(): SchedulerHandle {
   let lastCodeAnswerSweepAt = 0;
   // 0 = never swept, so the first tick finishes calls left over from before a restart.
   let lastCallSweepAt = 0;
+  // The step the tick is on, for the stall log (loop-lag.ts). A detached job
+  // keeps running after the tick moves on, so a stall names the step that
+  // started it only when the label had not moved yet.
+  let step = "idle";
+  const stopLagMonitor = startLoopLagMonitor(() => step);
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
     // Retire proposals nobody will decide before the refresh can add more.
+    step = "learning-expiry";
     try {
       expireLearningProposals();
     } catch {
       logEvent("scheduler.learning_expiry.failed", {}, "warn");
     }
+    step = "reply-learning";
     void refreshReplyLearning().catch(() =>
       logEvent("scheduler.reply_learning.failed", {}, "warn"),
     );
     // Reply-backed angle suggestions: no model call, at most once a day.
+    step = "outcome-learning";
     try {
       refreshOutcomeLearning();
     } catch {
       logEvent("scheduler.outcome_learning.failed", {}, "warn");
     }
+    step = "icp-proposal";
     void refreshIcpProposal().catch(() => logEvent("scheduler.icp_proposal.failed", {}, "warn"));
+    step = "linkedin-inbox";
     void Promise.resolve()
       .then(() => refreshLinkedInInbox())
       .catch((e) => logEvent("scheduler.linkedin.failed", { message: String(e) }, "warn"));
     try {
       if (!mailBackfillRunning) {
         mailBackfillRunning = true;
+        step = "mail-backfill";
         void backfillMailAddresses()
           .catch((e) => logEvent("mail.backfill.failed", { message: String(e) }, "warn"))
           .finally(() => {
@@ -187,6 +199,7 @@ export function startScheduler(): SchedulerHandle {
       // scheduling (or vice-versa), and it never sends, so it can't double-spend.
       let repliesDetected = 0;
       let autoRepliesSkipped = 0;
+      step = "reply-poll";
       try {
         const replyPoll = await pollInboxReplies();
         repliesDetected = replyPoll.repliesDetected;
@@ -206,6 +219,7 @@ export function startScheduler(): SchedulerHandle {
       // Throttled: a reply that keeps failing must not cost a paid call per tick.
       if (Date.now() - lastIntentRetryAt >= REPLY_INTENT_RETRY_INTERVAL_MS) {
         lastIntentRetryAt = Date.now();
+        step = "reply-intent-retry";
         try {
           const retried = await retryUntriagedReplies({ limit: 25 });
           if (retried.checked > 0) logEvent("scheduler.reply_intent_retry", retried);
@@ -219,6 +233,7 @@ export function startScheduler(): SchedulerHandle {
       }
       let mailRefreshed = 0,
         mailRefreshFailed = 0;
+      step = "direct-mail";
       try {
         const mail = await refreshPendingDirectMail();
         mailRefreshed = mail.refreshed;
@@ -246,6 +261,7 @@ export function startScheduler(): SchedulerHandle {
         // Stamped before the await, not after: a slow or failing sweep must not
         // let ticks queue up behind it and then all fire at once.
         lastBouncePollAt = Date.now();
+        step = "bounce-poll";
         try {
           const bouncePoll = await pollInboxBounces();
           bouncesRecorded = bouncePoll.recorded;
@@ -259,6 +275,7 @@ export function startScheduler(): SchedulerHandle {
           );
         }
       }
+      step = "triggers";
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
       // Telemetry per fired trigger: detached, must not delay the tick.
@@ -273,6 +290,7 @@ export function startScheduler(): SchedulerHandle {
       // Drain outage-deferred candidates (time-windowed finders) now the
       // backend may be healthy again. Isolated like the reply poll: its
       // failure must not skip trigger scheduling.
+      step = "pending-retries";
       try {
         await runPendingRetries();
       } catch (err) {
@@ -290,6 +308,7 @@ export function startScheduler(): SchedulerHandle {
       let liveProfilesRead = 0;
       if (Date.now() - lastLiveProfileSweepAt >= LIVE_PROFILE_SWEEP_INTERVAL_MS) {
         lastLiveProfileSweepAt = Date.now();
+        step = "live-profile-sweep";
         try {
           // The sweep stops itself at the deadline (no new row, no write);
           // withDeadline is the backstop for a row already in flight.
@@ -312,6 +331,7 @@ export function startScheduler(): SchedulerHandle {
       // session, so it runs even when the read sweep idles.
       if (Date.now() - lastNewsfeedSweepAt >= NEWSFEED_SWEEP_INTERVAL_MS) {
         lastNewsfeedSweepAt = Date.now();
+        step = "newsfeed-sweep";
         try {
           await withDeadline(
             sweepInFlightNewsfeeds({ deadlineAt: Date.now() + NEWSFEED_SWEEP_DEADLINE_MS }),
@@ -335,6 +355,7 @@ export function startScheduler(): SchedulerHandle {
       // due and unsent past it.
       if (Date.now() - lastLinkedInInviteSweepAt >= LINKEDIN_INVITE_SWEEP_INTERVAL_MS) {
         lastLinkedInInviteSweepAt = Date.now();
+        step = "linkedin-invite-expiry";
         try {
           expireUnsentLinkedInInvites();
         } catch (err) {
@@ -344,6 +365,7 @@ export function startScheduler(): SchedulerHandle {
             "warn",
           );
         }
+        step = "linkedin-invite-sweep";
         try {
           await withDeadline(
             sweepLinkedInInvitations({ linkedIn: callLinkedIn }),
@@ -364,6 +386,7 @@ export function startScheduler(): SchedulerHandle {
       let meetingsIngested = 0;
       if (Date.now() - lastCalendarPollAt >= CALENDAR_POLL_INTERVAL_MS) {
         lastCalendarPollAt = Date.now();
+        step = "calendar-poll";
         try {
           const calendarPoll = await withDeadline(pollCalendarMeetings(), 60_000, "calendar poll");
           meetingsIngested = calendarPoll.meetingsIngested;
@@ -383,6 +406,7 @@ export function startScheduler(): SchedulerHandle {
       // the unkeyed Smartlead/Gmail receipts that remain.
       if (Date.now() - lastDeliverySweepAt >= DELIVERY_SWEEP_INTERVAL_MS) {
         lastDeliverySweepAt = Date.now();
+        step = "delivery-sweep";
         try {
           await withDeadline(
             runOutboundConfirmations({
@@ -421,6 +445,7 @@ export function startScheduler(): SchedulerHandle {
       // the sweeps above; the sweep itself never throws.
       if (Date.now() - lastCodeAnswerSweepAt >= CODE_ANSWER_SWEEP_INTERVAL_MS) {
         lastCodeAnswerSweepAt = Date.now();
+        step = "code-answer-sweep";
         try {
           await withDeadline(
             sweepCodeAnswers(),
@@ -439,6 +464,7 @@ export function startScheduler(): SchedulerHandle {
       // before the await like the sweeps above.
       if (Date.now() - lastCallSweepAt >= CALL_SWEEP_INTERVAL_MS) {
         lastCallSweepAt = Date.now();
+        step = "call-sweep";
         try {
           await withDeadline(sweepBridgedCalls(), CALL_SWEEP_DEADLINE_MS, "bridged call sweep");
         } catch (err) {
@@ -452,6 +478,7 @@ export function startScheduler(): SchedulerHandle {
       // Post once per completed UTC day when Slack is configured. Both pollers
       // must be clean: bounce totals include sweep events and auto-permanent
       // bounces from replies. Stamping a partial day would permanently omit events.
+      step = "daily-summary";
       try {
         await postDailySendSummaryIfDue(new Date(), {
           sweepClean: bouncePollClean && replyPollClean,
@@ -463,6 +490,7 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
+      step = "idle";
       logEvent("scheduler.tick.done", {
         fired,
         repliesDetected,
@@ -482,6 +510,7 @@ export function startScheduler(): SchedulerHandle {
       const sleepMs = Math.min(nextSleepMs(outcomes), replyInterval);
       timer = setTimeout(() => void tick(), sleepMs);
     } catch (err) {
+      step = "idle";
       logEvent(
         "scheduler.tick.failed",
         { message_120: ((err as Error).message ?? "").slice(0, 120) },
@@ -498,6 +527,7 @@ export function startScheduler(): SchedulerHandle {
   return {
     stop(): void {
       clearInterval(backfillTimer);
+      stopLagMonitor();
       cancelled = true;
       if (timer) {
         clearTimeout(timer);

@@ -660,6 +660,22 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "calls", "discard_next_at", "TEXT");
     },
   },
+  {
+    // The opt-out check (contact-optout.ts) runs once per prospect. Its
+    // `lower(from_email)` match ruled out every index, so each check scanned
+    // all replies. These hold only the unsubscribes, a handful of rows, which
+    // the planner reads in place of the table.
+    version: 30,
+    name: "unsubscribe-reply-indexes",
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_inbox_replies_unsubscribe_kind
+          ON inbox_replies(prospect_id) WHERE kind = 'unsubscribe';
+        CREATE INDEX IF NOT EXISTS idx_inbox_replies_unsubscribe_intent
+          ON inbox_replies(prospect_id) WHERE intent = 'unsubscribe';
+      `);
+    },
+  },
 ];
 
 /**

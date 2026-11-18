@@ -58,6 +58,8 @@ export function contactAllowedClause(db: Database): string {
     }))`);
   // Sync may have persisted a verdict before the cadence poll consumes it.
   // A message may be linked to no row: then its address names the person.
+  // The direction/kind filter is the WHERE of the partial index
+  // mailbox_messages_unsubscribe (mailbox-store.ts): change both together.
   if (
     db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_messages'").get()
   ) {

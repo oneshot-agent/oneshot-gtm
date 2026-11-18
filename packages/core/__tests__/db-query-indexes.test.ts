@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { contactAllowedClause, isProspectOptedOut } from "../src/contact-optout.ts";
 import { Ledger } from "../src/ledger.ts";
 import { LEDGER_MIGRATIONS, runLedgerMigrations } from "../src/ledger-schema.ts";
 import { SharedDb } from "../src/shared-db.ts";
@@ -165,5 +166,62 @@ it("avoids per-touch schema probes while seeing identities added after SharedDb 
     expect(query.mock.calls.filter(([sql]) => /sqlite_master/i.test(sql))).toEqual([]);
   } finally {
     shared.close();
+  }
+});
+
+it("answers the per-prospect opt-out check from the unsubscribe indexes after upgrading", () => {
+  const ledger = existingLedger();
+  try {
+    const db = raw(ledger);
+    const linked = ledger.upsertProspect({ email: "linked@example.test" });
+    const unlinked = ledger.upsertProspect({ email: "unlinked@example.test" });
+    const other = ledger.upsertProspect({ email: "other@example.test" });
+    const said = ledger.upsertProspect({ email: "said@example.test" });
+    const insertMessage = db.query(
+      `INSERT INTO mailbox_messages (id, identity_id, thread_key, prospect_id, direction, at, data)
+       VALUES (?, 'box', ?, ?, 'inbound', '2026-11-01', ?)`,
+    );
+    insertMessage.run(
+      "m1",
+      "t1",
+      linked,
+      JSON.stringify({ kind: "unsubscribe", from: "x@example.test" }),
+    );
+    insertMessage.run(
+      "m2",
+      "t2",
+      null,
+      JSON.stringify({ kind: "unsubscribe", from: "UNLINKED@example.test" }),
+    );
+    insertMessage.run(
+      "m3",
+      "t3",
+      other,
+      JSON.stringify({ kind: "human", from: "other@example.test" }),
+    );
+    db.query(
+      `INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, kind, intent, received_at)
+       VALUES ('r1', 't4', ?, 'said@example.test', 'take me off', 'human', 'unsubscribe', '2026-11-01')`,
+    ).run(said);
+
+    expect([linked, unlinked, other, said].map((id) => isProspectOptedOut(db, id))).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+    const clause = contactAllowedClause(db);
+    for (const sql of [
+      `SELECT 1 FROM prospects p WHERE p.id = ? AND NOT (${clause})`,
+      `SELECT p.id FROM prospects p WHERE ${clause}`,
+    ]) {
+      const details = plan(db, sql, ...(sql.includes("?") ? [linked] : []));
+      expect(details).toContain("USING INDEX mailbox_messages_unsubscribe");
+      expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_kind");
+      expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_intent");
+      expect(details).not.toMatch(/^SCAN (m|ir)$/m);
+    }
+  } finally {
+    ledger.close();
   }
 });
