@@ -248,7 +248,7 @@ it("failed expired moves restore the decision history, including undecided, bulk
   }
 });
 
-it.each(["approved", "rejected"] as const)(
+it.each(["approved", "rejected", "expired"] as const)(
   "a failed move restores the full %s decision history",
   async (status) => {
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -260,7 +260,7 @@ it.each(["approved", "rejected"] as const)(
     const id = row();
     if (status === "approved") {
       ledger.approveAllPending({ ids: [id], member: owner });
-    } else {
+    } else if (status === "rejected") {
       ledger.setQueueStatus({
         id,
         status,
@@ -268,14 +268,19 @@ it.each(["approved", "rejected"] as const)(
         member: owner,
         decisionReason: "wrong_person",
       });
+    } else {
+      // Expired without ever being reviewed: the rollback must not stamp it reviewed.
+      ledger.setQueueStatus({ id, status });
     }
     const before = ledger.getQueueRow(id)!;
+    expect(before.reviewed_at).toBe(status === "expired" ? null : "2026-11-18T10:00:00.000Z");
     vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
     expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
       409,
     );
     expect(ledger.getQueueRow(id)).toMatchObject({
       status,
+      reviewed_at: before.reviewed_at,
       decision: before.decision,
       decided_at: before.decided_at,
       decided_by: before.decided_by,

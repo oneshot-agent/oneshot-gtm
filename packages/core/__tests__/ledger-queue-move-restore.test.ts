@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ beforeEach(() => {
   ledger = new Ledger(dbPath);
 });
 afterEach(() => {
+  vi.useRealTimers();
   ledger.close();
   for (const suffix of ["", "-wal", "-shm"]) {
     try {
@@ -87,6 +88,8 @@ describe("Ledger.restoreQueueMoveIf", () => {
   });
 
   it("restores an expired row's decision and member, not the reservation's rejection", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
     const id = ledger.enqueueTarget({
       playName: "show-hn",
       payload: { name: "Ada", email: "ada@example.com" },
@@ -102,6 +105,8 @@ describe("Ledger.restoreQueueMoveIf", () => {
     });
     ledger.setQueueStatus({ id, status: "expired" });
     const before = ledger.getQueueRow(id)!;
+    expect(before.reviewed_at).toBe("2026-11-18T10:00:00.000Z");
+    vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
     ledger.setQueueStatus({
       id,
       status: "rejected",
@@ -118,6 +123,7 @@ describe("Ledger.restoreQueueMoveIf", () => {
         notes: null,
         member: before.decided_by_member,
         previousDecision: {
+          reviewed_at: before.reviewed_at,
           decision: before.decision,
           decided_at: before.decided_at,
           decided_by: before.decided_by,
@@ -128,6 +134,7 @@ describe("Ledger.restoreQueueMoveIf", () => {
     expect(ledger.getQueueRow(id)).toMatchObject({
       status: "expired",
       notes: null,
+      reviewed_at: before.reviewed_at,
       decision: "approve",
       decided_at: before.decided_at,
       decided_by: "human",
