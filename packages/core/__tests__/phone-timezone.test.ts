@@ -53,6 +53,8 @@ describe("normalizePhone", () => {
   it("drops a bracketed trunk zero after the country code, where the plan has one", () => {
     expect(normalizePhone("+44 (0)20 7946 0958")).toBe("+442079460958");
     expect(normalizePhone("+44(0) 20 7946 0958")).toBe("+442079460958");
+    expect(normalizePhone("+44-(0)20-7946-0958")).toBe("+442079460958");
+    expect(normalizePhone("+39-(0)6 1234 5678")).toBe("+390612345678");
     expect(normalizePhone("+49 (0)30 123456")).toBe("+4930123456");
   });
 
@@ -160,6 +162,10 @@ describe("phoneLocalTime", () => {
     const out = phoneLocalTime("+442079460958", window, before);
     expect(out).toMatchObject({ inWindow: false, localTime: "00:30" });
     expect(out.opensAt).toBe("2026-03-29T01:00:00.000Z");
+    // From inside the minute before the jump, the jump is still found.
+    expect(phoneLocalTime("+442079460958", window, new Date("2026-03-29T00:59:30Z")).opensAt).toBe(
+      "2026-03-29T01:00:00.000Z",
+    );
     expect(phoneLocalTime("+442079460958", window, new Date("2026-03-29T01:00:00Z")).inWindow).toBe(
       true,
     );

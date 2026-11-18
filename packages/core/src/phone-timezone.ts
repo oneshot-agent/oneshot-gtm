@@ -239,10 +239,10 @@ export function normalizePhone(
   // number) is not one number.
   if (!/^\+?[\d\s\-()./]+$/.test(s)) return null;
   const plus = s.startsWith("+");
-  // "+44 (0)20 …" or "0044 (0)20 …": the bracketed trunk zero is a national
+  // "+44 (0)20 …", "+44-(0)20 …" or "0044 (0)20 …": the bracketed trunk zero is a national
   // habit, not part of the number, where the country's plan has a trunk "0"
   // (Italy keeps it).
-  const trunkZero = /^(?:\+|00)\d{1,3}\s*\(0\)/.test(s);
+  const trunkZero = /^(?:\+|00)\d{1,3}[\s\-./]*\(0\)/.test(s);
   s = s.replace(/\D/g, "");
   if (trunkZero) {
     const intl = plus ? "" : "00";
@@ -404,7 +404,9 @@ const DAY_MS = 24 * 3600 * 1000;
  */
 function offsetChanges(zone: string, from: number, to: number): number[] {
   const out: number[] = [];
-  let a = Math.ceil(from / MINUTE_MS);
+  // From the minute `from` falls in: a change at the next whole minute is
+  // still after `from`, and every one found is at least a minute past `a`.
+  let a = Math.floor(from / MINUTE_MS);
   let before = wallClock(zone, new Date(a * MINUTE_MS)).offset;
   const end = Math.floor(to / MINUTE_MS);
   while (a < end) {
