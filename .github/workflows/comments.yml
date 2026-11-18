@@ -1,0 +1,26 @@
+# Comment density of the lines a pull request adds (scripts/comment-density.ts).
+# The dev-runner guard refuses its own branches over the same limits; this job
+# shows the measurement on every PR. Not a required check.
+name: Comments
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: comments-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  density:
+    # status-stamp.yml's automation/ PRs carry only STATUS.md.
+    if: ${{ !startsWith(github.head_ref, 'automation/') && github.event.pull_request.user.login != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.3.13"
+      - run: bun scripts/comment-density.ts --base "origin/${{ github.base_ref }}"
