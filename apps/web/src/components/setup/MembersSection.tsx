@@ -27,14 +27,15 @@ export function MembersSection({ onDirtyChange }: { onDirtyChange: DirtyReporter
       if (change.action === "remove") return api.removeMember(change.email);
       return api.setMemberRole(change.email, change.role);
     },
-    onSuccess: async (_, change) => {
+    onSuccess: (_, change) => {
       if (change.action === "add") setEmail("");
       setSavedAt(Date.now());
-      await Promise.all([
+    },
+    onSettled: () =>
+      Promise.all([
         qc.invalidateQueries({ queryKey: ["members"] }),
         qc.invalidateQueries({ queryKey: ["me"] }),
-      ]);
-    },
+      ]),
   });
   const owners = query.data?.members.filter((m) => m.role === "owner").length ?? 0;
   const error = mutation.error ?? query.error;
