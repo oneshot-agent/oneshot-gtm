@@ -225,8 +225,16 @@ it("answers the per-prospect opt-out check from the unsubscribe indexes after up
       expect(details).toContain("USING INDEX mailbox_messages_unsubscribe");
       expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_kind");
       expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_intent");
-      expect(details).toContain("USING INDEX idx_channel_events_unsubscribe");
+      // A LinkedIn unsubscribe may be found through its own partial index or
+      // the prospect's events: SQLite builds differ in which they pick. Never
+      // by reading every event.
+      expect(details).toMatch(
+        /SEARCH ce USING (COVERING )?INDEX|SCAN ce USING (COVERING )?INDEX idx_channel_events_unsubscribe/,
+      );
       expect(details).not.toMatch(/^SCAN (m|ir|ce)$/m);
+      expect(details).not.toMatch(
+        /SCAN ce USING (COVERING )?INDEX (?!idx_channel_events_unsubscribe)/,
+      );
     }
   } finally {
     ledger.close();
