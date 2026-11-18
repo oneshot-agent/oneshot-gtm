@@ -66,6 +66,8 @@ export interface CallListRow {
   local: CallLocalTime;
   /** The cadence this call belongs to, when it is a due call step. */
   playName: string | null;
+  /** That cadence's `current_step` when the row was read: a log completes only this step. Null on the call list. */
+  currentStep: number | null;
   /** "due" = a cadence call step is due now; "list" = anyone else with a number. */
   section: "due" | "list";
   /** Why this row ranks where it does ("replied: interested", "LinkedIn connected", …). */
@@ -118,4 +120,12 @@ export interface LogCallRequest {
   holdUntil?: string;
   /** The number the founder dialled (a new call): a wrong_number lands on it, not on a number stored since. */
   phone?: string;
+  /**
+   * The step `playName`'s cadence was on when the row was opened: the call
+   * completes that step only while it is still current. Null: no step was
+   * due then, so none is completed. Absent: whichever call step is next.
+   */
+  currentStep?: number | null;
+  /** The dashboard's id for this save, the same on a retry: the server writes one call for it. */
+  clientKey?: string;
 }

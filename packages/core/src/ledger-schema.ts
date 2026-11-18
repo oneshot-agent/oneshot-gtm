@@ -585,8 +585,10 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     // suggested outcome). `outcome` is a shared-types `CallOutcome`, NULL
     // until logged; `reply_intent` is the reply label it counts as, when it
     // means one. `phone` is the number dialled, kept after a wrong-number
-    // clears the prospect's. A brief written for someone outside a cadence is
-    // cached per prospect in `call_briefs`, so reopening them pays nothing.
+    // clears the prospect's. `client_key` is the dashboard's id for one save,
+    // so a retried save writes one row. A brief written for someone outside
+    // a cadence is cached per prospect in `call_briefs`, so reopening them
+    // pays nothing.
     version: 27,
     name: "calls",
     up: (db) => {
@@ -603,6 +605,7 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
           phone              TEXT,
           provider           TEXT NOT NULL DEFAULT 'tel',
           provider_call_sid  TEXT,
+          client_key         TEXT,
           recording_sid      TEXT,
           transcript_status  TEXT NOT NULL DEFAULT 'none',
           transcript_json    TEXT,
@@ -612,6 +615,8 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
         );
         CREATE INDEX IF NOT EXISTS idx_calls_prospect ON calls(prospect_id, started_at);
         CREATE INDEX IF NOT EXISTS idx_calls_outcome ON calls(outcome);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_calls_client_key ON calls(client_key)
+          WHERE client_key IS NOT NULL;
         CREATE TABLE IF NOT EXISTS call_briefs (
           prospect_id  INTEGER PRIMARY KEY,
           play_name    TEXT,

@@ -30,7 +30,7 @@ Two lists:
 
 Both lists apply the same gates as sending: the company do-not-contact list, an opt-out on any channel, an ICP reject and a meeting already held. A bounced email does not stop a call.
 
-The local time comes from the number's prefix (libphonenumber's time-zone data). People keep their numbers when they move, so treat it as a hint. A number that could be in several zones must be inside the window in all of them.
+The local time comes from the number's prefix (libphonenumber's time-zone data). People keep their numbers when they move, so treat it as a hint. A number that could be in several zones must be inside the window in all of them; when they never share an hour of it, the row stays outside the window.
 
 ## The brief
 

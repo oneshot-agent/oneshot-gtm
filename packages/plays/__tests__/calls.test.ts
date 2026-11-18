@@ -55,6 +55,7 @@ const { recordCall, listCalls, buildCallBrief, callBriefFor, parseCallBrief, cal
   await import("../src/_calls.ts");
 
 const PLAY = "__calls";
+const OTHER_PLAY = "__calls_other";
 const DAY = 24 * 3600 * 1000;
 const BRIEF_JSON = JSON.stringify({
   opener: "Hi Dana, this is Sam from Widgets. I emailed you last week about renewals.",
@@ -372,11 +373,42 @@ describe("listCalls", () => {
     });
   });
 
-  it("dialMode is bridge only once a bridge is configured", () => {
+  it("dials by tel: even with a bridge configured: ringing the founder's phone is not built yet", () => {
     callsOn(3, {
       bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
     });
-    expect(listCalls().dialMode).toBe("bridge");
+    expect(listCalls().dialMode).toBe("tel");
+  });
+
+  it("lists a person due in two plays once per play, each with its step", () => {
+    callsOn();
+    registerSequence({
+      playName: OTHER_PLAY,
+      steps: [1, 2, 3].map((i) => ({
+        dayOffset: i + 2,
+        channel: "email" as const,
+        label: `touch ${i}`,
+        breakOnReply: true,
+        builder: async () => ({ kind: "email" as const, subject: "hello", body: "hello" }),
+      })),
+    });
+    const id = enroll();
+    enrollInCadence({ prospectId: id, playName: OTHER_PLAY });
+    atCallStep(id);
+    ledger.advanceCadence({
+      prospectId: id,
+      playName: OTHER_PLAY,
+      newStep: 1,
+      nextDueAt: new Date().toISOString(),
+    });
+    const out = listCalls();
+    expect(out.due.map((r) => [r.prospectId, r.playName, r.currentStep]).toSorted()).toEqual(
+      [
+        [id, OTHER_PLAY, 1],
+        [id, PLAY, 1],
+      ].toSorted(),
+    );
+    expect(out.list.map((r) => r.prospectId)).not.toContain(id);
   });
 });
 
@@ -703,6 +735,99 @@ describe("review fixes", () => {
     expect(cadence(id).current_step).toBe(1);
     expect(callEvents(id)).toEqual([]);
     expect(ledger.getCall(old)!.outcome).toBe("voicemail");
+  });
+
+  it("a number that does not parse is refused and never clears the stored one", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    expect(() => recordCall(id, { outcome: "wrong_number", phone: "not a number" })).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
+    expect(ledger.getProspectById(id)!.phone).toBe("+15126531187");
+    expect(ledger.listCallsForProspect(id)).toEqual([]);
+    expect(cadence(id).current_step).toBe(1);
+  });
+
+  it("a save retried with its key writes one call; a changed outcome on the retry is applied", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const first = recordCall(id, { outcome: "no_answer", clientKey: "k-0123456789" });
+    const again = recordCall(id, { outcome: "no_answer", clientKey: "k-0123456789" });
+    expect(again.id).toBe(first.id);
+    expect(ledger.listCallsForProspect(id)).toHaveLength(1);
+    expect(callEvents(id)).toHaveLength(1);
+    expect(cadence(id).current_step).toBe(2);
+    expect(recordCall(id, { outcome: "voicemail", clientKey: "k-0123456789" }).outcome).toBe(
+      "voicemail",
+    );
+    expect(ledger.listCallsForProspect(id)).toHaveLength(1);
+    const other = ledger.upsertProspect({ name: "E", email: "e@x.test", phone: "+15126531188" });
+    expect(() => recordCall(other, { outcome: "no_answer", clientKey: "k-0123456789" })).toThrow(
+      expect.objectContaining({ status: 409 }),
+    );
+  });
+
+  it("a new log completes only the step its row was opened on", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    // Opened on step 0; the cadence is on its call step (1) now.
+    const late = recordCall(id, { outcome: "no_answer", playName: PLAY, currentStep: 0 });
+    expect(late.playName).toBe(PLAY);
+    expect(cadence(id).current_step).toBe(1);
+    expect(callEvents(id)).toEqual([]);
+    // Opened from the call list, with no step due.
+    recordCall(id, { outcome: "no_answer", currentStep: null });
+    expect(cadence(id).current_step).toBe(1);
+    // Opened on the call step itself.
+    const due = recordCall(id, { outcome: "voicemail", playName: PLAY, currentStep: 1 });
+    expect(cadence(id).current_step).toBe(2);
+    expect(JSON.parse(callEvents(id)[0]!.metadata_json!)).toMatchObject({ callId: due.id });
+  });
+
+  it("a changed outcome on a call whose cadence moved on marks that call's step, not the latest email", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const call = recordCall(id, { outcome: "no_answer" });
+    expect(cadence(id).current_step).toBe(2);
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 3,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s", body: "b" },
+    });
+    recordCall(id, { outcome: "interested", callId: call.id });
+    const [event] = callEvents(id);
+    expect(event).toMatchObject({ status: "replied" });
+    expect(JSON.parse(event!.metadata_json!)).toMatchObject({ outcome: "interested" });
+    const email = ledger
+      .listSequenceEventsForProspectPlay(id, PLAY)
+      .find((e) => e.channel === "email");
+    expect(email!.status).toBe("sent");
+    expect(cadence(id).status).toBe("replied");
+  });
+
+  it("a preview whose plan step was replaced meanwhile stores nothing", async () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    responses.push(BRIEF_JSON);
+    duringComplete = () => {
+      // A settings change puts an email where the call was, same index.
+      const c = cadence(id);
+      const plan = ledger.getCadencePlan(id, PLAY, c.enrolled_at)!;
+      plan[c.current_step] = { id: "base:2", dayOffset: 3, channel: "email", label: "touch 2" };
+      ledger.saveCadencePlan(id, PLAY, c.enrolled_at, plan);
+    };
+    await expect(callBriefFor({ prospectId: id, playName: PLAY })).rejects.toThrow(
+      PREVIEW_STEP_MOVED,
+    );
+    expect(ledger.getCadenceDraft({ prospectId: id, playName: PLAY })).toBeNull();
   });
 
   it("a repeated meeting_booked log records the meeting once", () => {

@@ -127,6 +127,32 @@ describe("POST /api/prospects/:id/call", () => {
     expect(change.status).toBe(409);
     expect(ledger.getCall(call.id)!.outcome).toBe("do_not_contact");
   });
+
+  it("refuses a number that does not parse and keeps the stored one", async () => {
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: "+15126531187" });
+    const res = await logCallRoute(post(`/x`, { outcome: "wrong_number", phone: "call me" }), {
+      id: String(id),
+    });
+    expect(res.status).toBe(400);
+    expect(ledger.getProspectById(id)!.phone).toBe("+15126531187");
+    expect(ledger.listCallsForProspect(id)).toEqual([]);
+  });
+
+  it("writes one call for a save retried with its key, and checks the key and step", async () => {
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: "+15126531187" });
+    const params = { id: String(id) };
+    const save = { outcome: "voicemail", clientKey: "save-0123456789abcdef" };
+    expect((await logCallRoute(post(`/x`, save), params)).status).toBe(200);
+    expect((await logCallRoute(post(`/x`, save), params)).status).toBe(200);
+    expect(ledger.listCallsForProspect(id)).toHaveLength(1);
+    expect(
+      (await logCallRoute(post(`/x`, { outcome: "voicemail", clientKey: "bad key" }), params))
+        .status,
+    ).toBe(400);
+    expect(
+      (await logCallRoute(post(`/x`, { outcome: "voicemail", currentStep: -1 }), params)).status,
+    ).toBe(400);
+  });
 });
 
 describe("POST /api/calls/brief", () => {
