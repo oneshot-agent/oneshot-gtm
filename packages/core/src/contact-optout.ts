@@ -5,7 +5,7 @@ function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
 }
 
-/** Whether a ledger's `channel_events` carries reply labels (ledger migration 31). */
+/** Whether a ledger's `channel_events` carries reply labels (ledger migration 32). */
 function hasChannelEventIntent(db: Database): boolean {
   return (db.query("PRAGMA table_info(channel_events)").all() as Array<{ name: string }>).some(
     (c) => c.name === "intent",

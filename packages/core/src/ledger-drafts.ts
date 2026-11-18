@@ -230,7 +230,8 @@ const EMPTY_USAGE = (): DraftUsage => ({
  * `sequence_events` row to `replied` (`markLatestStepReplied`), keyed by
  * prospect, play and step. Intro versions may predate their prospect row, so
  * the prospect is found by `prospect_id` or, failing that, the prospect key
- * (the lower-cased email every version is keyed by). Should a slot ever
+ * (the lower-cased email every version is keyed by; the unary `+` lets the
+ * lookup use idx_prospects_email_lower). Should a slot ever
  * hold two sent versions, only the latest is credited, so one reply is never
  * counted twice.
  */
@@ -248,7 +249,7 @@ const DV_REPLIED = `dv.outcome IN ('sent', 'auto_sent')
        AND se.step_index = dv.step_index
        AND se.prospect_id = COALESCE(
              dv.prospect_id,
-             (SELECT p.id FROM prospects p WHERE lower(p.email) = dv.prospect_key LIMIT 1)))`;
+             (SELECT p.id FROM prospects p WHERE lower(p.email) = +dv.prospect_key LIMIT 1)))`;
 
 function slotWhere(slot: DraftSlot): { sql: string; args: Array<number | string> } {
   if ("queueId" in slot) return { sql: "queue_id = ?", args: [slot.queueId] };

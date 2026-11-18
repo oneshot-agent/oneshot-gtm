@@ -240,3 +240,29 @@ it("answers the per-prospect opt-out check from the unsubscribe indexes after up
     ledger.close();
   }
 });
+
+it("credits draft replies through index lookups after upgrading, never a scan per sent version", () => {
+  const ledger = existingLedger();
+  try {
+    const query = vi.spyOn(raw(ledger), "query");
+    ledger.angleUsageByPlay();
+    ledger.draftUsageByPlay();
+    ledger.draftUsageByVoice();
+    ledger.draftUsageByFormat();
+    const statements = query.mock.calls
+      .map(([sql]) => sql)
+      .filter((sql) => sql.includes("MAX(d2.id)"));
+    expect(statements).toHaveLength(4);
+    for (const sql of statements) {
+      const details = plan(raw(ledger), sql);
+      // SQLite builds differ in which index they pick; none may read every row.
+      expect(details).toMatch(/SEARCH d2 USING (COVERING )?INDEX/);
+      expect(details).toMatch(
+        /SEARCH p USING (COVERING )?INDEX|SEARCH p USING INTEGER PRIMARY KEY/,
+      );
+      expect(details).not.toMatch(/^SCAN (d2|p)$/m);
+    }
+  } finally {
+    ledger.close();
+  }
+});
