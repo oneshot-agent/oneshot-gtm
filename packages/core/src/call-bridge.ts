@@ -583,9 +583,12 @@ export function forgetTranscriptionService(sid: string): void {
 /** A transcript create refused because its service no longer exists. */
 export function isMissingServiceError(err: unknown): boolean {
   if (!(err instanceof CallBridgeError)) return false;
-  return (
-    err.status === 404 ||
-    err.code === 20404 ||
-    /service.*(not (be )?found|does ?n[o']t exist)/i.test(err.message)
+  if (err.status === 404 || err.code === 20404) return true;
+  // Plain substring checks: a pattern with `.*` here is slow on provider-supplied text.
+  const text = err.message.toLowerCase();
+  const at = text.indexOf("service");
+  if (at < 0) return false;
+  return ["not found", "not be found", "does not exist", "doesn't exist", "doesnt exist"].some(
+    (phrase) => text.indexOf(phrase, at) >= 0,
   );
 }
