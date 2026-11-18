@@ -114,6 +114,8 @@ describe("workspace switcher focus", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
     expect(nameField()).toBeNull();
+    // The field it left is gone: the chip holds focus, not the page.
+    expect(document.activeElement).toBe(chip());
 
     await press(chip());
 

@@ -231,6 +231,7 @@ export function WorkspaceSwitcher() {
   const rootRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const newButtonRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const formWasOpen = useRef(false);
 
   const ws = useQuery({
@@ -246,7 +247,11 @@ export function WorkspaceSwitcher() {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      // The panel unmounts under the focused control, so the chip takes focus.
+      // An outside click does not: its target keeps the focus it took.
+      if (rootRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
+      setOpen(false);
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
@@ -306,6 +311,7 @@ export function WorkspaceSwitcher() {
   return (
     <div ref={rootRef} className="relative mt-1.5">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-label="switch workspace"
