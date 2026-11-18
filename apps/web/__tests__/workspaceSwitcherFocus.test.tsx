@@ -49,7 +49,8 @@ const startAlpha = async () => {
   let settle!: (answer: { status: "already-running"; port: number }) => void;
   mocks.launch.mockReturnValue(new Promise((resolve) => (settle = resolve)));
   await press(alphaRow());
-  return () => act(async () => settle({ status: "already-running", port: 3031 }));
+  const { port } = info.workspaces[1]!;
+  return () => act(async () => settle({ status: "already-running", port }));
 };
 
 /** A click as the browser makes it: the button takes focus, then fires. */
