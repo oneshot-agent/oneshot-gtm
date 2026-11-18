@@ -21,8 +21,13 @@ vi.mock("node:fs", async (importOriginal) => {
   return { ...real, writeFileSync, default: { ...real, writeFileSync } };
 });
 
-const { dashboardService, dashboardServiceNames, installDashboardService, serviceWritePath } =
-  await import("../src/index.ts");
+const {
+  BASE_PORT,
+  dashboardService,
+  dashboardServiceNames,
+  installDashboardService,
+  serviceWritePath,
+} = await import("../src/index.ts");
 
 let tmp: string;
 const run = vi.fn(async (_command: string, _args: string[]) => {});
@@ -32,7 +37,7 @@ const spec = () =>
     serverEntry: "/repo/apps/server/src/bin.ts",
     home: join(tmp, "home"),
     workspace: "acme",
-    port: 3031,
+    port: BASE_PORT + 1,
   });
 const target = () => serviceWritePath("linux", join(tmp, "user"), dashboardServiceNames("acme"))!;
 const install = () =>
