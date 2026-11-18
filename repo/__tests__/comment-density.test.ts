@@ -46,4 +46,45 @@ describe("comment-density trailing comments", () => {
     );
     expect(counts(r)).toEqual([4, 0, 1]);
   });
+
+  const edit = (lines: string[], removed: string[], file = "src/a.ts") =>
+    counts(commentDensity(added(file, lines, removed)));
+
+  it("whitespace inside a string literal is code", () => {
+    expect(edit(['send("a b");'], ['send("a  b"); // old'])).toEqual([1, 0, 0]);
+    expect(edit(['send("a  b");'], ['send("a  b");   // old'])).toEqual([0, 0, 1]);
+  });
+
+  it("a trailing comment that only changes its spacing is a comment edit", () => {
+    expect(edit(["run(); // a b"], ["run(); // a  b"])).toEqual([0, 1, 1]);
+  });
+
+  it("a quote inside a regex literal does not hide the trailing comment", () => {
+    expect(edit(['const quote = /"/;'], ['const quote = /"/; // old'])).toEqual([0, 0, 1]);
+    expect(edit(["const h = a / 2 // halved"], ["const h = a / 2 // half"])).toEqual([0, 1, 1]);
+  });
+
+  it("`//` inside an inline block comment is not a trailing comment", () => {
+    expect(
+      edit(["const n = /* https://example */ 2;"], ["const n = /* https://example */ 1;"]),
+    ).toEqual([1, 0, 0]);
+    expect(edit(["f(/* a */ x);"], ["f(/* a */ x); // old"])).toEqual([0, 0, 1]);
+  });
+
+  it("a line pairs only with a removed line of the same file entry", () => {
+    const other = [
+      added("worker.py", [], ["refresh() # old"]),
+      added("src/client.ts", ["refresh() // new"]),
+    ].join("\n");
+    expect(counts(commentDensity(other))).toEqual([1, 0, 0]);
+    const renamed = [
+      "diff --git a/old.ts b/new.ts",
+      "--- a/old.ts",
+      "+++ b/new.ts",
+      "@@ -1 +1 @@",
+      "-refresh(); // old",
+      "+refresh();",
+    ].join("\n");
+    expect(counts(commentDensity(renamed))).toEqual([0, 0, 1]);
+  });
 });
