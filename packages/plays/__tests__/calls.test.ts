@@ -670,4 +670,40 @@ describe("review fixes", () => {
     expect(prompts[1]).toContain("Cut one vendor this quarter");
     expect(ledger.getCallBrief(id)!.brief).not.toHaveProperty("offerKey");
   });
+
+  it("a replayed log never completes a later call step", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const call = recordCall(id, { outcome: "no_answer" });
+    expect(cadence(id).current_step).toBe(2);
+    // Another call step is current now (two in a row); the same log comes again.
+    atCallStep(id);
+    recordCall(id, { outcome: "no_answer", callId: call.id });
+    expect(cadence(id).current_step).toBe(1);
+    expect(callEvents(id)).toHaveLength(1);
+  });
+
+  it("a call made before the current call step began never completes it", () => {
+    callsOn();
+    const id = enroll();
+    const old = ledger.insertCall({
+      prospectId: id,
+      playName: PLAY,
+      startedAt: "2026-01-01T10:00:00.000Z",
+      phone: "+15126531187",
+    });
+    atCallStep(id);
+    recordCall(id, { outcome: "voicemail", callId: old });
+    expect(cadence(id).current_step).toBe(1);
+    expect(callEvents(id)).toEqual([]);
+    expect(ledger.getCall(old)!.outcome).toBe("voicemail");
+  });
+
+  it("a repeated meeting_booked log records the meeting once", () => {
+    const id = ledger.upsertProspect({ name: "D", email: "d@x.test", phone: "+15126531187" });
+    const call = recordCall(id, { outcome: "meeting_booked" });
+    recordCall(id, { outcome: "meeting_booked", callId: call.id });
+    expect(ledger.listDealOutcomesForProspect(id)).toHaveLength(1);
+  });
 });

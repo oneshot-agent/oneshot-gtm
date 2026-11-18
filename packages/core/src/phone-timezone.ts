@@ -367,13 +367,31 @@ function inWindowAt(zone: string, at: Date, window: CallWindow): boolean {
   return c.minutes >= minutesOf(window.start) && c.minutes < minutesOf(window.end);
 }
 
-/** The instant a zone's wall clock reads `minutes` past midnight on y-m-d. */
-function instantAt(zone: string, y: number, m: number, d: number, minutes: number): number {
+/**
+ * The instants a zone's wall clock reads `minutes` past midnight on y-m-d:
+ * one, or two in the hour repeated when clocks go back. In the hour skipped
+ * when they go forward, the instant just after the jump.
+ */
+function instantsAt(zone: string, y: number, m: number, d: number, minutes: number): number[] {
   const guess = Date.UTC(y, m - 1, d, Math.floor(minutes / 60), minutes % 60);
+  // The offsets either side of that day: a change on it is one of them.
+  const offsets = new Set(
+    [guess - 12 * 3600 * 1000, guess + 12 * 3600 * 1000].map(
+      (t) => wallClock(zone, new Date(t)).offset,
+    ),
+  );
+  const hhmm = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const out = [...offsets]
+    .map((offset) => guess - offset * 60_000)
+    .filter((t) => {
+      const c = wallClock(zone, new Date(t));
+      return c.y === y && c.m === m && c.d === d && c.hhmm === hhmm;
+    });
+  if (out.length > 0) return out.toSorted((a, b) => a - b);
   const first = wallClock(zone, new Date(guess)).offset;
   const t = guess - first * 60_000;
   const second = wallClock(zone, new Date(t)).offset;
-  return second === first ? t : guess - second * 60_000;
+  return [second === first ? t : guess - second * 60_000];
 }
 
 const MINUTE_MS = 60_000;
@@ -458,14 +476,14 @@ export function phoneLocalTime(
     const today = wallClock(zone, now);
     for (let i = 0; i <= OPENS_HORIZON_DAYS; i++) {
       const day = new Date(Date.UTC(today.y, today.m - 1, today.d + i));
-      const t = instantAt(
+      const opening = instantsAt(
         zone,
         day.getUTCFullYear(),
         day.getUTCMonth() + 1,
         day.getUTCDate(),
         start,
       );
-      if (t > now.getTime()) candidates.add(t);
+      for (const t of opening) if (t > now.getTime()) candidates.add(t);
     }
     for (const t of offsetChanges(zone, now.getTime(), horizon.getTime())) candidates.add(t);
   }

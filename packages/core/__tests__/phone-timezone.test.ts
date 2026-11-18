@@ -147,6 +147,14 @@ describe("phoneLocalTime", () => {
     );
   });
 
+  it("opens at the first of a start time the clocks repeat", () => {
+    // London goes back on Sunday 2026-10-25 at 01:00 UTC, 02:00 BST to 01:00
+    // GMT: 01:30 shows twice, first at 00:30 UTC.
+    const window = { start: "01:30", end: "02:00", weekdays: false };
+    const out = phoneLocalTime("+442079460958", window, new Date("2026-10-24T23:00:00Z"));
+    expect(out.opensAt).toBe("2026-10-25T00:30:00.000Z");
+  });
+
   it("an unknown number reads as in the window with no zone", () => {
     expect(phoneLocalTime("+999123456789", WINDOW)).toEqual({
       zones: [],

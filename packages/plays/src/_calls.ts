@@ -368,6 +368,44 @@ function callStepPlay(prospectId: number, playName: string | null | undefined): 
   );
 }
 
+/** A sequence event's `created_at` (SQLite's "YYYY-MM-DD HH:MM:SS", UTC, or ISO) in ms. */
+function eventMs(createdAt: string): number {
+  return Date.parse(
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(createdAt)
+      ? `${createdAt.replace(" ", "T")}Z`
+      : createdAt,
+  );
+}
+
+/**
+ * Whether a call already written may complete the cadence's current call
+ * step: it completed no step yet (a replayed log must not complete the next
+ * one), and it was made while that step was current, not for an earlier
+ * one. A cadence row is re-activated in place, so a step, not the
+ * enrolment, is what a call belongs to.
+ */
+function callOwnsCurrentStep(
+  call: Pick<CallRecordView, "id" | "prospectId" | "startedAt">,
+  playName: string,
+): boolean {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(call.prospectId, playName);
+  if (!cadence) return false;
+  const events = ledger.listSequenceEventsForProspectPlay(call.prospectId, playName);
+  const completed = events.some(
+    (e) =>
+      e.channel === "call" &&
+      tryParseJsonObject<{ callId?: unknown }>(e.metadata_json ?? "", {}).callId === call.id,
+  );
+  if (completed) return false;
+  // The current step began with the last event before it (or the enrolment).
+  const began = Math.max(
+    eventMs(cadence.enrolled_at),
+    ...events.filter((e) => e.step_index <= cadence.current_step).map((e) => eventMs(e.created_at)),
+  );
+  return !(Date.parse(call.startedAt) < began);
+}
+
 /** `holdUntil` ("YYYY-MM-DD", or an ISO time) as the instant the hold ends; the default when absent or past. */
 function holdUntilIso(raw: string | undefined, now: Date): string {
   const parsed = raw
@@ -459,8 +497,11 @@ function applyCallOutcome(
   if (existing?.outcome === "do_not_contact" && outcome !== "do_not_contact")
     throw new CallLogError("this call was logged do not contact; that stays", 409);
   // An existing call's own cadence, when it recorded one: never another
-  // cadence whose next step happens to be a call.
-  const stepPlay = callStepPlay(prospectId, existing?.playName ?? req.playName);
+  // cadence whose next step happens to be a call, and only the step it was
+  // made for.
+  const nextCall = callStepPlay(prospectId, existing?.playName ?? req.playName);
+  const stepPlay =
+    nextCall && existing && !callOwnsCurrentStep(existing, nextCall) ? null : nextCall;
   const playName = stepPlay ?? existing?.playName ?? req.playName ?? null;
   const country = defaultPhoneCountry(cfg);
   let callId: number;
@@ -521,7 +562,8 @@ function applyCallOutcome(
     }
     ledger.suppressCadencesForReply(prospectId);
   }
-  if (outcome === "meeting_booked") {
+  // A repeated log of the same booking records the meeting once.
+  if (outcome === "meeting_booked" && existing?.outcome !== "meeting_booked") {
     ledger.recordOutcome({
       prospectId,
       ...(playName ? { playName } : {}),
