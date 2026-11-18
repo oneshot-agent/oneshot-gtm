@@ -6,7 +6,7 @@ Until you allow a host, only the host machine can open the dashboards.
 
 ## What members can see
 
-Every member sees every workspace and can do everything in its dashboard: review, send, run finders, change Setup and spend from the wallet. There is no per-workspace access. The one exception is [LinkedIn conversations](#what-stays-private), which only the member who connected the account sees. Apart from that, `owner` and `member` differ only in the role the dashboard shows. Add the people you would hand the laptop to.
+Every member sees every workspace and can review, send, run finders, change workspace settings in Setup and spend from the wallet. Only owners can add or remove members or change their roles. There is no per-workspace access. The one exception is [LinkedIn conversations](#what-stays-private), which only the member who connected the account sees. Add the people you would hand the laptop to.
 
 The header names who is signed in; `GET /api/me` returns their email, name and role. The CLI stays on the host machine.
 
@@ -31,7 +31,9 @@ Server setup saves and play cadence/mail settings append a `config_changes` row 
 
 ## Add members
 
-Run these on the host. A member's email is their Tailscale login name, matched without regard to case.
+Open **Setup → Members** to see each member's email, name, role and added date, plus the allowed hosts. Owners can add a member by email, change their role, or remove them. New members start with the `member` role. The last owner cannot be removed or demoted; promote another member first. These protections also apply to the CLI.
+
+A member's email is their Tailscale login name, matched without regard to case. You can also run these on the host:
 
 ```bash
 bun run cli -- members add you@example.com --owner --name "Your Name"
@@ -100,5 +102,5 @@ Read from Tailscale's source (`ipn/ipnlocal/serve.go`), since the gate depends o
 
 ## Limits
 
-- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md).
+- **Other proxies.** With no host allowed, a proxy that rewrites `Host` to loopback reaches the server as before, unless it also sends a loopback `X-Forwarded-Host`. Once a host is allowed, it is refused if it adds `X-Forwarded-For`, `X-Forwarded-Host` or `Forwarded`. This includes a proxy in front of the [webhooks](./webhooks.md). Member routes (`/api/members` and its subpaths) always refuse this loopback proxy exception, even with no host allowed; use direct local access or an allowed host with a member identity. A public webhook proxy must forward only `/api/triggers/signup` and `/api/triggers/cal-no-show`, since the webhook secret does not protect other routes.
 - **One sign-in method.** Identity comes from Tailscale only.

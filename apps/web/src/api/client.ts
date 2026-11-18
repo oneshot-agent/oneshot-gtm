@@ -77,6 +77,7 @@ import type {
   QueueRowDetail,
   WorkspaceInfo,
   CurrentMember,
+  MembersView,
   WorkspaceCreateResult,
   DomainActionResult,
   DomainPoolView,
@@ -405,6 +406,11 @@ export const api = {
   // Who this browser is signed in as: the owner on the host machine, or the
   // member Tailscale named.
   me: () => getJson<CurrentMember>("/me"),
+  members: () => getJson<MembersView>("/members"),
+  addMember: (email: string) => postJson<{ ok: boolean }>("/members", { email }),
+  removeMember: (email: string) => postJson<{ ok: boolean }>("/members/remove", { email }),
+  setMemberRole: (email: string, role: CurrentMember["role"]) =>
+    postJson<{ ok: boolean }>("/members/role", { email, role }),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
   workspaceCreate: (name: string) => postJson<WorkspaceCreateResult>("/workspaces", { name }),
   workspaceLaunch: (name: string) =>
