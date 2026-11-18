@@ -99,3 +99,31 @@ it.each([403, 404, 409])(
     expect(render()).toContain("Write refused");
   },
 );
+
+it("clears a failed add error when its email changes", async () => {
+  setup(400);
+  form.submit();
+  await vi.waitFor(() => expect(observer.getCurrentResult().isError).toBe(true));
+  expect(render()).toContain("Write refused");
+  form.edit("corrected@example.com");
+  expect(form.email).toBe("corrected@example.com");
+  expect(render()).not.toContain("Write refused");
+});
+
+it("editing the add email preserves row-action and roster errors", async () => {
+  setup(404);
+  await expect(
+    observer.mutate({ action: "remove", email: "missing@example.com" } as never),
+  ).rejects.toThrow("Write refused");
+  render();
+  form.edit("corrected@example.com");
+  expect(render()).toContain("Write refused");
+  observer.reset();
+  client
+    .getQueryCache()
+    .find({ queryKey: ["members"] })!
+    .setState({ error: new Error("Roster unavailable"), status: "error" });
+  render();
+  form.edit("another@example.com");
+  expect(render()).toContain("Roster unavailable");
+});

@@ -167,7 +167,10 @@ export function MembersSection({ onDirtyChange }: { onDirtyChange: DirtyReporter
                 autoComplete="email"
                 placeholder="teammate@example.com"
                 disabled={mutation.isPending || query.isError}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (mutation.isError && mutation.variables?.action === "add") mutation.reset();
+                }}
                 {...readOnly}
               />
             </Field>
