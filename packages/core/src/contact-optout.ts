@@ -5,6 +5,13 @@ function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
 }
 
+/** Whether prospects carry a shared person id (only a ledger in the shared registry does). */
+function hasSharedPerson(db: Database): boolean {
+  return (db.query("PRAGMA table_info(prospects)").all() as Array<{ name: string }>).some(
+    (c) => c.name === "shared_person_id",
+  );
+}
+
 /** Opt-outs override every campaign, including historical human/replied signals. */
 export function contactAllowedClause(db: Database): string {
   const clauses: string[] = [];
@@ -34,10 +41,15 @@ export function contactAllowedClause(db: Database): string {
       AND (ir.prospect_id = p.id OR lower(ir.from_email) = lower(p.email)))`);
   }
   // Asked on a call not to be contacted again (ledger-calls.ts): every
-  // channel, whether or not a cadence was running to stop.
+  // channel, whether or not a cadence was running to stop. The person's,
+  // so it holds their other rows here too (legacy aliases of one person).
   if (hasTable(db, "calls"))
     clauses.push(`NOT EXISTS (
-    SELECT 1 FROM calls cl WHERE cl.prospect_id = p.id AND cl.outcome = 'do_not_contact')`);
+    SELECT 1 FROM calls cl WHERE cl.outcome = 'do_not_contact' AND (cl.prospect_id = p.id${
+      hasSharedPerson(db)
+        ? ` OR cl.prospect_id IN (SELECT o.id FROM prospects o WHERE o.shared_person_id = p.shared_person_id)`
+        : ""
+    }))`);
   // Sync may have persisted a verdict before the cadence poll consumes it.
   if (
     db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_messages'").get()
@@ -76,6 +88,7 @@ export function contactAllowedSetClause(db: Database): string {
       emails.push(`SELECT lower(from_email) AS email FROM inbox_replies WHERE ${said}`);
     }
   }
+  const callPeople = hasTable(db, "calls") && hasSharedPerson(db);
   if (hasTable(db, "calls"))
     ids.push(`SELECT prospect_id AS id FROM calls WHERE outcome = 'do_not_contact'`);
   if (hasTable(db, "mailbox_messages")) {
@@ -88,6 +101,10 @@ export function contactAllowedSetClause(db: Database): string {
   const clauses: string[] = [];
   if (ids.length)
     clauses.push(`p.id NOT IN (SELECT id FROM (${ids.join(" UNION ")}) WHERE id IS NOT NULL)`);
+  if (callPeople)
+    clauses.push(`(p.shared_person_id IS NULL OR p.shared_person_id NOT IN (
+      SELECT o.shared_person_id FROM calls cl JOIN prospects o ON o.id = cl.prospect_id
+       WHERE cl.outcome = 'do_not_contact' AND o.shared_person_id IS NOT NULL))`);
   if (emails.length)
     clauses.push(
       `(p.email IS NULL OR lower(p.email) NOT IN (SELECT email FROM (${emails.join(" UNION ")}) WHERE email IS NOT NULL))`,

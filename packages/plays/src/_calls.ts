@@ -400,6 +400,17 @@ function callOwnsCurrentStep(
   return !(Date.parse(call.startedAt) < began);
 }
 
+/**
+ * Whether the log may complete `playName`'s call step as the request
+ * describes it: `currentStep` (the step the row was opened on) must still be
+ * current; null says none was due then. Absent, any next call step may be.
+ */
+function openedOnStep(prospectId: number, req: LogCallRequest, playName: string): boolean {
+  if (req.currentStep === undefined) return true;
+  if (req.currentStep === null || req.playName !== playName) return false;
+  return getLedger().getCadence(prospectId, playName)?.current_step === req.currentStep;
+}
+
 /** `holdUntil` ("YYYY-MM-DD", or an ISO time) as the instant the hold ends; the default when absent or past. */
 function holdUntilIso(raw: string | undefined, now: Date): string {
   const parsed = raw
@@ -424,10 +435,10 @@ export class CallLogError extends Error {
 /**
  * Log a call's outcome: the `calls` row, a `call` channel touch, and the call
  * step when it is next. Each outcome moves or stops cadences as a sent step or
- * a reply would (table in docs/calls.md). do_not_contact is final: a later log
- * that changes it is refused (409). A new call records `req.phone`, the number
- * actually dialled, so a wrong_number lands on it even if the stored one
- * changed since.
+ * a reply would (docs/calls.md). do_not_contact is final (a change is a 409).
+ * A new call records `req.phone`, the number dialled, so a wrong_number lands
+ * on it even if the stored one changed; one that does not parse is a 400. A
+ * save whose `clientKey` was written already is a log on that call.
  */
 export function recordCall(
   prospectId: number,
@@ -446,10 +457,12 @@ export function recordCall(
     typeof req.durationSec === "number" && Number.isFinite(req.durationSec) && req.durationSec >= 0
       ? Math.round(req.durationSec)
       : null;
+  const phone = req.phone?.trim() ? normalizePhone(req.phone, defaultPhoneCountry(cfg)) : null;
+  if (req.phone?.trim() && !phone) throw new CallLogError("phone is not a number to dial", 400);
   // One transaction: the call row, its touch and what the outcome does to
   // the cadences land together, or none of them does.
   const { callId, stepPlay } = ledger.inTransaction(() =>
-    applyCallOutcome(prospectId, req, { outcome, note, durationSec, cfg, now, member }),
+    applyCallOutcome(prospectId, req, { outcome, note, durationSec, phone, cfg, now, member }),
   );
   logEvent("call.logged", { prospect_id: prospectId, outcome, cadence_step: stepPlay != null });
   return ledger.getCall(callId)!;
@@ -463,6 +476,8 @@ function applyCallOutcome(
     outcome: CallOutcome;
     note: string | null;
     durationSec: number | null;
+    /** `req.phone` as E.164; null when it was not sent. */
+    phone: string | null;
     cfg: OneShotConfig;
     now: Date;
     member: string | null;
@@ -470,25 +485,34 @@ function applyCallOutcome(
 ): { callId: number; stepPlay: string | null } {
   const ledger = getLedger();
   const { outcome, note, durationSec, cfg, now, member } = ctx;
-  const existing = req.callId != null ? ledger.getCall(req.callId) : null;
-  if (req.callId != null && existing?.prospectId !== prospectId)
+  const replayed =
+    req.callId == null && req.clientKey ? ledger.callByClientKey(req.clientKey) : null;
+  if (replayed && replayed.prospectId !== prospectId)
+    throw new CallLogError("that save belongs to another prospect's call", 409);
+  const existingId = req.callId ?? replayed?.id ?? null;
+  const existing = existingId != null ? ledger.getCall(existingId) : null;
+  if (existingId != null && existing?.prospectId !== prospectId)
     throw new CallLogError("call not found", 404);
   if (existing?.outcome === "do_not_contact" && outcome !== "do_not_contact")
     throw new CallLogError("this call was logged do not contact; that stays", 409);
   // An existing call's own cadence, when it recorded one: never another
   // cadence whose next step happens to be a call, and only the step it was
-  // made for.
+  // made for: the one its row was opened on, when the request names it.
   const nextCall = callStepPlay(prospectId, existing?.playName ?? req.playName);
   const stepPlay =
-    nextCall && existing && !callOwnsCurrentStep(existing, nextCall) ? null : nextCall;
+    nextCall &&
+    (!existing || callOwnsCurrentStep(existing, nextCall)) &&
+    openedOnStep(prospectId, req, nextCall)
+      ? nextCall
+      : null;
   const playName = stepPlay ?? existing?.playName ?? req.playName ?? null;
   const country = defaultPhoneCountry(cfg);
   let callId: number;
   let dialled: string | null;
-  if (req.callId != null) {
+  if (existingId != null) {
     if (
       !ledger.setCallOutcome({
-        id: req.callId,
+        id: existingId,
         prospectId,
         outcome,
         note,
@@ -498,11 +522,10 @@ function applyCallOutcome(
       })
     )
       throw new CallLogError("call not found", 404);
-    callId = req.callId;
+    callId = existingId;
     dialled = ledger.callPhone(callId);
   } else {
-    const number = phoneForCall(prospectId, cfg);
-    dialled = normalizePhone(req.phone, country) ?? number.phone ?? number.raw;
+    dialled = ctx.phone ?? phoneForCall(prospectId, cfg).phone;
     callId = ledger.insertCall({
       prospectId,
       playName,
@@ -514,6 +537,7 @@ function applyCallOutcome(
       provider: "tel",
       member,
       commitments: req.commitments ?? null,
+      clientKey: req.clientKey ?? null,
     });
   }
   const nowIso = now.toISOString();
@@ -537,10 +561,24 @@ function applyCallOutcome(
       ledger.holdCadence({ prospectId, playName: c.play_name, until, reason: "not-now" });
     }
   }
-  if (outcome === "interested" || outcome === "meeting_booked" || outcome === "not_interested") {
+  const replyLike =
+    outcome === "interested" || outcome === "meeting_booked" || outcome === "not_interested";
+  // A call that completed its step earlier (the cadence has moved on since)
+  // keeps that step's record in step with the outcome it now has.
+  const ownStep =
+    existing && !stepPlay
+      ? ledger.updateCallStepEvent({
+          prospectId,
+          callId,
+          outcome,
+          replied: replyLike,
+          repliedAt: nowIso,
+        })
+      : null;
+  if (replyLike) {
     // Credited like an email reply: to the call step when it was one, else
     // to the latest email the person was sent.
-    const credited = stepPlay ?? ledger.latestSentPlayForProspect(prospectId);
+    const credited = stepPlay ?? (ownStep ? null : ledger.latestSentPlayForProspect(prospectId));
     if (credited) {
       ledger.markLatestStepReplied({
         prospectId,
@@ -623,8 +661,8 @@ export function listCalls(
   });
   // One opt-out read for every due row, not one per row.
   const allowed = ledger.callAllowedIds([...new Set(dueCalls.map((d) => d.cad.prospect_id))]);
+  // One row per due cadence: a person due in two plays has two, each logging its own step.
   for (const { cad, next } of dueCalls) {
-    if (dueIds.has(cad.prospect_id)) continue;
     if (!allowed.has(cad.prospect_id) || blocked(cad.prospect_id, cad.prospect_email)) continue;
     const phone = phoneForCall(cad.prospect_id, cfg);
     dueIds.add(cad.prospect_id);
@@ -637,6 +675,7 @@ export function listCalls(
       queueId: phone.queueId,
       local: local(phone.phone),
       playName: cad.play_name,
+      currentStep: cad.current_step,
       section: "due",
       reason: `due: ${next.label ?? "call"} · ${cad.play_name}`,
       lastTouchAt: null,
@@ -666,6 +705,7 @@ export function listCalls(
       queueId: phone.queueId ?? c.queueId,
       local: local(phone.phone),
       playName: null,
+      currentStep: null,
       section: "list",
       reason: tierReason(c),
       lastTouchAt: c.lastTouchAt,

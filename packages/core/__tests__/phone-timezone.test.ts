@@ -179,6 +179,14 @@ describe("phoneLocalTime", () => {
     expect(out.opensAt).toBe("2026-10-25T00:30:00.000Z");
   });
 
+  it("zones that never share the window are out of it, with no opening", () => {
+    // Boise 09:00 is 08:00 in Los Angeles; Los Angeles 09:00 is Boise 10:00.
+    const window = { start: "09:00", end: "10:00", weekdays: false };
+    const out = phoneLocalTime("+12085550100", window, new Date("2026-11-17T16:30:00Z"));
+    expect(out.zones.length).toBeGreaterThan(1);
+    expect(out).toMatchObject({ inWindow: false, opensAt: null, localTime: expect.any(String) });
+  });
+
   it("an unknown number reads as in the window with no zone", () => {
     expect(phoneLocalTime("+999123456789", WINDOW)).toEqual({
       zones: [],

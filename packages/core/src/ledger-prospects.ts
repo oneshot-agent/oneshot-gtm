@@ -388,6 +388,18 @@ export class ProspectStore {
     );
   }
 
+  /** The rows bound to the same shared person as this one (itself included); none when it has none. */
+  samePersonIds(id: number): number[] {
+    return (
+      this.db
+        .query(
+          `SELECT o.id FROM prospects p JOIN prospects o ON o.shared_person_id = p.shared_person_id
+            WHERE p.id = ?`,
+        )
+        .all(id) as Array<{ id: number }>
+    ).map((r) => r.id);
+  }
+
   /** Full prospect record by any verified email alias of the shared person. */
   getProspectByEmail(email: string): ProspectRecord | null {
     return (

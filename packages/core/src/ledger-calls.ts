@@ -65,6 +65,7 @@ interface CallRow {
   phone: string | null;
   provider: string;
   provider_call_sid: string | null;
+  client_key: string | null;
   recording_sid: string | null;
   transcript_status: string;
   transcript_json: string | null;
@@ -151,14 +152,16 @@ export function insertCall(
     memberPhone?: string | null;
     statusReason?: string | null;
     commitments?: readonly string[] | null;
+    /** The dashboard's id for this save (`callByClientKey`). */
+    clientKey?: string | null;
   },
 ): number {
   const result = db
     .prepare(
       `INSERT INTO calls (prospect_id, play_name, started_at, duration_sec, outcome, reply_intent,
                           note, phone, provider, provider_call_sid, member, status, transcript_status,
-                          member_phone, status_reason, commitments_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          member_phone, status_reason, commitments_json, client_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.prospectId,
@@ -177,8 +180,55 @@ export function insertCall(
       input.memberPhone ?? null,
       input.statusReason ?? null,
       input.commitments ? JSON.stringify(input.commitments) : null,
+      input.clientKey ?? null,
     );
   return Number(result.lastInsertRowid);
+}
+
+/** The call a save with this key already wrote, if any: a retried save logs on it. */
+export function callByClientKey(db: Database, clientKey: string): CallRecordView | null {
+  const row = db.query("SELECT * FROM calls WHERE client_key = ?").get(clientKey) as CallRow | null;
+  return row ? toView(row) : null;
+}
+
+/**
+ * The call step a logged call completed, brought up to a changed outcome:
+ * its `metadata.outcome`, and `replied` for an outcome that counts as a
+ * reply (unless the play already has a replied step, as
+ * `markLatestStepReplied`). Returns the step's play; null when the call
+ * completed no step.
+ */
+export function updateCallStepEvent(
+  db: Database,
+  input: {
+    prospectId: number;
+    callId: number;
+    outcome: CallOutcome;
+    replied: boolean;
+    repliedAt?: string | null;
+  },
+): string | null {
+  const event = db
+    .query(
+      `SELECT id, play_name FROM sequence_events
+        WHERE prospect_id = ? AND channel = 'call' AND json_valid(metadata_json)
+          AND json_extract(metadata_json, '$.callId') = ?
+        ORDER BY id DESC LIMIT 1`,
+    )
+    .get(input.prospectId, input.callId) as { id: number; play_name: string } | null;
+  if (!event) return null;
+  db.prepare(
+    "UPDATE sequence_events SET metadata_json = json_set(metadata_json, '$.outcome', ?) WHERE id = ?",
+  ).run(input.outcome, event.id);
+  if (input.replied) {
+    db.prepare(
+      `UPDATE sequence_events SET status = 'replied', replied_at = datetime(COALESCE(?, 'now'))
+        WHERE id = ? AND status IN ('sent', 'delivered')
+          AND NOT EXISTS (SELECT 1 FROM sequence_events
+                           WHERE prospect_id = ? AND play_name = ? AND status = 'replied')`,
+    ).run(input.repliedAt ?? null, event.id, input.prospectId, event.play_name);
+  }
+  return event.play_name;
 }
 
 /**

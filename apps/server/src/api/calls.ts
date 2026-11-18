@@ -34,6 +34,8 @@ const MAX_COMMITMENTS = 10;
 const MAX_COMMITMENT_CHARS = 300;
 /** Longest dialled number read: a number with its extension fits. */
 const MAX_PHONE_CHARS = 64;
+/** A save's id from the dashboard. */
+const CLIENT_KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
 export function listCallsRoute(req: Request): Response {
   try {
@@ -147,6 +149,20 @@ export async function logCallRoute(
       400,
       req,
     );
+  const currentStep = body["currentStep"];
+  if (
+    currentStep !== undefined &&
+    currentStep !== null &&
+    (typeof currentStep !== "number" || !Number.isInteger(currentStep) || currentStep < 0)
+  )
+    return jsonResponse({ error: "currentStep must be a step index" }, 400, req);
+  const clientKey = body["clientKey"];
+  if (
+    clientKey !== undefined &&
+    clientKey !== null &&
+    (typeof clientKey !== "string" || !CLIENT_KEY_RE.test(clientKey))
+  )
+    return jsonResponse({ error: "clientKey must be 8–64 letters, digits, - or _" }, 400, req);
   const request: LogCallRequest = {
     outcome: body["outcome"],
     ...(typeof note === "string" ? { note } : {}),
@@ -158,6 +174,8 @@ export async function logCallRoute(
     ...(Array.isArray(commitments)
       ? { commitments: (commitments as string[]).map((c) => c.trim()).filter(Boolean) }
       : {}),
+    ...(currentStep !== undefined ? { currentStep: currentStep as number | null } : {}),
+    ...(typeof clientKey === "string" ? { clientKey } : {}),
   };
   try {
     const member = currentMember(req)?.email ?? null;

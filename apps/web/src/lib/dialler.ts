@@ -103,19 +103,43 @@ export function beginCall(
   return false;
 }
 
+/** Which row: a person due in two plays has a Due row for each. */
+export type RowKey = Pick<CallListRow, "prospectId" | "playName">;
+
+export function sameRow(a: RowKey, b: RowKey): boolean {
+  return a.prospectId === b.prospectId && (a.playName ?? null) === (b.playName ?? null);
+}
+
+/** A row as a string, for React keys and maps. */
+export function rowId(row: RowKey): string {
+  return `${row.prospectId}|${row.playName ?? ""}`;
+}
+
 /** The row after this one in its own section; null at the end. */
-export function nextRow(rows: CallListRow[], prospectId: number): CallListRow | null {
-  const i = rows.findIndex((r) => r.prospectId === prospectId);
+export function nextRow(rows: CallListRow[], row: RowKey): CallListRow | null {
+  const i = rows.findIndex((r) => sameRow(r, row));
   return i === -1 ? null : (rows[i + 1] ?? null);
 }
 
-/** The section that holds this prospect, Due first. */
-export function sectionRows(data: CallListResponse, prospectId: number): CallListRow[] {
-  return data.due.some((r) => r.prospectId === prospectId) ? data.due : data.list;
+/** The section that holds this row. */
+export function sectionRows(
+  data: CallListResponse,
+  row: Pick<CallListRow, "section">,
+): CallListRow[] {
+  return row.section === "due" ? data.due : data.list;
 }
 
-export function findRow(data: CallListResponse, prospectId: number): CallListRow | null {
-  return [...data.due, ...data.list].find((r) => r.prospectId === prospectId) ?? null;
+/**
+ * The row to open: the Due row of this play when one is named (a cadence's
+ * "Open call"), else the person's first row, Due first.
+ */
+export function findRow(
+  data: CallListResponse,
+  prospectId: number,
+  playName?: string,
+): CallListRow | null {
+  const rows = [...data.due, ...data.list].filter((r) => r.prospectId === prospectId);
+  return (playName ? rows.find((r) => r.playName === playName) : undefined) ?? rows[0] ?? null;
 }
 
 /** "4:07" */
@@ -235,6 +259,9 @@ export function logCallRequest(
     callId?: number | null;
     /** A bridged call: the suggested promises kept; null when there were none to keep. */
     commitments?: string[] | null;
+    /** The row's `currentStep`: null on the call list, where no step is due. */
+    currentStep?: number | null;
+    clientKey?: string;
   },
 ): LogCallRequest | null {
   if (!state.outcome) return null;
@@ -247,8 +274,19 @@ export function logCallRequest(
     ...(opts.playName ? { playName: opts.playName } : {}),
     ...(opts.phone ? { phone: opts.phone } : {}),
     ...(opts.commitments ? { commitments: opts.commitments } : {}),
+    ...(opts.currentStep !== undefined ? { currentStep: opts.currentStep } : {}),
+    ...(opts.clientKey ? { clientKey: opts.clientKey } : {}),
     ...(state.outcome === "not_now" && state.holdUntil ? { holdUntil: state.holdUntil } : {}),
   };
+}
+
+/**
+ * A new id for one save. `getRandomValues`, not `randomUUID`: the dashboard
+ * may be served over plain http on a tailnet, where only the former exists.
+ */
+export function newSaveKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** When Call was pressed, for whom, and the number it dialled: the dial panel's timer. */
@@ -268,4 +306,16 @@ export function timerAfterLog(
   logged: { prospectId: number; at: number | null },
 ): CallTimer | null {
   return timer && timer.prospectId === logged.prospectId && timer.at === logged.at ? null : timer;
+}
+
+/** Each prospect's started call: a log spends only that prospect's (`timerAfterLog`). */
+export function timersAfterLog(
+  timers: Readonly<Record<number, CallTimer>>,
+  logged: { prospectId: number; at: number | null },
+): Record<number, CallTimer> {
+  const timer = timers[logged.prospectId];
+  if (!timer || timerAfterLog(timer, logged)) return timers as Record<number, CallTimer>;
+  const rest = { ...timers };
+  delete rest[logged.prospectId];
+  return rest;
 }

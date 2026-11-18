@@ -28,6 +28,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_calls_client_key",
+      "sql": "CREATE UNIQUE INDEX idx_calls_client_key ON calls(client_key)
+          WHERE client_key IS NOT NULL",
+      "tbl_name": "calls",
+      "type": "index",
+    },
+    {
       "name": "idx_calls_outcome",
       "sql": "CREATE INDEX idx_calls_outcome ON calls(outcome)",
       "tbl_name": "calls",
@@ -489,6 +496,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
           phone              TEXT,
           provider           TEXT NOT NULL DEFAULT 'tel',
           provider_call_sid  TEXT,
+          client_key         TEXT,
           recording_sid      TEXT,
           transcript_status  TEXT NOT NULL DEFAULT 'none',
           transcript_json    TEXT,

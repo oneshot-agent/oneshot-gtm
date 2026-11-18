@@ -914,8 +914,10 @@ export function setCadenceDraft(
      * paid completion of several seconds, and the cadence may move on in that
      * time (a send, a logged call, a stop and re-enrol): then nothing is
      * stored, so a draft never lands on the step after the one it was for.
+     * `stepId` is the plan step it was written for: a settings change can
+     * replace the step at the same index of a saved plan.
      */
-    expect?: { currentStep: number; enrolledAt: string };
+    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
   },
 ): boolean {
   const draftedAtIso = new Date().toISOString();
@@ -940,6 +942,15 @@ export function setCadenceDraft(
           now.enrolled_at !== input.expect.enrolledAt
         )
           return false;
+        if (input.expect.stepId !== undefined) {
+          const plan = db
+            .query(
+              "SELECT steps FROM cadence_plans WHERE prospect_id=? AND play_name=? AND enrollment=?",
+            )
+            .get(input.prospectId, input.playName, now.enrolled_at) as { steps: string } | null;
+          const planned = plan ? (JSON.parse(plan.steps) as CadencePlanStep[]) : null;
+          if (planned && planned[now.current_step]?.id !== input.expect.stepId) return false;
+        }
       }
       // Seed from the preview this write replaces (a draft that predates
       // versioning) before the UPDATE erases it.

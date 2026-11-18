@@ -150,6 +150,8 @@ import {
 } from "./ledger-outcomes.ts";
 import {
   callAllowed as callsCallAllowed,
+  callByClientKey as callsCallByClientKey,
+  updateCallStepEvent as callsUpdateCallStepEvent,
   callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
   callPhone as callsCallPhone,
@@ -850,7 +852,7 @@ export class Ledger {
     /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
     discardReason?: DraftDiscardReason;
     /** Store only while the cadence is still on this step of this enrolment (ledger-cadence.ts). */
-    expect?: { currentStep: number; enrolledAt: string };
+    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
   }): boolean {
     return cadSetCadenceDraft(this.db, this.drafts, input);
   }
@@ -1477,11 +1479,23 @@ export class Ledger {
    *
    * An opt-out (an unsubscribe reply, a call logged do-not-contact) is the
    * person's: it holds every verified address `findProspectByEmail` resolves
-   * to them. A dead mailbox (auto_permanent) holds only the address it came
-   * from.
+   * to them, and every local row of that person. A dead mailbox
+   * (auto_permanent) holds only the address it came from.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
-    return delivContactSuppressionFor(this.db, email, this.findProspectByEmail(email)?.id ?? null);
+    return delivContactSuppressionFor(this.db, email, this.personProspectIds(email));
+  }
+
+  /**
+   * The local prospect rows an address belongs to: the one it resolves to
+   * and, in the shared registry, every other row of the same person (legacy
+   * aliases keep their own rows and emails in one workspace).
+   */
+  private personProspectIds(email: string): number[] {
+    const found = this.findProspectByEmail(email);
+    if (!found) return [];
+    if (!this.people) return [found.id];
+    return [...new Set([found.id, ...this.prospects.samePersonIds(found.id)])];
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
@@ -1914,6 +1928,16 @@ export class Ledger {
   /** @see ledger-calls.ts#setCallOutcome */
   setCallOutcome(input: Parameters<typeof callsSetCallOutcome>[1]): boolean {
     return callsSetCallOutcome(this.db, input);
+  }
+
+  /** @see ledger-calls.ts#callByClientKey */
+  callByClientKey(clientKey: string): CallRecordView | null {
+    return callsCallByClientKey(this.db, clientKey);
+  }
+
+  /** @see ledger-calls.ts#updateCallStepEvent */
+  updateCallStepEvent(input: Parameters<typeof callsUpdateCallStepEvent>[1]): string | null {
+    return callsUpdateCallStepEvent(this.db, input);
   }
 
   /** @see ledger-calls.ts#getCall */

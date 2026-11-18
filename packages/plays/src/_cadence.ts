@@ -2482,14 +2482,6 @@ export async function previewCadenceStep(input: {
   }
   const seq = effectiveSequence(input.playName, input.prospectId);
   if (!seq) throw new Error(`no registered sequence for play '${input.playName}'`);
-  // The draft is stored only if the cadence is still on this step when the
-  // (paid, slow) completion returns.
-  const guarded = {
-    ...input,
-    ...(typeof cadence.enrolled_at === "string"
-      ? { expect: { currentStep: cadence.current_step, enrolledAt: cadence.enrolled_at } }
-      : {}),
-  };
   const nextIndex = cadence.current_step + 1;
   const stepEntryIndex = nextIndex - 1;
   if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) {
@@ -2497,6 +2489,20 @@ export async function previewCadenceStep(input: {
   }
   const step = seq.steps[stepEntryIndex];
   if (!step) throw new Error("step undefined");
+  // The draft is stored only if the cadence is still on this step when the
+  // (paid, slow) completion returns: the same index, enrolment and plan step.
+  const guarded = {
+    ...input,
+    ...(typeof cadence.enrolled_at === "string"
+      ? {
+          expect: {
+            currentStep: cadence.current_step,
+            enrolledAt: cadence.enrolled_at,
+            stepId: step.id ?? `base:${nextIndex}`,
+          },
+        }
+      : {}),
+  };
   // A call's brief is worth reading before a number is found (Find phone).
   const missing = step.channel === "call" ? null : missingAddress(step.channel, cadence);
   const continuationInvite =
@@ -2728,7 +2734,7 @@ function storePreview(
     prospectId: number;
     playName: string;
     rotateAngle?: boolean;
-    expect?: { currentStep: number; enrolledAt: string };
+    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
   },
   cfg: ReturnType<typeof loadConfig>,
   seq: Sequence,

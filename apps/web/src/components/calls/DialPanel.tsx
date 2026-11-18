@@ -42,6 +42,7 @@ import {
   localTimeNow,
   outcomeTitle,
   windowHint,
+  type RowKey,
 } from "../../lib/dialler.ts";
 import { humanizeFlag } from "../../lib/flagLabels.ts";
 import { useMask, usePrivacy } from "../../lib/privacy.tsx";
@@ -68,14 +69,14 @@ export const callKey = (id: number | null) => ["call", id];
  */
 export async function saveCall(
   log: (prospectId: number, req: LogCallRequest) => Promise<unknown>,
-  row: Pick<CallListRow, "prospectId">,
+  row: RowKey,
   req: LogCallRequest,
-  next: Pick<CallListRow, "prospectId"> | null,
-  open: (prospectId: number | null) => void,
-  isOpen: (prospectId: number) => boolean,
+  next: RowKey | null,
+  open: (row: RowKey | null) => void,
+  isOpen: (row: RowKey) => boolean,
 ): Promise<void> {
   await log(row.prospectId, req);
-  if (isOpen(row.prospectId)) open(next?.prospectId ?? null);
+  if (isOpen(row)) open(next);
 }
 
 /**
@@ -106,6 +107,7 @@ export function DialPanel({
   onRefresh,
   startedAt,
   dialledPhone,
+  saveKey,
   onStart,
   onLogged,
   onOpen,
@@ -123,15 +125,17 @@ export function DialPanel({
   startedAt: number | null;
   /** The number Call dialled, captured when it was pressed; null before. */
   dialledPhone: string | null;
+  /** This row's next save id, held by the page: a retry, even from a remounted panel, sends the same. */
+  saveKey: string;
   onStart: (phone: string | null) => void;
   /**
-   * A call was logged for this prospect: the timer it was submitted with
-   * (`startedAt` then) is spent, so a later log never reuses it.
+   * A call was logged for this row: the timer (`startedAt` then) and the
+   * save id it was submitted with are spent, so a later log reuses neither.
    */
-  onLogged: (prospectId: number, startedAt: number | null) => void;
-  onOpen: (prospectId: number | null) => void;
-  /** Whether this prospect is still the open row. */
-  isOpen: (prospectId: number) => boolean;
+  onLogged: (row: RowKey, startedAt: number | null, saveKey: string) => void;
+  onOpen: (row: RowKey | null) => void;
+  /** Whether this row is still the open one. */
+  isOpen: (row: RowKey) => boolean;
 }) {
   const qc = useQueryClient();
   const mask = useMask();
@@ -258,7 +262,7 @@ export function DialPanel({
     mutationFn: ({ req }: { req: LogCallRequest; timer: number | null }) =>
       saveCall(api.logCall, row, req, next, onOpen, isOpen),
     onSuccess: (_data, { req, timer }) => {
-      onLogged(row.prospectId, timer);
+      onLogged(row, timer, req.clientKey ?? "");
       void qc.invalidateQueries({ queryKey: ["calls"] });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });
@@ -266,6 +270,10 @@ export function DialPanel({
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
   });
+  // The step the row was opened on, for the call started from it: a bridged
+  // call reopened from another row lets the server judge its step.
+  const sameRowCall = !call || (call.playName ?? null) === (row.playName ?? null);
+  const step = sameRowCall ? { currentStep: row.currentStep } : {};
   const bridgedOpts = call
     ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
     : null;
@@ -274,12 +282,16 @@ export function DialPanel({
     bridgedOpts
       ? {
           ...bridgedOpts,
+          ...step,
+          clientKey: saveKey,
           commitments: commitmentsToSend(call?.suggestion ?? null, commitments, masked),
         }
       : {
           durationSec: startedAt != null ? elapsed : null,
           playName: row.playName,
           phone: dialledNumber(startedAt, dialledPhone, row.phone),
+          currentStep: row.currentStep,
+          clientKey: saveKey,
         },
   );
   const holdSave = saveHeld(call, { pollFailed: live.error != null, starting: ring.isPending });

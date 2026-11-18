@@ -99,8 +99,9 @@ function hasIntentColumn(db: Database): boolean {
  * ledgers without intent fall back to kind.
  *
  * An opt-out is the person's: an unsubscribe reply or a do-not-contact call
- * recorded against `prospectId` holds every address they resolve from. A
- * dead mailbox (auto_permanent) is the address's alone, matched by address.
+ * recorded against any of `prospectIds` holds every address they resolve
+ * from. A dead mailbox (auto_permanent) is the address's alone, matched by
+ * address.
  *
  * Return the suppression reason, not the raw kind. An intent-only unsubscribe
  * must report unsubscribe so callers do not label the opt-out as a bounce.
@@ -109,13 +110,15 @@ export function contactSuppressionFor(
   db: Database,
   email: string,
   /**
-   * The prospect the address resolves to through its verified aliases
-   * (`Ledger.findProspectByEmail`): an opt-out recorded against them counts
-   * when the send goes to another of their addresses. Null when unknown.
+   * Every local prospect the address resolves to through its verified
+   * aliases (`Ledger.contactSuppressionFor`): an opt-out recorded against
+   * any of them counts when the send goes to another of their addresses.
    */
-  prospectId: number | null = null,
+  prospectIds: readonly number[] = [],
 ): { kind: string; received_at: string } | null {
   const intentClause = hasIntentColumn(db) ? " OR intent = 'unsubscribe'" : "";
+  const ids = prospectIds.map((id) => Math.trunc(Number(id))).filter(Number.isFinite);
+  const person = ids.length > 0 ? `prospect_id IN (${ids.join(",")})` : "0";
   const replied =
     (db
       .query(
@@ -125,10 +128,10 @@ export function contactSuppressionFor(
          FROM inbox_replies
          WHERE ((from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
                 AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause}))
-            OR (prospect_id = ? AND (kind = 'unsubscribe'${intentClause}))
+            OR (${person} AND (kind = 'unsubscribe'${intentClause}))
          ORDER BY received_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email), canonEmail(email), prospectId) as {
+      .get(canonEmail(email), canonEmail(email)) as {
       kind: string;
       received_at: string;
     }) ?? null;
@@ -142,10 +145,10 @@ export function contactSuppressionFor(
       .query(
         `SELECT 'unsubscribe' AS kind, started_at AS received_at FROM calls
           WHERE outcome = 'do_not_contact'
-            AND (prospect_id IN (SELECT id FROM prospects WHERE email = ?) OR prospect_id = ?)
+            AND (prospect_id IN (SELECT id FROM prospects WHERE email = ?) OR ${person})
           ORDER BY started_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email), prospectId) as { kind: string; received_at: string } | null) ?? null
+      .get(canonEmail(email)) as { kind: string; received_at: string } | null) ?? null
   );
 }
 

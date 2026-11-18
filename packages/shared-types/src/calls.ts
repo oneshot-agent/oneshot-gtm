@@ -49,7 +49,7 @@ export interface CallLocalTime {
   localTime: string | null;
   /** True when it is inside the workspace's call window in every zone (true when unknown). */
   inWindow: boolean;
-  /** ISO time the window next opens, when outside it. */
+  /** ISO time the window next opens, when outside it; null when its zones never share an opening. */
   opensAt: string | null;
 }
 
@@ -66,6 +66,8 @@ export interface CallListRow {
   local: CallLocalTime;
   /** The cadence this call belongs to, when it is a due call step. */
   playName: string | null;
+  /** That cadence's `current_step` when the row was read: a log completes only this step. Null on the call list. */
+  currentStep: number | null;
   /** "due" = a cadence call step is due now; "list" = anyone else with a number. */
   section: "due" | "list";
   /** Why this row ranks where it does ("replied: interested", "LinkedIn connected", …). */
@@ -126,6 +128,14 @@ export interface LogCallRequest {
   phone?: string;
   /** A bridged call: the suggested promises the member kept when saving. */
   commitments?: string[];
+  /**
+   * The step `playName`'s cadence was on when the row was opened: the call
+   * completes that step only while it is still current. Null: no step was
+   * due then, so none is completed. Absent: whichever call step is next.
+   */
+  currentStep?: number | null;
+  /** The dashboard's id for this save, the same on a retry: the server writes one call for it. */
+  clientKey?: string;
 }
 
 /**
