@@ -8,8 +8,9 @@ import {
 } from "../src/components/shell/WorkspaceSwitcher.tsx";
 
 // The switcher's popover is stateless, so a static render pins its markup and
-// its handlers can be called as the browser would. No DOM here: where focus
-// goes is decided by `formFocusTarget`, which the switcher's effect applies.
+// its handlers can be called as the browser would. No DOM here: this file pins
+// the decision `formFocusTarget` makes, and workspaceSwitcherFocus.test.tsx
+// mounts the switcher to check where focus actually lands.
 
 const row = (name: string, port: number, running: boolean) => ({
   name,
