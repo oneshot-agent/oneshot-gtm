@@ -925,12 +925,11 @@ const whole = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
- * `bridge` survives a Setup save. `record` is the only bridge key this form
- * sets (keys live in `.env`, phones in the shared database), and a bridge
- * switched off in config.json stays off. `cadenceStep: null` removes the
+ * `bridge` survives a Setup save; `record` is the only bridge key set here,
+ * and a bridge off in config.json stays off. `cadenceStep: null` removes the
  * step. A position under 2 (the first email is 1), a delay outside 0 to
- * `MAX_CALL_STEP_DAYS` whole days or a hold outside 1 to it, or a window
- * not two HH:MM times with the start first, is a 400.
+ * `MAX_CALL_STEP_DAYS` days or a hold outside 1 to it, or a window not two
+ * HH:MM times with the start first, is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],

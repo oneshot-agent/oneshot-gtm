@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../../packages/core/src/ledger.ts";
 import { getSharedDb } from "@oneshot-gtm/core";
@@ -345,6 +348,10 @@ describe("bridged-call routes", () => {
   });
 
   it("log a tel: call with the member who logged it", async () => {
+    // Its own shared database: the install's last owner can never be removed.
+    const sharedBefore = process.env["ONESHOT_GTM_SHARED"];
+    const dir = mkdtempSync(join(tmpdir(), "oneshot-gtm-calls-member-"));
+    process.env["ONESHOT_GTM_SHARED"] = dir;
     getSharedDb().addMember({ email: "owner@example.com", role: "owner" });
     try {
       const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
@@ -357,7 +364,9 @@ describe("bridged-call routes", () => {
         provider: "tel",
       });
     } finally {
-      getSharedDb().removeMember("owner@example.com");
+      if (sharedBefore === undefined) delete process.env["ONESHOT_GTM_SHARED"];
+      else process.env["ONESHOT_GTM_SHARED"] = sharedBefore;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
