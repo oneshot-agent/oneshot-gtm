@@ -451,6 +451,48 @@ describe("structured upstream failures", () => {
     expect(events.some((e) => e.kind === "oneshot.platform_resumed")).toBe(true);
   });
 
+  it("a recognized code outranks payment wording in the message", () => {
+    const verdict = Object.assign(new Error("payment rejected: insufficient_funds"), {
+      code: "invalid_input",
+    });
+    expect(classifyPlatformError(verdict)).toBeNull();
+    const auth = Object.assign(new Error("payment rejected: insufficient_funds"), {
+      code: "service_auth",
+    });
+    expect(classifyPlatformError(auth)).toMatchObject({ kind: "tool", reason: "service_auth" });
+  });
+
+  it("a service_auth failure from before an outage pause starts the 30-minute pause", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let fail: ((e: unknown) => void) | undefined;
+    const raw = {
+      webRead: vi.fn(async () => {
+        calls++;
+        if (calls === 1)
+          return new Promise<never>((_, reject) => {
+            fail = reject;
+          });
+        throw jobError("service_unavailable");
+      }),
+    };
+    const agent = watchAgent(raw);
+    const stale = agent.webRead().catch(() => {});
+    for (let i = 0; i < 6; i++) await agent.webRead().catch(() => {});
+    const outage = (await agent.webRead().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    expect(outage.retryAt).toBe(Date.now() + 60_000);
+    vi.setSystemTime(Date.now() + 10_000);
+    fail?.(jobError("service_auth"));
+    await stale;
+    const paused = (await agent.webRead().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    expect(paused.retryAt).toBe(Date.now() + 30 * 60_000);
+    expect(paused.message).toContain("support required");
+  });
+
   it("a call that started before a service_auth pause cannot end it early", async () => {
     vi.useFakeTimers();
     let release: (() => void) | undefined;

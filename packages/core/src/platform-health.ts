@@ -84,8 +84,12 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
   const name = str(e.name) ?? "";
   const message = err instanceof Error ? err.message : String(str(e.message) ?? err);
   const lower = message.toLowerCase();
+  const code = str(e.code);
+  // A recognized code outranks the message; payment wording alone only classifies uncoded errors.
+  const typed =
+    !!code && (TRANSIENT_TOOL_CODES.has(code) || VERDICT_CODES.has(code) || name === "JobError");
 
-  if (name === "PaymentError" || lower.includes("payment rejected")) {
+  if (name === "PaymentError" || (!typed && lower.includes("payment rejected"))) {
     const reason =
       str(e.reason) ?? /payment rejected:\s*([a-z0-9_]+)/i.exec(message)?.[1] ?? "payment rejected";
     const ids: Omit<PlatformError, "kind" | "reason"> = {};
@@ -101,7 +105,6 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
     if (network) ids.network = network;
     return { kind: WALLET_REASONS.test(reason) ? "wallet" : "payment", reason, ...ids };
   }
-  const code = str(e.code);
   if (code) {
     const requestId = str(e.jobId) ?? str(e.requestId);
     const ref = requestId ? { requestId } : {};
@@ -223,8 +226,12 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
     b.reason = failed.reason;
     b.requestId = failed.requestId;
     if (b.open) {
-      // The probe failed: wait another cooldown before the next one.
-      if (decides(b, now, probeId)) {
+      // The probe failed: wait another cooldown before the next one. A service_auth failure
+      // from any call starts the authentication pause from now, even inside a shorter pause.
+      const authLonger =
+        failed.reason === "service_auth" &&
+        (b.cooldownMs ?? PLATFORM_COOLDOWN_MS) < TOOL_AUTH_COOLDOWN_MS;
+      if (authLonger || decides(b, now, probeId)) {
         b.cooldownMs =
           failed.reason === "service_auth"
             ? TOOL_AUTH_COOLDOWN_MS
