@@ -122,11 +122,13 @@ function regexEnd(s: string, i: number): number {
 }
 
 /**
- * A code line's code and its trailing comment. Literals and inline block comments are kept verbatim,
- * so `//` or `#` inside them stays code and a change inside them stays a code change.
+ * A code line's code, and its comments as written: closed inline block comments and the trailing one.
+ * Literals stay verbatim in the code, so `//` or `#` inside them is code and a change inside them is a code change.
  */
 function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: string } {
   let code = '';
+  const comments: string[] = [];
+  const space = () => { if (code && !code.endsWith(' ')) code += ' '; };
   let i = 0;
   while (i < s.length) {
     const ch = s[i];
@@ -136,21 +138,28 @@ function splitTrailing(ext: 'c' | 'hash', s: string): { code: string; comment: s
       if (s[i + 1] === '/') break;
       if (s[i + 1] === '*') {
         const close = s.indexOf('*/', i + 2);
-        end = close < 0 ? s.length : close + 2;
+        if (close >= 0) {
+          comments.push(s.slice(i, close + 2));
+          space();
+          i = close + 2;
+          continue;
+        }
+        end = s.length;
       } else if (REGEX_BEFORE.test(code)) end = regexEnd(s, i);
     } else if (ext === 'hash' && ch === '#' && /\s/.test(s[i - 1] ?? '')) break;
     if (end > i) {
       code += s.slice(i, end);
       i = end;
     } else if (/\s/.test(ch)) {
-      code += ' ';
+      space();
       while (/\s/.test(s[i] ?? '')) i++;
     } else {
       code += ch;
       i++;
     }
   }
-  return { code: code.trim(), comment: s.slice(i) };
+  if (i < s.length) comments.push(s.slice(i));
+  return { code: code.trim(), comment: comments.join(' ') };
 }
 
 function kindOf(file: string | null): 'c' | 'hash' | null {

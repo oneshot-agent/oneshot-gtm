@@ -15,6 +15,8 @@ function added(file: string, lines: string[], removed: string[] = []): string {
 const notes = (n: number, mark = "// old") =>
   Array.from({ length: n }, (_, i) => `${mark} note ${i}`);
 const counts = (r: CommentDensity) => [r.code, r.comments, r.removedComments];
+const member = (note: string) =>
+  `| { ok: true; input: Record<string, unknown>; /** \`fresh: true\` in the params: ${note} */ fresh: boolean }`;
 
 describe("comment-density trailing comments", () => {
   it("changing only the trailing comment of a code line adds no code", () => {
@@ -68,7 +70,14 @@ describe("comment-density trailing comments", () => {
     expect(
       edit(["const n = /* https://example */ 2;"], ["const n = /* https://example */ 1;"]),
     ).toEqual([1, 0, 0]);
-    expect(edit(["f(/* a */ x);"], ["f(/* a */ x); // old"])).toEqual([0, 0, 1]);
+    expect(edit(["f(/* a */ x);"], ["f(/* a */ x); // old"])).toEqual([0, 1, 1]);
+  });
+
+  it("a change inside an inline block comment is a comment edit", () => {
+    expect(
+      edit([member("the shared cache bypass.")], [member("the shared cache bypass (#2593).")]),
+    ).toEqual([0, 1, 1]);
+    expect(edit(["f(/* a */ y);"], ["f(/* b */ x);"])).toEqual([1, 0, 0]);
   });
 
   it("a line pairs only with a removed line of the same file entry", () => {
