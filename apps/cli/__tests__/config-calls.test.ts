@@ -52,10 +52,14 @@ describe("config calls", () => {
       ["3", "1e0"],
       ["9007199254740993"],
       ["3", "", "2"],
+      ["3", "366"],
+      ["3", "2", "100000"],
     ]) {
       await expect(configCalls("step", bad)).rejects.toThrow(/invalid/);
     }
     await configCalls("step", [" 4 ", "0", "1"]);
     expect(loadConfig().calls?.cadenceStep).toEqual({ position: 4, delayDays: 0, holdDays: 1 });
+    await configCalls("step", ["4", "365", "365"]);
+    expect(loadConfig().calls?.cadenceStep).toEqual({ position: 4, delayDays: 365, holdDays: 365 });
   });
 });

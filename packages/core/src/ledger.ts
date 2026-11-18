@@ -178,6 +178,7 @@ import {
   type CallCandidate,
 } from "./ledger-calls.ts";
 import type { CallRecordView } from "@oneshot-gtm/shared-types";
+import { normalizePhone } from "./phone-timezone.ts";
 import { IcpProposalStore } from "./icp-proposal-store.ts";
 import { LearningStore } from "./learning-store.ts";
 import { CodeAnswerStore } from "./code-answers-store.ts";
@@ -2004,13 +2005,27 @@ export class Ledger {
     callsRecordCallChannelEvent(this.db, input);
   }
 
-  /** @see ledger-calls.ts#clearProspectPhone */
+  /**
+   * @see ledger-calls.ts#clearProspectPhone. The shared person's number goes
+   * too while it is still the wrong one, or the next refresh would copy it
+   * back onto this row.
+   */
   clearProspectPhone(
     prospectId: number,
     wrongPhone: string | null,
     defaultCountry?: string,
   ): boolean {
-    return callsClearProspectPhone(this.db, prospectId, wrongPhone, defaultCountry);
+    const local = callsClearProspectPhone(this.db, prospectId, wrongPhone, defaultCountry);
+    const sharedId = this.people && this.getProspectById(prospectId)?.shared_person_id;
+    const stored = sharedId ? this.people!.get(sharedId)?.phone : null;
+    const wrong = normalizePhone(wrongPhone, defaultCountry);
+    const shared =
+      !!sharedId &&
+      !!stored &&
+      !!wrong &&
+      normalizePhone(stored, defaultCountry) === wrong &&
+      this.people!.clearPhone(sharedId, stored);
+    return local || shared;
   }
 
   /** @see ledger-calls.ts#callPhone */

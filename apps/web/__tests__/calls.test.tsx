@@ -80,6 +80,7 @@ const row = (over: Partial<CallListRow> = {}): CallListRow => ({
   local: { zones: ["America/Chicago"], localTime: "10:05", inWindow: true, opensAt: null },
   playName: "post-funding",
   currentStep: 1,
+  enrolledAt: "2026-11-10T10:00:00.000Z",
   section: "due",
   reason: "replied: interested",
   lastTouchAt: "2026-11-15T10:00:00Z",
@@ -98,6 +99,7 @@ const data = (over: Partial<CallListResponse> = {}): CallListResponse => ({
       section: "list",
       playName: null,
       currentStep: null,
+      enrolledAt: null,
       reason: "other",
     }),
     row({
@@ -106,6 +108,7 @@ const data = (over: Partial<CallListResponse> = {}): CallListResponse => ({
       section: "list",
       playName: null,
       currentStep: null,
+      enrolledAt: null,
       reason: "other",
     }),
   ],
@@ -500,8 +503,19 @@ describe("calls page: review fixes", () => {
     expect(newSaveKey()).not.toBe(key);
     const state: DialState = { outcome: "no_answer", note: "", holdUntil: "2026-12-01" };
     expect(
-      logCallRequest(state, { playName: "post-funding", currentStep: 1, clientKey: key }),
-    ).toEqual({ outcome: "no_answer", playName: "post-funding", currentStep: 1, clientKey: key });
+      logCallRequest(state, {
+        playName: "post-funding",
+        currentStep: 1,
+        enrolledAt: "2026-11-10T10:00:00.000Z",
+        clientKey: key,
+      }),
+    ).toEqual({
+      outcome: "no_answer",
+      playName: "post-funding",
+      currentStep: 1,
+      enrolledAt: "2026-11-10T10:00:00.000Z",
+      clientKey: key,
+    });
     expect(logCallRequest(state, { currentStep: null })).toEqual({
       outcome: "no_answer",
       currentStep: null,

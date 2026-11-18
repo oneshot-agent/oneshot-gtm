@@ -507,6 +507,42 @@ describe("review fixes", () => {
     ]);
   });
 
+  it("a rebuild that drops the step a saved call followed keeps it after the nearest one left", () => {
+    const COND = "__calls_cond";
+    registerSequence({
+      playName: COND,
+      steps: [1, 2, 3, 4].map((i) => ({
+        dayOffset: i,
+        channel: "email" as const,
+        label: `touch ${i}`,
+        breakOnReply: true,
+        // Only the second email can be switched off.
+        when: (c: object) => i !== 2 || (c as { dropSecond?: boolean }).dropSecond !== true,
+        builder: async () => ({ kind: "email" as const, subject: "s", body: "b" }),
+      })),
+    });
+    callsOn(4);
+    const id = ledger.upsertProspect({ name: "D", email: "d@x.test", phone: "+15126531187" });
+    enrollInCadence({ prospectId: id, playName: COND });
+    const ids = () => effectiveSequence(COND, id)!.steps.map((s) => [s.id, s.dayOffset]);
+    expect(ids()).toEqual([
+      ["base:1", 1],
+      ["base:2", 2],
+      ["call", 2],
+      ["base:3", 3],
+      ["base:4", 4],
+    ]);
+    const plans = captureCadencePlans(COND);
+    cfg = { ...cfg, dropSecond: true };
+    applyCadencePlans(COND, plans);
+    expect(ids()).toEqual([
+      ["base:1", 1],
+      ["call", 2],
+      ["base:3", 3],
+      ["base:4", 4],
+    ]);
+  });
+
   it("recordCall is one transaction: a failure part-way writes nothing", async () => {
     callsOn();
     const id = enroll();
@@ -789,8 +825,24 @@ describe("review fixes", () => {
     // Opened from the call list, with no step due.
     recordCall(id, { outcome: "no_answer", currentStep: null });
     expect(cadence(id).current_step).toBe(1);
-    // Opened on the call step itself.
-    const due = recordCall(id, { outcome: "voicemail", playName: PLAY, currentStep: 1 });
+    // Opened on the same step number of an earlier enrolment (a stop and re-enrol since).
+    recordCall(id, {
+      outcome: "no_answer",
+      playName: PLAY,
+      currentStep: 1,
+      enrolledAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(cadence(id).current_step).toBe(1);
+    expect(callEvents(id)).toEqual([]);
+    // Opened on the call step itself, as the due row names it.
+    const row = listCalls().due.find((r) => r.prospectId === id)!;
+    expect(row).toMatchObject({ currentStep: 1, enrolledAt: cadence(id).enrolled_at });
+    const due = recordCall(id, {
+      outcome: "voicemail",
+      playName: PLAY,
+      currentStep: row.currentStep,
+      enrolledAt: row.enrolledAt!,
+    });
     expect(cadence(id).current_step).toBe(2);
     expect(JSON.parse(callEvents(id)[0]!.metadata_json!)).toMatchObject({ callId: due.id });
   });
@@ -814,13 +866,30 @@ describe("review fixes", () => {
       recordCall(id, { outcome: "no_answer", callId, playName: PLAY, currentStep, clientKey: key });
     expect(log(stale, 0, "k-stale-0001")).toMatchObject({ id: stale, outcome: "no_answer" });
     expect(cadence(id).current_step).toBe(1);
+    // The right step of another enrolment (a stop and re-enrol since): the call only.
+    const reEnrolled = bridged();
+    recordCall(id, {
+      outcome: "no_answer",
+      callId: reEnrolled,
+      playName: PLAY,
+      currentStep: 1,
+      enrolledAt: "2020-01-01T00:00:00.000Z",
+    });
+    expect(cadence(id).current_step).toBe(1);
     const due = bridged();
-    log(due, 1, "k-due-00001");
+    recordCall(id, {
+      outcome: "no_answer",
+      callId: due,
+      playName: PLAY,
+      currentStep: 1,
+      enrolledAt: cadence(id).enrolled_at,
+      clientKey: "k-due-00001",
+    });
     // A retried save of the same bridged call writes nothing new.
     log(due, 1, "k-due-00001");
     expect(cadence(id).current_step).toBe(2);
     expect(callEvents(id)).toHaveLength(1);
-    expect(ledger.listCallsForProspect(id)).toHaveLength(2);
+    expect(ledger.listCallsForProspect(id)).toHaveLength(3);
   });
 
   it("a changed outcome on a call whose cadence moved on marks that call's step, not the latest email", () => {

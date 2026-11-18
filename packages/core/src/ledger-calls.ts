@@ -14,7 +14,11 @@ import {
   type CallRecordView,
   type ReplyIntent,
 } from "@oneshot-gtm/shared-types";
-import { contactAllowedClause, contactAllowedSetClause } from "./contact-optout.ts";
+import {
+  contactAllowedClause,
+  contactAllowedSetClause,
+  hasSharedPerson,
+} from "./contact-optout.ts";
 import { normalizePhone } from "./phone-timezone.ts";
 
 /**
@@ -620,21 +624,29 @@ export function pickCallPhone(
   return { phone: null, raw: null, queueId: sources.queueId };
 }
 
-/** Numbers a call was logged `wrong_number` on, per prospect, normalised as `pickCallPhone` compares them. */
+/**
+ * Numbers a call was logged `wrong_number` on, per prospect, normalised as
+ * `pickCallPhone` compares them: on the prospect's row or on any other row
+ * of their shared person here.
+ */
 export function wrongNumbersFor(
   db: Database,
   prospectIds: readonly number[],
   defaultCountry = "US",
 ): Map<number, Set<string>> {
   const out = new Map<number, Set<string>>();
+  const samePerson = hasSharedPerson(db)
+    ? ` OR c.prospect_id IN (SELECT o.id FROM prospects o WHERE o.shared_person_id = p.shared_person_id)`
+    : "";
   for (let i = 0; i < prospectIds.length; i += 400) {
     const ids = prospectIds.slice(i, i + 400);
     if (ids.length === 0) continue;
     const rows = db
       .query(
-        `SELECT prospect_id, phone FROM calls
-          WHERE prospect_id IN (${ids.map(() => "?").join(",")})
-            AND outcome = 'wrong_number' AND phone IS NOT NULL`,
+        `SELECT p.id AS prospect_id, c.phone FROM prospects p
+           JOIN calls c ON c.prospect_id = p.id${samePerson}
+          WHERE p.id IN (${ids.map(() => "?").join(",")})
+            AND c.outcome = 'wrong_number' AND c.phone IS NOT NULL`,
       )
       .all(...ids) as Array<{ prospect_id: number; phone: string }>;
     for (const r of rows) {

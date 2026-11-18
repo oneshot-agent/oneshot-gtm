@@ -38,6 +38,7 @@ import {
   isSlackWebhookUrl,
   getLedger,
   callsOf,
+  MAX_CALL_STEP_DAYS,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -919,15 +920,17 @@ export function mergeLinkedIn(
 
 const CALL_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const whole = (v: unknown, min: number) => typeof v === "number" && Number.isInteger(v) && v >= min;
+const whole = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
  * `bridge` survives a Setup save. `record` is the only bridge key this form
  * sets (keys live in `.env`, phones in the shared database), and a bridge
- * switched off in config.json stays off. `cadenceStep: null` removes the step.
- * Anything callsOf would read as a default is a 400 here, so a typo is never
- * saved silently.
+ * switched off in config.json stays off. `cadenceStep: null` removes the
+ * step. A position under 2 (the first email is 1), a delay outside 0 to
+ * `MAX_CALL_STEP_DAYS` whole days or a hold outside 1 to it, or a window
+ * not two HH:MM times with the start first, is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],
@@ -954,13 +957,13 @@ export function mergeCalls(
         throw new SetupValidationError(
           "calls.cadenceStep.position must be a whole number, 2 or more (the first email is 1)",
         );
-      if (!whole(step.delayDays, 0))
+      if (!whole(step.delayDays, 0, MAX_CALL_STEP_DAYS))
         throw new SetupValidationError(
-          "calls.cadenceStep.delayDays must be a whole number of days",
+          `calls.cadenceStep.delayDays must be a whole number of days, ${MAX_CALL_STEP_DAYS} at most`,
         );
-      if (step.holdDays !== undefined && !whole(step.holdDays, 1))
+      if (step.holdDays !== undefined && !whole(step.holdDays, 1, MAX_CALL_STEP_DAYS))
         throw new SetupValidationError(
-          "calls.cadenceStep.holdDays must be a whole number, 1 or more",
+          `calls.cadenceStep.holdDays must be a whole number, 1 to ${MAX_CALL_STEP_DAYS}`,
         );
       next.cadenceStep = {
         position: step.position,

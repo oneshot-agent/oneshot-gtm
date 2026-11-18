@@ -403,12 +403,17 @@ function callOwnsCurrentStep(
 /**
  * Whether the log may complete `playName`'s call step as the request
  * describes it: `currentStep` (the step the row was opened on) must still be
- * current; null says none was due then. Absent, any next call step may be.
+ * current, in the same enrolment when `enrolledAt` is sent; null says none
+ * was due then. Absent, any next call step may be.
  */
 function openedOnStep(prospectId: number, req: LogCallRequest, playName: string): boolean {
   if (req.currentStep === undefined) return true;
   if (req.currentStep === null || req.playName !== playName) return false;
-  return getLedger().getCadence(prospectId, playName)?.current_step === req.currentStep;
+  const cadence = getLedger().getCadence(prospectId, playName);
+  return (
+    cadence?.current_step === req.currentStep &&
+    (req.enrolledAt === undefined || cadence.enrolled_at === req.enrolledAt)
+  );
 }
 
 /** `holdUntil` ("YYYY-MM-DD", or an ISO time) as the instant the hold ends; the default when absent or past. */
@@ -676,6 +681,7 @@ export function listCalls(
       local: local(phone.phone),
       playName: cad.play_name,
       currentStep: cad.current_step,
+      enrolledAt: cad.enrolled_at,
       section: "due",
       reason: `due: ${next.label ?? "call"} · ${cad.play_name}`,
       lastTouchAt: null,
@@ -706,6 +712,7 @@ export function listCalls(
       local: local(phone.phone),
       playName: null,
       currentStep: null,
+      enrolledAt: null,
       section: "list",
       reason: tierReason(c),
       lastTouchAt: c.lastTouchAt,

@@ -273,7 +273,7 @@ export function DialPanel({
   // The step the row was opened on, for the call started from it: a bridged
   // call reopened from another row lets the server judge its step.
   const sameRowCall = !call || (call.playName ?? null) === (row.playName ?? null);
-  const step = sameRowCall ? { currentStep: row.currentStep } : {};
+  const step = sameRowCall ? { currentStep: row.currentStep, enrolledAt: row.enrolledAt } : {};
   const bridgedOpts = call
     ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
     : null;
@@ -291,6 +291,7 @@ export function DialPanel({
           playName: row.playName,
           phone: dialledNumber(startedAt, dialledPhone, row.phone),
           currentStep: row.currentStep,
+          enrolledAt: row.enrolledAt,
           clientKey: saveKey,
         },
   );
