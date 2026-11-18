@@ -144,4 +144,14 @@ describe("workspace switcher focus", () => {
     await settle();
     expect(button("New workspace")!.disabled).toBe(false);
   });
+
+  it("focuses the chip when the form is cancelled during a launch: New workspace is disabled", async () => {
+    await press(button("New workspace")!);
+    await startAlpha();
+
+    await press(button("Cancel")!);
+
+    expect(button("New workspace")!.disabled).toBe(true);
+    expect(document.activeElement).toBe(chip());
+  });
 });

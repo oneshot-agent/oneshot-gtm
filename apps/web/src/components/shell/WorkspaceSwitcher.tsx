@@ -265,10 +265,16 @@ export function WorkspaceSwitcher() {
   // the name field, and back to that button when the form closes. `open` is a
   // dependency so a popover reopened on a kept draft focuses the field again.
   const formOpen = newName !== null;
+  // New workspace is disabled during a launch and a disabled button cannot
+  // take focus; the chip always can.
+  const focusOpener = () => {
+    const button = newButtonRef.current;
+    (button && !button.disabled ? button : triggerRef.current)?.focus();
+  };
   useEffect(() => {
     const target = formFocusTarget(formOpen, formWasOpen.current);
     if (target === "name") nameRef.current?.focus();
-    if (target === "invoker") newButtonRef.current?.focus();
+    if (target === "invoker") focusOpener();
     formWasOpen.current = formOpen;
   }, [formOpen, open]);
 
