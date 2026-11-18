@@ -8,6 +8,7 @@ import {
   saveGmailToken,
 } from "@oneshot-gtm/core";
 import { jsonResponse } from "../server.ts";
+import { isAllowedHostOrigin } from "../members.ts";
 
 /**
  * Browser variant of `oneshot-gtm gmail auth`: /setup's "Connect Gmail"
@@ -37,6 +38,17 @@ function clientCreds(): { clientId: string; clientSecret: string } | null {
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
+function authOrigin(req: Request): string {
+  const url = new URL(req.url);
+  // The member gate has already authenticated the request. Tailscale
+  // preserves Host but terminates TLS before forwarding to this HTTP server.
+  // Never take a replacement host from forwarding headers or alter loopback.
+  if (isAllowedHostOrigin(url.origin) && req.headers.get("x-forwarded-proto") === "https") {
+    url.protocol = "https:";
+  }
+  return url.origin;
+}
+
 export function startGmailAuthRoute(req: Request): Response {
   const creds = clientCreds();
   if (!creds) {
@@ -48,7 +60,7 @@ export function startGmailAuthRoute(req: Request): Response {
   }
   prune();
   const url = new URL(req.url);
-  const redirectUri = `${url.origin}/api/gmail/auth/callback`;
+  const redirectUri = `${authOrigin(req)}/api/gmail/auth/callback`;
   const state = randomUUID();
   // `?purpose=calendar` (used by the /setup calendar picker's "Connect a
   // calendar-only mailbox" affordance): a mailbox connected purely to read
@@ -63,7 +75,7 @@ export function startGmailAuthRoute(req: Request): Response {
 export async function gmailAuthCallbackRoute(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const backToSetup = (outcome: string): Response =>
-    Response.redirect(`${url.origin}/setup?gmailAuth=${encodeURIComponent(outcome)}`, 302);
+    Response.redirect(`${authOrigin(req)}/setup?gmailAuth=${encodeURIComponent(outcome)}`, 302);
 
   const consentError = url.searchParams.get("error");
   if (consentError) return backToSetup(`error:${consentError}`);
