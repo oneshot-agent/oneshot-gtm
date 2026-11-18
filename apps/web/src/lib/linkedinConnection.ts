@@ -2,6 +2,8 @@ import type { LinkedInAccountView } from "@oneshot-gtm/shared-types";
 
 /** Connection health and import progress are independent provider states. */
 export function linkedInConnectionView(account: LinkedInAccountView) {
+  // Another member's account: its name and status, nothing to act on or fix here.
+  const mine = account.mine !== false;
   const reconnect =
     account.status === "reconnect_required" || account.syncState === "reconnect_required";
   const connected = account.status === "connected" && !reconnect;
@@ -32,6 +34,7 @@ export function linkedInConnectionView(account: LinkedInAccountView) {
             ? "Connection requests are not allowed on this connection yet. Allowing them asks you to sign in to LinkedIn again; the account and its imported conversations stay as they are."
             : null;
   return {
+    mine,
     reconnect,
     connected,
     running,
@@ -39,14 +42,17 @@ export function linkedInConnectionView(account: LinkedInAccountView) {
     needsPermissions,
     needsInvite,
     title,
-    description,
+    description: mine
+      ? description
+      : `Connected by ${account.ownerMember ?? "another member"}. Its conversations are visible only to them.`,
     attention:
-      reconnect ||
-      needsPermissions ||
-      paused ||
-      !connected ||
-      !!account.error ||
-      !!account.permissionUpgradeError,
+      mine &&
+      (reconnect ||
+        needsPermissions ||
+        paused ||
+        !connected ||
+        !!account.error ||
+        !!account.permissionUpgradeError),
     showProgress:
       connected &&
       account.backfill?.stage === "resolve" &&

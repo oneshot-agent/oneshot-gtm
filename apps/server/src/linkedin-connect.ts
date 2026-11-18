@@ -6,11 +6,13 @@ interface ConnectionIntent {
   intentId: string;
   wallet: string;
   workspace: string;
+  /** The member who started the connection, by email; the account becomes theirs. */
+  ownerMember?: string | null;
   complete?: boolean;
 }
 
-/** Persist the initiating workspace before the user can complete the hosted login. */
-export async function connectLinkedIn(workspace: string) {
+/** Persist the initiating workspace and member before the user can complete the hosted login. */
+export async function connectLinkedIn(workspace: string, ownerMember: string | null = null) {
   const { wallet } = await callLinkedIn<{ wallet: string }>(workspace, { kind: "accounts" });
   const result = await callLinkedIn<{ intent_id: string; url: string }>(workspace, {
     kind: "connect",
@@ -20,6 +22,7 @@ export async function connectLinkedIn(workspace: string) {
     intentId: result.intent_id,
     wallet,
     workspace,
+    ownerMember,
   } satisfies ConnectionIntent);
   return result;
 }
@@ -60,6 +63,8 @@ export async function adoptLinkedInConnections(): Promise<void> {
               key: old?.key ?? `${intent.wallet}:${account.id}`,
               wallet: intent.wallet,
               workspace: intent.workspace,
+              // A new account belongs to the member who connected it; a known one keeps its owner.
+              ownerMember: old?.ownerMember || intent.ownerMember || undefined,
               account,
               sync: old?.sync ?? null,
               checkedAt: old?.checkedAt ?? null,

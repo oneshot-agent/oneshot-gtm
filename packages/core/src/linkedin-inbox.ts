@@ -55,6 +55,35 @@ export interface LinkedInAccountRecord {
   removedAt?: string;
   permissionUpgradeError?: string;
   previousAccountIds?: string[];
+  /**
+   * The member who connected the account, by email. Unset on an account
+   * connected before members existed, by an owner with no email, or found on
+   * the wallet by a sync: that account belongs to the install's owner.
+   */
+  ownerMember?: string | null;
+}
+/**
+ * Who is reading the inbox. A LinkedIn account is one person's identity, so a
+ * lookup given a viewer returns only the accounts that member connected, with
+ * their threads and messages. Background jobs pass no viewer and see every
+ * account.
+ */
+export interface LinkedInViewer {
+  /** The member's email. Null for the local owner of an install that lists no owner. */
+  email: string | null;
+  /** The install's owner also holds every account no member is recorded for. */
+  installOwner: boolean;
+  /** No member is listed: the one person using the install sees every account. */
+  onlyUser?: boolean;
+}
+/** Whether a viewer may read an account. A missing record has no recorded member, like an unowned account. */
+export function linkedInAccountVisible(
+  account: Pick<LinkedInAccountRecord, "ownerMember"> | null,
+  viewer?: LinkedInViewer,
+): boolean {
+  if (!viewer || viewer.onlyUser) return true;
+  const owner = account?.ownerMember || null;
+  return owner ? owner === viewer.email : viewer.installOwner;
 }
 export interface LinkedInOwner {
   workspace: string;
@@ -217,17 +246,36 @@ export class LinkedInInboxStore {
   close() {
     this.db.close();
   }
-  accounts(): LinkedInAccountRecord[] {
-    return this.db
+  /** Every account, or with a viewer only the ones that member connected. */
+  accounts(viewer?: LinkedInViewer): LinkedInAccountRecord[] {
+    const all: LinkedInAccountRecord[] = this.db
       .query<{ data: string }, []>("SELECT data FROM accounts")
       .all()
       .map((r) => JSON.parse(r.data));
+    return viewer ? all.filter((a) => linkedInAccountVisible(a, viewer)) : all;
   }
-  account(key: string) {
-    return this.accounts().find((a) => a.key === key) ?? null;
+  account(key: string, viewer?: LinkedInViewer) {
+    return this.accounts(viewer).find((a) => a.key === key) ?? null;
+  }
+  /**
+   * Whether the viewer may read or act through this account. The yes/no a
+   * route needs to refuse another member's account without reading it.
+   */
+  visibleTo(accountKey: string, viewer?: LinkedInViewer): boolean {
+    return linkedInAccountVisible(this.account(accountKey), viewer);
+  }
+  /** The test `visibleTo` applies, with the accounts read once for a whole list. */
+  private visibility(viewer?: LinkedInViewer): (accountKey: string) => boolean {
+    if (!viewer || viewer.onlyUser) return () => true;
+    const accounts = new Map(this.accounts().map((a) => [a.key, a]));
+    return (accountKey) => linkedInAccountVisible(accounts.get(accountKey) ?? null, viewer);
   }
   saveAccount(a: LinkedInAccountRecord) {
-    const removedAt = this.account(a.key)?.removedAt ?? a.removedAt;
+    const saved = this.account(a.key);
+    // The member who connected an account stays its owner: a later save never drops or replaces them.
+    const ownerMember = saved?.ownerMember || a.ownerMember;
+    if (ownerMember) a = { ...a, ownerMember };
+    const removedAt = saved?.removedAt ?? a.removedAt;
     if (removedAt)
       a = { ...a, removedAt, account: { ...a.account, status: "revoked", allowed_actions: [] } };
     this.db
@@ -297,20 +345,25 @@ export class LinkedInInboxStore {
       .query("INSERT INTO progress VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data")
       .run(key, JSON.stringify(data));
   }
-  threads(accountKey?: string): LinkedInThreadRecord[] {
-    return (
+  /** Threads of one account or of all; with a viewer, only those on accounts that member connected. */
+  threads(accountKey?: string, viewer?: LinkedInViewer): LinkedInThreadRecord[] {
+    const all: LinkedInThreadRecord[] = (
       accountKey
         ? this.db
             .query<{ data: string }, [string]>("SELECT data FROM conversations WHERE account_key=?")
             .all(accountKey)
         : this.db.query<{ data: string }, []>("SELECT data FROM conversations").all()
     ).map((r) => JSON.parse(r.data));
+    if (!viewer) return all;
+    const visible = this.visibility(viewer);
+    return all.filter((t) => visible(t.accountKey));
   }
-  thread(key: string): LinkedInThreadRecord | null {
+  thread(key: string, viewer?: LinkedInViewer): LinkedInThreadRecord | null {
     const r = this.db
       .query<{ data: string }, [string]>("SELECT data FROM conversations WHERE key=?")
       .get(key);
-    return r ? JSON.parse(r.data) : null;
+    const t: LinkedInThreadRecord | null = r ? JSON.parse(r.data) : null;
+    return t && (!viewer || this.visibleTo(t.accountKey, viewer)) ? t : null;
   }
   threadForConversation(accountKey: string, conversationId: string): LinkedInThreadRecord | null {
     const row = this.db
@@ -409,7 +462,8 @@ export class LinkedInInboxStore {
       )
       .run(accountKey, identity.providerId, JSON.stringify(identity));
   }
-  allMessages(accountKey: string): LinkedInMessage[] {
+  allMessages(accountKey: string, viewer?: LinkedInViewer): LinkedInMessage[] {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return [];
     return this.db
       .query<{ data: string }, [string]>("SELECT data FROM messages WHERE account_key=?")
       .all(accountKey)
@@ -656,7 +710,8 @@ export class LinkedInInboxStore {
       })
       .immediate();
   }
-  messages(accountKey: string, conversationId: string): LinkedInMessage[] {
+  messages(accountKey: string, conversationId: string, viewer?: LinkedInViewer): LinkedInMessage[] {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return [];
     return this.db
       .query<{ data: string }, [string, string]>(
         "SELECT data FROM messages WHERE account_key=? AND conversation_id=?",

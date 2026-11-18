@@ -544,7 +544,7 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                   </p>
                 </div>
                 <div className="replies-connection-actions">
-                  {(view.reconnect || view.needsPermissions || view.needsInvite) && (
+                  {view.mine && (view.reconnect || view.needsPermissions || view.needsInvite) && (
                     <Button
                       size="sm"
                       variant="secondary"
@@ -561,7 +561,7 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                             : "Allow connection requests"}
                     </Button>
                   )}
-                  {view.connected && !view.needsPermissions && !view.running && (
+                  {view.mine && view.connected && !view.needsPermissions && !view.running && (
                     <Button
                       size="sm"
                       variant="secondary"
@@ -604,32 +604,34 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                   )}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={accountAction.isPending || connect.isPending || !!intent}
-                  onClick={() => {
-                    accountAction.reset();
-                    setConfirmAction({ key: a.key, action: "force-reconnect" });
-                  }}
-                  {...readOnly}
-                >
-                  Force reconnect
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={accountAction.isPending || connect.isPending || !!intent}
-                  onClick={() => {
-                    accountAction.reset();
-                    setConfirmAction({ key: a.key, action: "remove" });
-                  }}
-                  {...readOnly}
-                >
-                  Remove connection
-                </Button>
-              </div>
+              {view.mine && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={accountAction.isPending || connect.isPending || !!intent}
+                    onClick={() => {
+                      accountAction.reset();
+                      setConfirmAction({ key: a.key, action: "force-reconnect" });
+                    }}
+                    {...readOnly}
+                  >
+                    Force reconnect
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={accountAction.isPending || connect.isPending || !!intent}
+                    onClick={() => {
+                      accountAction.reset();
+                      setConfirmAction({ key: a.key, action: "remove" });
+                    }}
+                    {...readOnly}
+                  >
+                    Remove connection
+                  </Button>
+                </div>
+              )}
               {confirmAction?.key === a.key && (
                 <div
                   className="my-3 space-y-3 rounded border border-ink-rule p-3"

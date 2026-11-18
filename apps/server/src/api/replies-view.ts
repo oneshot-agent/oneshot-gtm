@@ -11,6 +11,7 @@ import {
   replyContextVersion,
   productBriefText,
 } from "@oneshot-gtm/core";
+import type { LinkedInViewer } from "@oneshot-gtm/core";
 import type {
   InboxResult,
   ReplyMessage,
@@ -18,22 +19,28 @@ import type {
   ReplyThread,
 } from "@oneshot-gtm/shared-types";
 import { backfillStatus } from "../linkedin-backfill.ts";
+import { linkedInViewer } from "../members.ts";
 import { listInboxRoute } from "./inbox.ts";
 
 import { emailThreads } from "@oneshot-gtm/shared-types";
 
-export function linkedInThreads(): ReplyThread[] {
+/**
+ * The LinkedIn conversations this workspace lists. With a viewer, only those
+ * on accounts that member connected, matched to a prospect or not: every
+ * route passes one.
+ */
+export function linkedInThreads(viewer?: LinkedInViewer): ReplyThread[] {
   const store = getLinkedInInboxStore();
   const workspace = currentWorkspaceName();
   const matches = linkedInMatches();
   return store
-    .threads()
+    .threads(undefined, viewer)
     .filter((t) => !t.owner || t.owner.workspace === workspace)
     .flatMap((t) => {
-      const a = store.account(t.accountKey);
+      const a = store.account(t.accountKey, viewer);
       if (!a) return [];
       const c = t.conversation;
-      const rawMessages = store.messages(a.key, c.id);
+      const rawMessages = store.messages(a.key, c.id, viewer);
       const sender = rawMessages.findLast((m) => m.direction === "inbound" && !m.deleted);
       const profile = sender ? store.senderProfile(a.key, c, sender) : null;
       const found = profile ? matches.filter((m) => m.profile === profile) : [];
@@ -44,7 +51,7 @@ export function linkedInThreads(): ReplyThread[] {
           : found.length
             ? ("ambiguous" as const)
             : ("no_prospect" as const);
-      const history: ReplyMessage[] = store.messages(a.key, c.id).map((m) => ({
+      const history: ReplyMessage[] = rawMessages.map((m) => ({
         id: m.id,
         direction: m.direction,
         body: m.text ?? "",
@@ -190,9 +197,10 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
     };
   }
   const review = getReplyReviewStore();
+  const viewer = linkedInViewer(req);
   const incoming = [
     ...emailThreads(inbox, workspace, (email) => getLedger().getProspectByEmail(email)?.id ?? null),
-    ...linkedInThreads(),
+    ...linkedInThreads(viewer),
   ];
   for (const t of incoming) {
     t.contextVersion = threadContextVersion(t, workspace);
@@ -233,30 +241,38 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
       t.profileUrl = t.profileUrl || prospect?.linkedin_url || null;
     }
   }
-  const accounts = getLinkedInInboxStore()
+  // Every member sees which accounts are connected and whether they work:
+  // a workspace may send from any of them. Import detail and provider errors
+  // go to the member who connected the account, like its messages.
+  const store = getLinkedInInboxStore();
+  const accounts = store
     .accounts()
     .filter((a) => !a.removedAt)
-    .map((a) => ({
-      key: a.key,
-      id: a.account.id,
-      name: a.account.display_name ?? "LinkedIn",
-      workspace: a.workspace,
-      status: a.account.status,
-      syncState: a.sync?.sync_state ?? "never_synced",
-      complete:
-        !!a.sync?.coverage.complete &&
-        ["active", "archived", "messages"].every(
-          (r) =>
-            getLinkedInInboxStore().progress<{ complete?: boolean }>(`${a.key}:${r}`)?.complete,
-        ),
-      lastCheckedAt: a.checkedAt,
-      error: a.error,
-      canReply: a.account.allowed_actions.includes("reply"),
-      canResolve: a.account.allowed_actions.includes("view_profile"),
-      canInvite: a.account.allowed_actions.includes("invite"),
-      permissionUpgradeError: a.permissionUpgradeError,
-      backfill: backfillStatus(a.key),
-    }));
+    .map((a) => {
+      const mine = store.visibleTo(a.key, viewer);
+      return {
+        key: a.key,
+        id: a.account.id,
+        name: a.account.display_name ?? "LinkedIn",
+        workspace: a.workspace,
+        status: a.account.status,
+        syncState: a.sync?.sync_state ?? "never_synced",
+        complete:
+          !!a.sync?.coverage.complete &&
+          ["active", "archived", "messages"].every(
+            (r) => store.progress<{ complete?: boolean }>(`${a.key}:${r}`)?.complete,
+          ),
+        lastCheckedAt: a.checkedAt,
+        error: mine ? a.error : null,
+        canReply: a.account.allowed_actions.includes("reply"),
+        canResolve: a.account.allowed_actions.includes("view_profile"),
+        canInvite: a.account.allowed_actions.includes("invite"),
+        permissionUpgradeError: mine ? a.permissionUpgradeError : undefined,
+        backfill: mine ? backfillStatus(a.key) : null,
+        ownerMember: a.ownerMember || null,
+        mine,
+      };
+    });
   return {
     threads: threads.toSorted((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt)),
     accounts,
