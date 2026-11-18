@@ -376,6 +376,39 @@ function instantAt(zone: string, y: number, m: number, d: number, minutes: numbe
   return second === first ? t : guess - second * 60_000;
 }
 
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * The instants in (from, to] where a zone's UTC offset changes, to the
+ * minute (tz rules change on whole minutes): a day-by-day read, narrowed
+ * by halving the day where it changed.
+ */
+function offsetChanges(zone: string, from: number, to: number): number[] {
+  const out: number[] = [];
+  let a = Math.ceil(from / MINUTE_MS);
+  let before = wallClock(zone, new Date(a * MINUTE_MS)).offset;
+  const end = Math.floor(to / MINUTE_MS);
+  while (a < end) {
+    const b = Math.min(a + DAY_MS / MINUTE_MS, end);
+    const after = wallClock(zone, new Date(b * MINUTE_MS)).offset;
+    if (after !== before) {
+      // offset(lo) is the old one, offset(hi) not: the change is at hi once they meet.
+      let lo = a;
+      let hi = b;
+      while (hi - lo > 1) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (wallClock(zone, new Date(mid * MINUTE_MS)).offset === before) lo = mid;
+        else hi = mid;
+      }
+      out.push(hi * MINUTE_MS);
+    }
+    a = b;
+    before = after;
+  }
+  return out;
+}
+
 /** How far ahead the window's next opening is looked for. */
 const OPENS_HORIZON_DAYS = 8;
 
@@ -409,9 +442,10 @@ export function phoneLocalTime(
   const localTime = wallClock(zones[0]!, now).hhmm;
   if (all(now)) return { zones, localTime, inWindow: true, opensAt: null };
   // The shared window opens when the last zone's opens: one of the zones'
-  // own opening times. Zones on the same clock now and at the horizon give
-  // the same times, so one of each is enough to list them; every zone is
-  // still checked at each.
+  // own opening times, or a clock change that jumps a zone into the window
+  // (London's spring-forward over a 01:30 start opens it at 01:00 UTC).
+  // Zones on the same clock now and at the horizon give the same times, so
+  // one of each is enough to list them; every zone is still checked at each.
   const start = minutesOf(window.start);
   const horizon = new Date(now.getTime() + (OPENS_HORIZON_DAYS + 1) * 24 * 3600 * 1000);
   const byClock = new Map<string, string>();
@@ -433,6 +467,7 @@ export function phoneLocalTime(
       );
       if (t > now.getTime()) candidates.add(t);
     }
+    for (const t of offsetChanges(zone, now.getTime(), horizon.getTime())) candidates.add(t);
   }
   const opens = [...candidates].toSorted((a, b) => a - b).find((t) => all(new Date(t)));
   if (opens === undefined) return unknown;

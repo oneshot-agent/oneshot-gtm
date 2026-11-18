@@ -520,4 +520,25 @@ describe("ledger calls: review fixes", () => {
     meeting("e2", "confirmed");
     expect(tier()).toBe(4);
   });
+
+  it("the call list takes the newest unlinked queue row by address, as phoneForCall does", () => {
+    const id = ledger.upsertProspect({ name: "N", email: "n@a.test" });
+    ledger.enqueueTarget({
+      playName: "p",
+      payload: { email: "n@a.test", phone: "(512) 653-1187" },
+      dedupeKey: "n1",
+      source: "s",
+    });
+    // A newer row for the same address, with no phone: the Find phone button's.
+    const newest = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { founderEmail: "n@a.test" },
+      dedupeKey: "n2",
+      source: "s",
+    })!;
+    expect(ledger.phoneForCall(id)).toMatchObject({ phone: "+15126531187", queueId: newest });
+    expect(ledger.listCallCandidates({ limit: 10 })).toMatchObject([
+      { prospectId: id, queuePhone: "(512) 653-1187", queueId: newest },
+    ]);
+  });
 });

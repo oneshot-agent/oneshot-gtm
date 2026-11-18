@@ -133,6 +133,20 @@ describe("phoneLocalTime", () => {
     expect(phoneLocalTime("+19282831234", WINDOW, friday).opensAt).toBe("2026-03-09T16:00:00.000Z");
   });
 
+  it("opens at a clock change that jumps over the window's start", () => {
+    // London springs forward on Sunday 2026-03-29 at 01:00 UTC, 01:00 GMT to
+    // 02:00 BST: a 01:30 start never shows on the clock that day, and the
+    // window is open from the jump.
+    const window = { start: "01:30", end: "17:00", weekdays: false };
+    const before = new Date("2026-03-29T00:30:00Z");
+    const out = phoneLocalTime("+442079460958", window, before);
+    expect(out).toMatchObject({ inWindow: false, localTime: "00:30" });
+    expect(out.opensAt).toBe("2026-03-29T01:00:00.000Z");
+    expect(phoneLocalTime("+442079460958", window, new Date("2026-03-29T01:00:00Z")).inWindow).toBe(
+      true,
+    );
+  });
+
   it("an unknown number reads as in the window with no zone", () => {
     expect(phoneLocalTime("+999123456789", WINDOW)).toEqual({
       zones: [],

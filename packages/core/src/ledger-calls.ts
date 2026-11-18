@@ -536,19 +536,27 @@ export function listCallCandidates(
   const rows = db
     .query(
       `WITH
-       -- A phone on a queue row not linked to any prospect yet, by its
-       -- address, as phoneSourcesFor reads it: target_queue's JSON is read
-       -- once here, never once per prospect.
-       mail_queue AS MATERIALIZED (
-         SELECT ${QUEUE_ADDRESS} AS email, MAX(q.id) AS id
+       -- Queue rows not linked to any prospect yet, by their address, as
+       -- phoneSourcesFor reads them: the newest row (the Find phone button's)
+       -- and the newest with a phone. target_queue's JSON is read once here,
+       -- never once per prospect.
+       -- Each payload is parsed once (materialised): the address is
+       -- QUEUE_ADDRESS, from these two fields.
+       mail_raw AS MATERIALIZED (
+         SELECT q.id, json_extract(q.payload_json, '$.email') AS e,
+                json_extract(q.payload_json, '$.founderEmail') AS f,
+                json_extract(q.payload_json, '$.phone') AS ph
            FROM target_queue q
-          WHERE q.prospect_id IS NULL AND json_valid(q.payload_json)
-            AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> ''
-            AND COALESCE(${QUEUE_ADDRESS}, '') <> ''
+          WHERE q.prospect_id IS NULL AND json_valid(q.payload_json)),
+       mail_queue AS MATERIALIZED (
+         SELECT lower(trim(COALESCE(NULLIF(trim(e), ''), f))) AS email, MAX(id) AS id,
+                MAX(CASE WHEN trim(COALESCE(ph, '')) <> '' THEN id END) AS phone_id
+           FROM mail_raw
+          WHERE COALESCE(NULLIF(trim(e), ''), trim(f), '') <> ''
           GROUP BY 1),
        mail_phone AS MATERIALIZED (
          SELECT m.email, m.id, trim(json_extract(q.payload_json, '$.phone')) AS phone
-           FROM mail_queue m JOIN target_queue q ON q.id = m.id),
+           FROM mail_queue m LEFT JOIN target_queue q ON q.id = m.phone_id),
        linked AS (
          SELECT p.id AS prospect_id, p.name, p.title, p.company, p.email,
                 NULLIF(trim(COALESCE(p.phone, '')), '') AS prospect_phone,
@@ -576,7 +584,7 @@ export function listCallCandidates(
                   SELECT q.prospect_id FROM target_queue q
                    WHERE q.prospect_id IS NOT NULL AND json_valid(q.payload_json)
                      AND trim(COALESCE(json_extract(q.payload_json, '$.phone'), '')) <> '')
-                 OR lower(trim(p.email)) IN (SELECT email FROM mail_phone))
+                 OR lower(trim(p.email)) IN (SELECT email FROM mail_phone WHERE phone IS NOT NULL))
             AND ${contactAllowedSetClause(db)}
             AND ${callGatesSql(db)}
             ${excludeSql}
