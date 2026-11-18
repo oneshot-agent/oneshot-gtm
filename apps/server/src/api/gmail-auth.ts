@@ -13,8 +13,9 @@ import { jsonResponse } from "../server.ts";
  * Browser variant of `oneshot-gtm gmail auth`: /setup's "Connect Gmail"
  * button navigates to /start, Google consent redirects back to /callback on
  * this same local server, and the founder lands back on /setup with the
- * outcome in a query param. Server is loopback-only, so the redirect URI is
- * always a 127.0.0.1/localhost origin: valid for Desktop-type OAuth clients.
+ * outcome in a query param. Opened on the host machine, the redirect URI is
+ * a 127.0.0.1/localhost origin: valid for Desktop-type OAuth clients. A
+ * member on an allowed host cannot complete it (docs/members.md).
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000;

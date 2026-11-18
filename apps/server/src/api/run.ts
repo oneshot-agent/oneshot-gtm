@@ -22,6 +22,7 @@ import {
   type RunPlayEvent,
   type RunPlayRequest,
 } from "@oneshot-gtm/shared-types";
+import { isAllowedHostOrigin } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 import { reportServerExecution } from "../telemetry.ts";
 import { dispatchPlay, type DraftedView } from "./_play-dispatch.ts";
@@ -452,7 +453,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   });
 
   // Loopback-only CORS for SSE: mirror loopback origins, omit the header
-  // otherwise (the outer fetch handler already enforces a loopback Host).
+  // otherwise (the outer fetch handler already enforces a loopback or allowed
+  // Host; a member's page is same-origin and needs no CORS header).
   const origin = req.headers.get("origin") ?? "";
   const isLoopback = isLoopbackOrigin(origin);
   const sseHeaders: Record<string, string> = {
@@ -514,8 +516,8 @@ export async function cancelRunRoute(
   // body for a cancel, making it a simple request that CORS preflight does not
   // protect.
   const origin = req.headers.get("origin") ?? "";
-  const isLoopback = isLoopbackOrigin(origin);
-  if (!isLoopback) {
+  // A member's dashboard is served from an allowed host (`members allow-host`).
+  if (!isLoopbackOrigin(origin) && !isAllowedHostOrigin(origin)) {
     return jsonResponse({ error: "cross-origin cancellation rejected" }, 403, req);
   }
 

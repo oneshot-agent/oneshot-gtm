@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getLedger, triggerAngleRefresh } from "@oneshot-gtm/core";
 import type { LinkedInReplyResult } from "@oneshot-gtm/shared-types";
+import { isAllowedHostOrigin } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
 export async function markLinkedInReplyRoute(
@@ -82,7 +83,9 @@ function isDashboardOrigin(req: Request): boolean {
       // Invalid dev configuration grants no extra origin.
     }
   }
-  return allowed.has(origin);
+  // A member's page: TLS ends at `tailscale serve`, so its https Origin never
+  // equals the http origin of `req.url`. It passes when its host is allowed.
+  return allowed.has(origin) || isAllowedHostOrigin(origin);
 }
 
 function accepted(result: Omit<LinkedInReplyResult, "accepted">): LinkedInReplyResult {

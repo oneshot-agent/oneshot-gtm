@@ -16,7 +16,8 @@ import type {
   InboxResult,
   ConversationItem,
 } from "@oneshot-gtm/shared-types";
-import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { isAllowedOrigin } from "../members.ts";
+import { jsonResponse } from "../server.ts";
 import { autoReplyViewOf } from "./_auto-reply-view.ts";
 
 /** Build the workspace-local mailbox health and threaded inbox view. */
@@ -118,9 +119,9 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
   };
 }
 
-/** Restrict credential and mailbox mutations to the local workspace UI. */
+/** Restrict credential and mailbox mutations to the workspace UI: a loopback page or one on an allowed host. */
 function allowed(req: Request): boolean {
-  return isLoopbackOrigin(req.headers.get("origin") ?? "");
+  return isAllowedOrigin(req.headers.get("origin") ?? "");
 }
 
 /** Update read or archive state for the messages visible to the caller. */

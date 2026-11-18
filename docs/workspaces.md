@@ -25,6 +25,7 @@ One database, `~/.oneshot-gtm-shared/shared.sqlite` (`ONESHOT_GTM_SHARED` moves 
 | Contact touches           | no first touch to someone another workspace emailed in the last 7 days           |
 | LinkedIn accounts         | shared connections; each workspace selects its sender with `linkedin.accountKey` |
 | LinkedIn suppression list | a profile one workspace invited is never invited by another                      |
+| Members and allowed hosts | every dashboard lets the same people in; see [members](./members.md)             |
 
 The invite share is optional: unset, a workspace is held only by the account's daily cap; `0` pauses that workspace's invites. See [LinkedIn](./linkedin.md#connection-requests-as-a-first-touch).
 
@@ -69,6 +70,6 @@ To hand a person to another product, use **move →** on the queue row. The dest
 
 ## In the dashboard
 
-A chip in the masthead names the workspace and its port. Click it, or `⌘K → Workspaces`, to see every workspace with a live status dot. A running one opens in a new tab; a stopped one starts first. If it is not up within 15 seconds you get the command to start it by hand.
+A chip in the masthead names the workspace and its port. Click it, or `⌘K → Workspaces`, to see every workspace with a live status dot. A running one opens in a new tab, on the hostname this page was opened with; a stopped one starts first. If it is not up within 15 seconds you get the command to start it by hand.
 
 To bring each dashboard back after a restart, install it as a [service](./background-monitoring.md).

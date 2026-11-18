@@ -93,6 +93,8 @@ import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
+import { meRoute } from "./api/me.ts";
+import { currentMember, isAllowedOrigin, isAllowedRequestHost } from "./members.ts";
 import {
   pauseDomainRoute,
   resumeDomainRoute,
@@ -276,6 +278,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/linkedin/touched", linkedInTouchedImportRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
+  route("GET", "/api/me", meRoute),
   route("GET", "/api/workspace", workspaceInfo),
   route("POST", "/api/workspace/launch", workspaceLaunch),
   route("POST", "/api/run/:playName", runPlay),
@@ -427,11 +430,15 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
   return async function fetchHandler(req) {
     const url = new URL(req.url);
 
-    // DNS-rebinding defense: reject any request whose Host header isn't a
-    // loopback name. An attacker who points evil.com at 127.0.0.1 still
-    // sends Host: evil.com to the browser, which we reject here.
-    if (!isLoopbackHost(req.headers.get("host"))) {
-      return new Response("forbidden: non-loopback host", {
+    // The request gate. The Host must be loopback or on the allowed list
+    // (`members allow-host`), and the request must resolve to a member: the
+    // owner on the host machine itself, or a listed member signed in through
+    // `tailscale serve`. This is also the DNS-rebinding defense: an attacker
+    // who points evil.com at 127.0.0.1 still has the browser send
+    // Host: evil.com, which is on no list.
+    if (!currentMember(req)) {
+      const reason = isAllowedRequestHost(req) ? "not a member" : "host not allowed";
+      return new Response(`forbidden: ${reason}`, {
         status: 403,
         headers: { "content-type": "text/plain" },
       });
@@ -453,11 +460,12 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
       // headers below only keep a cross-site page from READING a response; a
       // simple POST (form, text/plain fetch) still executes. Browsers stamp
       // `Origin` on every POST and page script cannot forge it, so a mutating
-      // call whose Origin is not loopback is refused before dispatch. No
-      // Origin (curl, the CLI, server-side fetch) passes as before.
+      // call whose Origin is neither loopback nor an allowed host is refused
+      // before dispatch. No Origin (curl, the CLI, server-side fetch) passes
+      // as before.
       if (req.method !== "GET" && req.method !== "HEAD") {
         const origin = req.headers.get("origin") ?? "";
-        if (!isLoopbackOrigin(origin) || req.headers.get("sec-fetch-site") === "cross-site") {
+        if (!isAllowedOrigin(origin) || req.headers.get("sec-fetch-site") === "cross-site") {
           return jsonResponse({ error: "forbidden: cross-site request" }, 403, req);
         }
       }
@@ -534,12 +542,6 @@ export function isLoopbackOrigin(origin: string): boolean {
   } catch {
     return false;
   }
-}
-
-function isLoopbackHost(host: string | null): boolean {
-  if (!host) return false;
-  const hostname = host.replace(/:\d+$/, "").toLowerCase();
-  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
 }
 
 function corsHeaders(req: Request): Record<string, string> {
