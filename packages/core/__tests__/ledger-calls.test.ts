@@ -33,8 +33,20 @@ describe("callsOf", () => {
       cadenceStep: null,
       window: { start: "09:00", end: "17:00", weekdays: true },
       // Absent = the defaults: the keys decide whether it can dial.
-      bridge: { provider: "twilio", record: true, transcriptionServiceSid: null },
+      bridge: { provider: "twilio", record: "ask", transcriptionServiceSid: null },
     });
+  });
+
+  it("records only on a press unless set to always or off; the legacy true asks", () => {
+    const mode = (record: unknown) =>
+      callsOf({ calls: { bridge: { provider: "twilio", record } } }).bridge?.record;
+    expect([mode("always"), mode("ask"), mode(true), mode(false), mode("yes")]).toEqual([
+      "always",
+      "ask",
+      "ask",
+      false,
+      "ask",
+    ]);
   });
 
   it("reads a full config and fills holdDays", () => {

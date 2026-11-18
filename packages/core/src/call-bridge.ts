@@ -101,6 +101,8 @@ export interface CallBridge {
     callSid: string,
     input: { memberPhone: string; prospectPhone: string; record: boolean },
   ): Promise<void>;
+  /** Start recording a connected call: the member on channel 1, the prospect on 2. */
+  startRecording(callSid: string): Promise<void>;
   status(callSid: string): Promise<BridgeCallState>;
   hangUp(callSid: string): Promise<void>;
   recording(callSid: string): Promise<BridgeRecording | null>;
@@ -260,7 +262,7 @@ export class TwilioBridge implements CallBridge {
     opts: { allow404?: boolean } = {},
   ): Promise<T | null> {
     const auth = Buffer.from(`${this.keys.apiKeySid}:${this.keys.apiKeySecret}`).toString("base64");
-    let res: Response;
+    let res: Response | undefined;
     let text: string;
     try {
       res = await this.fetchImpl()(url, {
@@ -276,7 +278,9 @@ export class TwilioBridge implements CallBridge {
       text = await res.text();
     } catch (err) {
       const name = (err as Error).name;
-      if ((name === "TimeoutError" || name === "AbortError") && method !== "GET")
+      const timedOut = name === "TimeoutError" || name === "AbortError";
+      // An accepted write whose answer was lost is as unknown as a timeout.
+      if (method !== "GET" && (timedOut || res?.ok))
         throw new CallBridgeError(
           "Twilio did not answer in time, so it may or may not have done it",
           0,
@@ -353,8 +357,9 @@ export class TwilioBridge implements CallBridge {
       MachineDetection: "Enable",
       Twiml: holdTwiml(input.sayName),
     });
+    // Accepted without a SID: the phone may ring all the same.
     if (typeof body?.sid !== "string")
-      throw new CallBridgeError("Twilio did not return a call", 502);
+      throw new CallBridgeError("Twilio did not return a call", 502, null, true);
     return { callSid: body.sid };
   }
 
@@ -365,6 +370,19 @@ export class TwilioBridge implements CallBridge {
     await this.request("POST", this.account(`Calls/${encodeURIComponent(callSid)}.json`), {
       Twiml: dialTwiml(input),
     });
+  }
+
+  /**
+   * Recording the parent leg in two channels keeps each side apart: Twilio
+   * puts the parent call (the member) on the first and the child (the
+   * prospect) on the second.
+   */
+  async startRecording(callSid: string): Promise<void> {
+    await this.request(
+      "POST",
+      this.account(`Calls/${encodeURIComponent(callSid)}/Recordings.json`),
+      { RecordingChannels: "dual" },
+    );
   }
 
   private async call(callSid: string): Promise<TwilioCall> {
@@ -553,4 +571,21 @@ export async function resolveTranscriptionService(
   const sid = await bridge.ensureService();
   shared.setInstallSetting(SERVICE_SETTING, JSON.stringify({ accountSid: bridge.accountSid, sid }));
   return sid;
+}
+
+/** Drop the install's kept service when it is `sid`, so the next resolve finds or creates one. */
+export function forgetTranscriptionService(sid: string): void {
+  const shared = getSharedDb();
+  if (shared.installSetting(SERVICE_SETTING)?.includes(JSON.stringify(sid)))
+    shared.setInstallSetting(SERVICE_SETTING, "null");
+}
+
+/** A transcript create refused because its service no longer exists. */
+export function isMissingServiceError(err: unknown): boolean {
+  if (!(err instanceof CallBridgeError)) return false;
+  return (
+    err.status === 404 ||
+    err.code === 20404 ||
+    /service.*(not (be )?found|does ?n[o']t exist)/i.test(err.message)
+  );
 }

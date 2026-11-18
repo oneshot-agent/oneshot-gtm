@@ -11,6 +11,7 @@ import {
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
+import type { CallRecordMode } from "@oneshot-gtm/shared-types";
 import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
 import {
@@ -405,7 +406,11 @@ export interface ResolvedCalls {
   cadenceStep: { position: number; delayDays: number; holdDays: number } | null;
   window: { start: string; end: string; weekdays: boolean };
   /** Null only for `bridge: null`; whether it can dial depends on the keys (`twilioKeysFromEnv`). */
-  bridge: { provider: "twilio"; record: boolean; transcriptionServiceSid: string | null } | null;
+  bridge: {
+    provider: "twilio";
+    record: CallRecordMode;
+    transcriptionServiceSid: string | null;
+  } | null;
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -466,11 +471,16 @@ export function callsOf(cfg: { calls?: unknown }): ResolvedCalls {
       ? null
       : {
           provider: "twilio" as const,
-          record: b?.["record"] !== false,
+          record: callRecordModeOf(b?.["record"]),
           transcriptionServiceSid:
             typeof serviceSid === "string" && serviceSid.trim() ? serviceSid.trim() : null,
         };
   return { enabled: raw["enabled"] === true, cadenceStep, window, bridge };
+}
+
+/** `calls.bridge.record`: anything but "always" or false asks first; the legacy `true` too. */
+export function callRecordModeOf(value: unknown): CallRecordMode {
+  return value === false ? false : value === "always" ? "always" : "ask";
 }
 
 /** Who writes LinkedIn copy: only the exact string `model` turns templates off. */

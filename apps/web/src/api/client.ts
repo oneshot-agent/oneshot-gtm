@@ -210,7 +210,7 @@ export interface CallsSettingsView {
    */
   bridge: {
     provider: "twilio";
-    record?: boolean;
+    record?: "ask" | "always" | boolean;
     transcriptionServiceSid?: string;
   } | null;
 }
@@ -579,6 +579,10 @@ export const api = {
   startCall: (req: StartCallRequest) => postJson<CallRecordView>("/calls/start", req),
   call: (id: number) => getJson<CallRecordView>(`/calls/${id}`),
   hangUpCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/hangup`, {}),
+  /** The prospect agreed: record the connected call from now. */
+  recordCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/record`, {}),
+  /** The prospect declined recording: delete it and its transcript. */
+  discardRecording: (id: number) => postJson<CallRecordView>(`/calls/${id}/discard-recording`, {}),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),
   confirmMeetingMatch: (req: ConfirmMeetingMatchRequest) =>

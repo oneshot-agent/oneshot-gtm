@@ -365,10 +365,16 @@ function whole(raw: string | undefined, min: number, what: string, fallback?: nu
   return n;
 }
 
+const RECORD_TEXT: Record<string, string> = {
+  ask: "recorded only once you press Record, after they agree",
+  always: "recorded from their answer (only where one party's consent is enough)",
+  false: "not recorded (no transcript, no suggested outcome)",
+};
+
 /**
  * Show or set the dialler (`calls`); off by default. Subcommands: `on|off`,
  * `step <position> [delay] [hold]` (position counts the first email as 1),
- * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`, `record on|off`.
+ * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`, `record ask|always|off`.
  * Anything but whole numbers is refused rather than saved.
  */
 export async function configCalls(action?: string, args: string[] = []): Promise<void> {
@@ -391,12 +397,12 @@ export async function configCalls(action?: string, args: string[] = []): Promise
       !calls.bridge
         ? "bridged calls off: Call opens a tel: link"
         : twilioKeysFromEnv()
-          ? `bridged calls: Call rings the member's verified phone; ${calls.bridge.record ? "recorded and transcribed" : "not recorded"}`
+          ? `bridged calls: Call rings the member's verified phone; ${RECORD_TEXT[String(calls.bridge.record)]}`
           : "Call opens a tel: link (add TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to .env to ring your phone)",
     );
     note(
       c.dim(
-        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day] | record <on|off>",
+        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day] | record <ask|always|off>",
       ),
     );
     return;
@@ -451,22 +457,16 @@ export async function configCalls(action?: string, args: string[] = []): Promise
 
   if (action === "record") {
     const value = args[0];
-    if (value !== "on" && value !== "off")
-      throw new Error(`invalid record '${value ?? ""}' — pass on or off`);
+    if (value !== "ask" && value !== "always" && value !== "off")
+      throw new Error(`invalid record '${value ?? ""}' — pass ask, always or off`);
     if (current.bridge === null)
       throw new Error("bridged calls are off for this workspace (calls.bridge is null)");
+    const record = value === "off" ? false : value;
     saveConfig({
       ...cfg,
-      calls: {
-        ...current,
-        bridge: { ...current.bridge, provider: "twilio", record: value === "on" },
-      },
+      calls: { ...current, bridge: { ...current.bridge, provider: "twilio", record } },
     });
-    ok(
-      value === "on"
-        ? "bridged calls are recorded and transcribed"
-        : "bridged calls are not recorded (no transcript, no suggested outcome)",
-    );
+    ok(`bridged calls are ${RECORD_TEXT[String(record)]}`);
     return;
   }
 

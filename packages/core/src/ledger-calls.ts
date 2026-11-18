@@ -321,12 +321,29 @@ export function claimBridge(db: Database, id: number, atIso: string): boolean {
   );
 }
 
-/** The prospect declined recording: drop the transcript and suggestion now, delete the provider's copies next. */
+/**
+ * The prospect declined recording: drop the transcript, the suggestion and
+ * the promises read from it now, delete the provider's copies next.
+ */
 export function markRecordingDiscard(db: Database, id: number): void {
   db.prepare(
     `UPDATE calls SET discard_recording = 1, transcript_status = 'none', transcript_json = NULL,
-            summary_json = NULL WHERE id = ? AND provider = 'twilio' AND discard_recording = 0`,
+            summary_json = NULL, commitments_json = NULL
+      WHERE id = ? AND provider = 'twilio' AND discard_recording = 0`,
   ).run(id);
+}
+
+/** The member pressed Record (the prospect agreed): true for exactly one caller, on a call not yet recorded. */
+export function claimRecording(db: Database, id: number): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE calls SET transcript_status = 'pending'
+          WHERE id = ? AND provider = 'twilio' AND transcript_status = 'none'
+            AND recording_sid IS NULL AND discard_recording = 0`,
+      )
+      .run(id).changes === 1
+  );
 }
 
 /** The provider's recording and transcripts are deleted. */
@@ -340,29 +357,37 @@ export function finishRecordingDiscard(db: Database, id: number): void {
 /**
  * Bridged calls started since `sinceIso` with work left: still live as last
  * read, a transcript pending, or a ready transcript with no suggestion yet.
- * Oldest first, at most `limit` (the scheduler's sweep).
+ * Oldest first, at most `limit` (the scheduler's sweep). A recording
+ * deletion still pending is taken however old, up to `discardLimit` more,
+ * so a long outage never leaves one behind and never crowds out new calls.
  */
 export function listBridgedCallsToAdvance(
   db: Database,
   sinceIso: string,
   limit: number,
+  discardLimit = 5,
 ): BridgedCall[] {
-  return (
-    db
-      .query(
-        `SELECT * FROM calls
-          WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at >= ?
-            AND (COALESCE(status, '') NOT IN ('ended', 'failed')
-                 OR discard_recording = 1
-                 OR (transcript_status = 'pending' AND discard_recording = 0)
-                 OR (transcript_status = 'ready' AND summary_json IS NULL
-                     AND COALESCE(json_array_length(transcript_json), 0) > 0))
-          ORDER BY started_at ASC, id ASC LIMIT ?`,
-      )
-      .all(sinceIso, limit) as CallRow[]
-  )
-    .map(toBridged)
-    .filter((c): c is BridgedCall => c != null);
+  const recent = db
+    .query(
+      `SELECT * FROM calls
+        WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at >= ?
+          AND (COALESCE(status, '') NOT IN ('ended', 'failed')
+               OR discard_recording = 1
+               OR (transcript_status = 'pending' AND discard_recording = 0)
+               OR (transcript_status = 'ready' AND summary_json IS NULL
+                   AND COALESCE(json_array_length(transcript_json), 0) > 0))
+        ORDER BY started_at ASC, id ASC LIMIT ?`,
+    )
+    .all(sinceIso, limit) as CallRow[];
+  const oldDiscards = db
+    .query(
+      `SELECT * FROM calls
+        WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at < ?
+          AND discard_recording = 1
+        ORDER BY started_at ASC, id ASC LIMIT ?`,
+    )
+    .all(sinceIso, discardLimit) as CallRow[];
+  return [...oldDiscards, ...recent].map(toBridged).filter((c): c is BridgedCall => c != null);
 }
 
 /**

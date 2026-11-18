@@ -992,13 +992,20 @@ export function mergeCalls(
     };
   }
   if (incoming.record !== undefined) {
-    if (typeof incoming.record !== "boolean")
-      throw new SetupValidationError("calls.record must be true or false");
+    if (
+      incoming.record !== "ask" &&
+      incoming.record !== "always" &&
+      incoming.record !== false &&
+      incoming.record !== true
+    )
+      throw new SetupValidationError('calls.record must be "ask", "always" or false');
     if (next.bridge === null)
       throw new SetupValidationError(
         "bridged calls are off for this workspace (calls.bridge is null in config.json)",
       );
-    next.bridge = { ...next.bridge, provider: "twilio", record: incoming.record };
+    // The legacy true is the safe reading: ask first.
+    const record = incoming.record === true ? "ask" : incoming.record;
+    next.bridge = { ...next.bridge, provider: "twilio", record };
   }
   return next;
 }

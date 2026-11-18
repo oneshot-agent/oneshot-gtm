@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../core/src/ledger.ts";
 import {
-  ALREADY_VERIFIED_CODE,
   CallBridgeError,
   getSharedDb,
   type BridgeCallState,
@@ -18,6 +17,7 @@ let ledger: Ledger;
 let cfg: Record<string, unknown> = {};
 const responses: string[] = [];
 const prompts: string[] = [];
+const timeouts: Array<number | undefined> = [];
 const events: Array<[string, Record<string, unknown>]> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -36,8 +36,12 @@ vi.mock("@oneshot-gtm/intel", async () => {
   return {
     ...actual,
     loadPrompt: (name: string) => `prompt:${name}`,
-    complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
+    complete: async (input: {
+      messages: Array<{ role: string; content: string }>;
+      timeoutMs?: number;
+    }) => {
       prompts.push(input.messages.map((m) => m.content).join("\n"));
+      timeouts.push(input.timeoutMs);
       const next = responses.shift();
       if (next === undefined) throw new Error("no more responses");
       return { content: next, provider: "t", model: "t" };
@@ -60,6 +64,7 @@ const {
   memberCanBridge,
   settleBridgedCallWork,
   discardBridgedRecording,
+  startBridgedRecording,
   VERIFY_TIMEOUT_MS,
 } = bridgeMod;
 const { recordCall } = await import("../src/_calls.ts");
@@ -103,7 +108,10 @@ function fakeBridge(over: Partial<CallBridge> = {}): Fake {
     isVerified: vi.fn(async (phone: string) => fake.verified.has(phone)),
     start: vi.fn(async () => ({ callSid: "CA1" })),
     connect: vi.fn(async () => {}),
-    removeCallerId: vi.fn(async () => {}),
+    startRecording: vi.fn(async () => {}),
+    removeCallerId: vi.fn(async (phone: string) => {
+      fake.verified.delete(phone);
+    }),
     deleteRecording: vi.fn(async () => {}),
     transcriptsFor: vi.fn(async () => ["GT1"]),
     deleteTranscript: vi.fn(async () => {}),
@@ -140,10 +148,14 @@ const LINES = [
 beforeEach(() => {
   ledger = new Ledger(":memory:");
   cfg = {
-    calls: { enabled: true, bridge: { provider: "twilio", transcriptionServiceSid: "GAcfg" } },
+    calls: {
+      enabled: true,
+      bridge: { provider: "twilio", record: "always", transcriptionServiceSid: "GAcfg" },
+    },
   };
   responses.length = 0;
   prompts.length = 0;
+  timeouts.length = 0;
   events.length = 0;
   getSharedDb().deleteMemberPhone("");
   getSharedDb().deleteMemberPhone("mia@example.com");
@@ -279,6 +291,44 @@ describe("the hold before the prospect is dialled", () => {
     await refreshBridgedCall(id, { bridge, now: IN_WINDOW });
     expect(bridge.connect).toHaveBeenCalledTimes(1);
     expect(ledger.getCall(id)?.status).toBe("connected");
+  });
+
+  it("leaves a call another poll claimed as that poll wrote it", async () => {
+    const bridge = fakeBridge();
+    const id = await held(bridge);
+    bridge.state = st("ringing_prospect", null, false, "human");
+    vi.spyOn(ledger, "claimBridge").mockImplementationOnce(() => {
+      ledger.updateBridgedCall(id, { status: "ended" });
+      return false;
+    });
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW });
+    expect(ledger.getCall(id)?.status).toBe("ended");
+    expect(bridge.connect).not.toHaveBeenCalled();
+  });
+
+  it("checks the opt-outs and their hours again before dialling them", async () => {
+    const bridge = fakeBridge();
+    const id = await held(bridge);
+    recordCall(ledger.getCall(id)!.prospectId, { outcome: "do_not_contact" });
+    bridge.state = st("ringing_prospect", null, false, "human");
+    expect(await refreshBridgedCall(id, { bridge, now: IN_WINDOW })).toMatchObject({
+      status: "failed",
+      statusReason: "contact with them is no longer allowed, so nobody was dialled",
+    });
+    const other = await startBridgedCall({
+      prospectId: prospect({ email: "b@acme.test", phone: "+15126531188", name: "Bo" }),
+      member: null,
+      now: IN_WINDOW,
+      bridge,
+    });
+    // 17:30 in Chicago: the window closed while the member's phone rang.
+    const closed = new Date("2026-11-18T23:30:00Z");
+    expect(await refreshBridgedCall(other.id, { bridge, now: closed })).toMatchObject({
+      status: "failed",
+      statusReason: "their call hours closed while your phone rang, so nobody was dialled",
+    });
+    expect(bridge.connect).not.toHaveBeenCalled();
+    expect(bridge.hangUp).toHaveBeenCalledTimes(2);
   });
 
   it("dials on an undecided detection too", async () => {
@@ -426,7 +476,8 @@ describe("a prospect who declined recording", () => {
     const bridge = fakeBridge();
     const id = await recorded(bridge);
     const prospectId = ledger.getCall(id)!.prospectId;
-    recordCall(prospectId, { outcome: "not_interested", callId: id, consentDeclined: true });
+    // Logged first with a promise from the transcript: the deletion drops it too.
+    recordCall(prospectId, { outcome: "not_interested", callId: id, commitments: ["send it"] });
     const out = await discardBridgedRecording(id, { bridge, now: IN_WINDOW });
     expect(out).toMatchObject({
       outcome: "not_interested",
@@ -434,6 +485,7 @@ describe("a prospect who declined recording", () => {
       transcript: null,
       suggestion: null,
     });
+    expect(out).not.toHaveProperty("commitments");
     expect(bridge.transcriptsFor).toHaveBeenCalledWith("RE1");
     expect(bridge.deleteTranscript).toHaveBeenCalledWith("GT1");
     expect(bridge.deleteRecording).toHaveBeenCalledWith("RE1");
@@ -467,6 +519,162 @@ describe("a prospect who declined recording", () => {
     expect(bridge.deleteRecording).toHaveBeenCalledWith("RE1");
     expect(bridge.transcribe).not.toHaveBeenCalled();
     expect(ledger.getBridgedCall(id)?.discardPending).toBe(false);
+  });
+
+  it("needs no outcome, and retries a hang-up that failed while the call is live", async () => {
+    verifyOwner();
+    const bridge = fakeBridge();
+    const id = bridged(
+      (await startBridgedCall({ prospectId: prospect(), member: null, now: IN_WINDOW, bridge })).id,
+    );
+    bridge.state = st("connected", 5, true);
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW });
+    vi.mocked(bridge.hangUp).mockRejectedValue(new CallBridgeError("Twilio: down", 503));
+    const out = await discardBridgedRecording(id, { bridge, now: IN_WINDOW });
+    expect(out.outcome).toBeNull();
+    expect(ledger.getBridgedCall(id)?.discardPending).toBe(true);
+    const tries = vi.mocked(bridge.hangUp).mock.calls.length;
+    expect(tries).toBeGreaterThanOrEqual(2);
+    vi.mocked(bridge.hangUp).mockReset();
+    vi.mocked(bridge.hangUp).mockImplementation(async () => {
+      bridge.state = st("ended", 9, true);
+    });
+    await sweepBridgedCalls({ bridge, now: IN_WINDOW });
+    expect(bridge.hangUp).toHaveBeenCalledWith("CA1");
+    bridge.rec = { sid: "RE1", status: "completed", durationSec: 9 };
+    await sweepBridgedCalls({ bridge, now: IN_WINDOW });
+    expect(bridge.deleteRecording).toHaveBeenCalledWith("RE1");
+    expect(bridge.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("never asks for a transcript once declined while the service was looked up", async () => {
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "always" } } };
+    getSharedDb().setInstallSetting("calls.transcriptionServiceSid", "null");
+    verifyOwner();
+    let id = 0;
+    const bridge = fakeBridge({
+      ensureService: vi.fn(async () => {
+        ledger.markRecordingDiscard(id);
+        return "GAnew";
+      }),
+    });
+    id = bridged(
+      (await startBridgedCall({ prospectId: prospect(), member: null, now: IN_WINDOW, bridge })).id,
+    );
+    bridge.state = st("ended", 30, true);
+    bridge.rec = { sid: "RE1", status: "completed", durationSec: 30 };
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW, wait: true });
+    expect(bridge.ensureService).toHaveBeenCalled();
+    expect(bridge.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("is still deleted after the sweep's lookback has passed", async () => {
+    const bridge = fakeBridge();
+    const id = ledger.insertCall({
+      prospectId: prospect(),
+      startedAt: new Date(IN_WINDOW.getTime() - 5 * 24 * 3600_000).toISOString(),
+      provider: "twilio",
+      providerCallSid: "CAold",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+    ledger.updateBridgedCall(id, { recordingSid: "REold" });
+    ledger.markRecordingDiscard(id);
+    expect((await sweepBridgedCalls({ bridge, now: IN_WINDOW })).checked).toBe(1);
+    expect(bridge.deleteRecording).toHaveBeenCalledWith("REold");
+    expect(ledger.getBridgedCall(id)?.discardPending).toBe(false);
+  });
+});
+
+describe("recording only once the prospect agreed (ask)", () => {
+  beforeEach(() => {
+    cfg = {
+      calls: {
+        enabled: true,
+        bridge: { provider: "twilio", record: "ask", transcriptionServiceSid: "GAcfg" },
+      },
+    };
+    verifyOwner();
+  });
+
+  async function connected(bridge: Fake): Promise<number> {
+    const call = await startBridgedCall({
+      prospectId: prospect(),
+      member: null,
+      now: IN_WINDOW,
+      bridge,
+    });
+    expect(call.transcriptStatus).toBe("none");
+    bridge.state = st("ringing_prospect", null, false, "human");
+    await refreshBridgedCall(call.id, { bridge, now: IN_WINDOW });
+    expect(vi.mocked(bridge.connect).mock.calls[0]![1].record).toBe(false);
+    return call.id;
+  }
+
+  it("dials without recording, then records once from Record, and transcribes that", async () => {
+    const bridge = fakeBridge();
+    const id = await connected(bridge);
+    await expect(startBridgedRecording(id, { bridge })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/only while you are connected/),
+    });
+    bridge.state = st("connected", 5, true);
+    const [a, b] = await Promise.all([
+      startBridgedRecording(id, { bridge }),
+      startBridgedRecording(id, { bridge }),
+    ]);
+    expect([a.transcriptStatus, b.transcriptStatus]).toEqual(["pending", "pending"]);
+    expect(bridge.startRecording).toHaveBeenCalledTimes(1);
+    expect(bridge.startRecording).toHaveBeenCalledWith("CA1");
+
+    bridge.state = st("ended", 40, true);
+    bridge.rec = { sid: "RE1", status: "completed", durationSec: 30 };
+    bridge.tx = { status: "ready", lines: LINES };
+    responses.push(JSON.stringify({ outcome: "interested", note: "n", commitments: [] }));
+    expect(await refreshBridgedCall(id, { bridge, now: IN_WINDOW, wait: true })).toMatchObject({
+      transcriptStatus: "ready",
+      transcript: LINES,
+    });
+    expect(timeouts).toEqual([60_000]);
+  });
+
+  it("keeps a call nobody recorded at no transcript", async () => {
+    const bridge = fakeBridge();
+    const id = await connected(bridge);
+    bridge.state = st("ended", 40, true);
+    bridge.rec = { sid: "RE1", status: "completed", durationSec: 30 };
+    expect(await refreshBridgedCall(id, { bridge, now: IN_WINDOW, wait: true })).toMatchObject({
+      transcriptStatus: "none",
+    });
+    expect(bridge.recording).not.toHaveBeenCalled();
+  });
+
+  it("goes back to unrecorded when Twilio refuses, stays pending when it is unsure", async () => {
+    const bridge = fakeBridge();
+    const id = await connected(bridge);
+    bridge.state = st("connected", 5, true);
+    vi.mocked(bridge.startRecording).mockRejectedValueOnce(
+      new CallBridgeError("Twilio: Call is not in-progress", 400, 21220),
+    );
+    await expect(startBridgedRecording(id, { bridge })).rejects.toMatchObject({ status: 502 });
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("none");
+    vi.mocked(bridge.startRecording).mockRejectedValueOnce(
+      new CallBridgeError("timed out", 0, null, true),
+    );
+    await expect(startBridgedRecording(id, { bridge })).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringMatching(/may be recording/),
+    });
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("pending");
+  });
+
+  it("refuses with recording off, and for a call that is not bridged", async () => {
+    const bridge = fakeBridge();
+    const id = await connected(bridge);
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: false } } };
+    await expect(startBridgedRecording(id, { bridge })).rejects.toMatchObject({ status: 409 });
+    await expect(startBridgedRecording(9999, { bridge })).rejects.toMatchObject({ status: 404 });
+    expect(bridge.startRecording).not.toHaveBeenCalled();
   });
 });
 
@@ -538,6 +746,31 @@ describe("following a bridged call", () => {
     // The member confirms it: the bridged call keeps its own number and member.
     const logged = recordCall(done.prospectId, { outcome: "interested", callId: id }, later, "x@y");
     expect(logged).toMatchObject({ id, outcome: "interested", member: null, provider: "twilio" });
+  });
+
+  it("replaces a kept transcription service Twilio no longer has", async () => {
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "always" } } };
+    getSharedDb().setInstallSetting(
+      "calls.transcriptionServiceSid",
+      JSON.stringify({ accountSid: "AC1", sid: "GAgone" }),
+    );
+    const bridge = fakeBridge({
+      transcribe: vi.fn(async ({ serviceSid }: { serviceSid: string }) => {
+        if (serviceSid === "GAgone") throw new CallBridgeError("Twilio: not found", 404, 20404);
+        return { transcriptSid: "GT1" };
+      }),
+    });
+    const id = await placed(bridge);
+    bridge.state = st("ended", 30, true);
+    bridge.rec = { sid: "RE1", status: "completed", durationSec: 30 };
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW, wait: true });
+    expect(bridge.ensureService).toHaveBeenCalledTimes(1);
+    expect(bridge.transcribe).toHaveBeenLastCalledWith({
+      recordingSid: "RE1",
+      serviceSid: "GAnew",
+    });
+    expect(ledger.getBridgedCall(id)?.transcriptSid).toBe("GT1");
+    expect(getSharedDb().installSetting("calls.transcriptionServiceSid")).toContain("GAnew");
   });
 
   it("returns at once without wait, the work finishing in the background", async () => {
@@ -716,7 +949,7 @@ describe("member phones", () => {
     });
     bridge.verified.add("+14155550199");
     expect((await verifyMemberPhone("mia@example.com", "+14155550199", { bridge })).status).toBe(
-      "verified",
+      "verifying",
     );
     getSharedDb().deleteMemberPhone("gone@example.com");
   });
@@ -735,6 +968,24 @@ describe("member phones", () => {
     expect(callsMe(null, { bridge: failing }).phone.phone).toBe(MEMBER);
   });
 
+  it("keeps a phone stored while Twilio was removing the old one", async () => {
+    getSharedDb().setMemberPhone({ member: "", phone: MEMBER, status: "verified" });
+    const bridge = fakeBridge({
+      removeCallerId: vi.fn(async () => {
+        getSharedDb().setMemberPhone({
+          member: "",
+          phone: "+14155550122",
+          status: "verifying",
+          validationCode: "111111",
+        });
+      }),
+    });
+    expect(await removeMemberPhone(null, { bridge })).toMatchObject({
+      phone: "+14155550122",
+      status: "verifying",
+    });
+  });
+
   it("verifies a new phone with a code, then flips to verified once listed", async () => {
     const bridge = fakeBridge();
     const view = await verifyMemberPhone("Mia@Example.com", "(415) 555-0111", { bridge });
@@ -748,7 +999,7 @@ describe("member phones", () => {
     });
     expect(callsMe("mia@example.com", { bridge })).toMatchObject({
       bridgeReady: true,
-      record: true,
+      record: "always",
       phone: { status: "verifying" },
     });
     expect(memberCanBridge("mia@example.com", { bridge })).toBe(false);
@@ -765,17 +1016,21 @@ describe("member phones", () => {
     expect(callsMe("mia@example.com", { bridge }).phone.phone).toBeNull();
   });
 
-  it("marks a number the account already verified at once", async () => {
+  it("needs this member's own code for a number the account already lists", async () => {
     const bridge = fakeBridge();
+    // Left on the account by someone who has since moved to another phone.
+    bridge.verified.add(MEMBER);
+    expect(await verifyMemberPhone(null, MEMBER, { bridge })).toMatchObject({
+      status: "verifying",
+      validationCode: "654321",
+    });
+    expect(bridge.removeCallerId).toHaveBeenCalledWith(MEMBER);
+    expect(bridge.verifyCallerId).toHaveBeenCalledWith(MEMBER);
+    // Their code typed: Verify again (or the check) sees it listed and marks it verified.
     bridge.verified.add(MEMBER);
     expect((await verifyMemberPhone(null, MEMBER, { bridge })).status).toBe("verified");
-    expect(bridge.verifyCallerId).not.toHaveBeenCalled();
-    const racing = fakeBridge({
-      verifyCallerId: async () => {
-        throw new CallBridgeError("Twilio: already verified", 400, ALREADY_VERIFIED_CODE);
-      },
-    });
-    expect((await verifyMemberPhone(null, MEMBER, { bridge: racing })).status).toBe("verified");
+    expect((await verifyMemberPhone(null, MEMBER, { bridge })).status).toBe("verified");
+    expect(bridge.verifyCallerId).toHaveBeenCalledTimes(1);
   });
 
   it("stores a provider refusal as failed, times out an unfinished code, and refuses bad input", async () => {

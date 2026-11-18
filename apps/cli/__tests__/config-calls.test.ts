@@ -33,11 +33,13 @@ describe("config calls", () => {
 
     await configCalls("record", ["off"]);
     expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: false });
-    await configCalls("record", ["on"]);
-    expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: true });
-    await expect(configCalls("record", ["maybe"])).rejects.toThrow(/invalid record/);
+    await configCalls("record", ["always"]);
+    expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: "always" });
+    await configCalls("record", ["ask"]);
+    expect(loadConfig().calls?.bridge).toEqual({ ...bridge, record: "ask" });
+    await expect(configCalls("record", ["on"])).rejects.toThrow(/invalid record/);
     saveConfig({ ...loadConfig(), calls: { enabled: true, bridge: null } });
-    await expect(configCalls("record", ["on"])).rejects.toThrow(/off for this workspace/);
+    await expect(configCalls("record", ["ask"])).rejects.toThrow(/off for this workspace/);
   });
 
   it("takes decimal digits only for the step's numbers, zero where it is allowed", async () => {

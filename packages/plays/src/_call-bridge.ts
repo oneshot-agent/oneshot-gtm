@@ -12,7 +12,6 @@ import {
   type MemberPhoneView,
 } from "@oneshot-gtm/shared-types";
 import {
-  ALREADY_VERIFIED_CODE,
   CallBridgeError,
   answeredByMachine,
   callBridgeFromEnv,
@@ -20,8 +19,10 @@ import {
   defaultPhoneCountry,
   doNotContactMatch,
   doNotContactOf,
+  forgetTranscriptionService,
   getLedger,
   getSharedDb,
+  isMissingServiceError,
   loadConfig,
   logEvent,
   memberPhoneKey,
@@ -53,6 +54,8 @@ const MIN_RECORDING_SEC = 2;
 const MAX_TRANSCRIPT_CHARS = 16_000;
 const MAX_NOTE_CHARS = 600;
 const MAX_COMMITMENTS = 5;
+/** The suggestion's model call: past this, a discard waiting on it carries on. */
+const SUGGEST_TIMEOUT_MS = 60_000;
 
 const VOICEMAIL = "it went to your voicemail, so nobody was dialled";
 const ENDED_BEFORE_DIAL = "the call ended before they were dialled";
@@ -133,9 +136,11 @@ export function memberCanBridge(
 }
 
 /**
- * Start verifying a member's phone as a caller ID. A number the account has
- * verified already is marked verified at once; otherwise the provider rings
- * it and the view carries the code to type. A provider refusal is stored as
+ * Start verifying a member's phone as a caller ID: the provider rings it and
+ * the view carries the code to type. Caller IDs belong to the whole account,
+ * so one it lists already proves nothing about this member: it is removed
+ * and verified again with a fresh code. Only this member's own code, typed
+ * on a call to the phone, marks it verified. A provider refusal is stored as
  * a failed verification (and thrown, 502).
  */
 export async function verifyMemberPhone(
@@ -159,25 +164,24 @@ export async function verifyMemberPhone(
   // A caller ID verified for one member must never be claimable by another without a code.
   if (heldByAnother(member, phone))
     throw new CallBridgeRequestError("that number is another member's phone", 409);
-  const verified = () =>
-    shared.setMemberPhone({
-      member,
-      phone,
-      status: "verified",
-      verifiedAt: new Date().toISOString(),
-    });
+  const own = shared.memberPhone(member);
+  if (own?.phone === phone && own.status === "verified") return memberPhoneView(email);
   try {
-    if (await bridge.isVerified(phone)) {
-      verified();
+    const listed = await bridge.isVerified(phone);
+    // This member's own code was typed: the challenge they started is done.
+    if (listed && own?.phone === phone && own.status === "verifying") {
+      shared.setMemberPhone({
+        member,
+        phone,
+        status: "verified",
+        verifiedAt: new Date().toISOString(),
+      });
       return memberPhoneView(email);
     }
+    if (listed) await bridge.removeCallerId(phone);
     const { validationCode } = await bridge.verifyCallerId(phone);
     shared.setMemberPhone({ member, phone, status: "verifying", validationCode });
   } catch (err) {
-    if (err instanceof CallBridgeError && err.code === ALREADY_VERIFIED_CODE) {
-      verified();
-      return memberPhoneView(email);
-    }
     shared.setMemberPhone({ member, phone, status: "failed", error: (err as Error).message });
     throw providerError(err);
   }
@@ -235,7 +239,11 @@ function heldByAnother(member: string, phone: string): boolean {
     .some((m) => m !== member && (m === "" || shared.activeMember(m) != null));
 }
 
-/** Forget a member's phone and remove it as a caller ID, so using it again needs a fresh code. */
+/**
+ * Forget a member's phone and remove it as a caller ID, so using it again
+ * needs a fresh code. A phone stored while the provider was removing the
+ * old one is kept.
+ */
 export async function removeMemberPhone(
   email: string | null,
   opts: { bridge?: CallBridge | null } = {},
@@ -253,7 +261,7 @@ export async function removeMemberPhone(
       throw providerError(err);
     }
   }
-  shared.deleteMemberPhone(member);
+  if (!shared.deleteMemberPhone(member, row)) return memberPhoneView(email);
   return { ...NO_PHONE };
 }
 
@@ -286,6 +294,28 @@ function opensAtText(opensAt: string | null, zone: string | undefined): string {
   } catch {
     return opensAt;
   }
+}
+
+/**
+ * Why the prospect may no longer be dialled, rechecked as the member's phone
+ * picks up (an opt-out or the window closing while it rang); null when they
+ * may.
+ */
+function dialRefusal(prospectId: number, phone: string, now: Date): string | null {
+  const cfg = loadConfig();
+  const calls = callsOf(cfg);
+  const ledger = getLedger();
+  const prospect = ledger.getProspectById(prospectId);
+  if (
+    !calls.enabled ||
+    !prospect ||
+    !ledger.callAllowed(prospectId) ||
+    companyBlocked(cfg, prospectId, prospect.email ?? null)
+  )
+    return "contact with them is no longer allowed, so nobody was dialled";
+  if (!phoneLocalTime(phone, calls.window, now).inWindow)
+    return "their call hours closed while your phone rang, so nobody was dialled";
+  return null;
 }
 
 /**
@@ -337,7 +367,8 @@ export async function startBridgedCall(input: {
     provider: "twilio" as const,
     member: input.member,
     memberPhone,
-    transcriptStatus: calls.bridge.record ? ("pending" as const) : ("none" as const),
+    // "ask" records nothing until the member presses Record.
+    transcriptStatus: calls.bridge.record === "always" ? ("pending" as const) : ("none" as const),
   };
   let callSid: string;
   try {
@@ -374,7 +405,10 @@ export async function startBridgedCall(input: {
       );
     throw err;
   }
-  logEvent("call.started", { prospect_id: input.prospectId, record: calls.bridge.record });
+  logEvent("call.started", {
+    prospect_id: input.prospectId,
+    record: String(calls.bridge.record),
+  });
   return ledger.getCall(id)!;
 }
 
@@ -429,6 +463,17 @@ export async function refreshBridgedCall(
   if (!TERMINAL.has(call.view.status ?? "")) {
     try {
       const state = await bridge.status(call.callSid);
+      // The prospect declined recording and the hang-up did not get through: again.
+      if (call.discardPending && !TERMINAL.has(state.status))
+        await bridge
+          .hangUp(call.callSid)
+          .catch((err: unknown) =>
+            logEvent(
+              "call.discard_hangup_failed",
+              { call_id: callId, message_120: ((err as Error).message ?? "").slice(0, 120) },
+              "warn",
+            ),
+          );
       if (!call.bridgedAt) await holdStep(call, state, bridge, now);
       else
         ledger.updateBridgedCall(callId, {
@@ -488,10 +533,8 @@ async function holdStep(
     ledger.updateBridgedCall(id, { status: "ringing_founder" });
     return;
   }
-  if (!ledger.claimBridge(id, now.toISOString())) {
-    ledger.updateBridgedCall(id, { status: "ringing_prospect" });
-    return;
-  }
+  // Another poll owns the call now, and may have moved it on already.
+  if (!ledger.claimBridge(id, now.toISOString())) return;
   const fail = async (reason: string) => {
     await bridge.hangUp(call.callSid).catch(() => {});
     ledger.updateBridgedCall(id, {
@@ -502,6 +545,8 @@ async function holdStep(
   };
   if (answeredByMachine(state.answeredBy)) return fail(VOICEMAIL);
   if (!call.memberPhone || !call.phone) return fail("the call is missing a number");
+  const refusal = dialRefusal(call.view.prospectId, call.phone, now);
+  if (refusal) return fail(refusal);
   try {
     await bridge.connect(call.callSid, {
       memberPhone: call.memberPhone,
@@ -571,14 +616,8 @@ async function advanceTranscript(callId: number, bridge: CallBridge, now: Date):
     call = ledger.getBridgedCall(callId)!;
   }
   if (call.view.transcriptStatus === "pending" && call.recordingSid && !call.transcriptSid) {
-    const serviceSid = await resolveTranscriptionService(
-      bridge,
-      callsOf(loadConfig()).bridge?.transcriptionServiceSid ?? null,
-    );
-    const { transcriptSid } = await bridge.transcribe({
-      recordingSid: call.recordingSid,
-      serviceSid,
-    });
+    const transcriptSid = await requestTranscript(callId, call.recordingSid, bridge);
+    if (!transcriptSid) return;
     ledger.updateBridgedCall(callId, { transcriptSid });
     call = ledger.getBridgedCall(callId)!;
   }
@@ -607,10 +646,82 @@ async function advanceTranscript(callId: number, bridge: CallBridge, now: Date):
 }
 
 /**
+ * Ask the provider for a transcript, unless the prospect declined recording
+ * while the service was looked up (null). A kept service the provider no
+ * longer has is forgotten and replaced once.
+ */
+async function requestTranscript(
+  callId: number,
+  recordingSid: string,
+  bridge: CallBridge,
+): Promise<string | null> {
+  const configured = callsOf(loadConfig()).bridge?.transcriptionServiceSid ?? null;
+  const declined = () => {
+    const now = getLedger().getBridgedCall(callId);
+    return !now || now.discardPending || now.view.transcriptStatus !== "pending";
+  };
+  let serviceSid = await resolveTranscriptionService(bridge, configured);
+  if (declined()) return null;
+  try {
+    return (await bridge.transcribe({ recordingSid, serviceSid })).transcriptSid;
+  } catch (err) {
+    if (configured || !isMissingServiceError(err)) throw err;
+    forgetTranscriptionService(serviceSid);
+    serviceSid = await resolveTranscriptionService(bridge, null);
+    if (declined()) return null;
+    return (await bridge.transcribe({ recordingSid, serviceSid })).transcriptSid;
+  }
+}
+
+/**
+ * The prospect agreed to recording (the "ask" mode): record the connected
+ * call from now, both sides on their own channel. Pressing it twice records
+ * once; a call already recorded, or whose recording was declined, is
+ * returned as it is.
+ */
+export async function startBridgedRecording(
+  callId: number,
+  opts: { bridge?: CallBridge | null } = {},
+): Promise<CallRecordView> {
+  const ledger = getLedger();
+  const call = ledger.getBridgedCall(callId);
+  if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
+  if (!callsOf(loadConfig()).bridge?.record)
+    throw new CallBridgeRequestError("recording is off for this workspace", 409);
+  if (call.view.transcriptStatus !== "none" || call.discardPending) return call.view;
+  const bridge = bridgeFor(opts);
+  if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
+  let state: BridgeCallState;
+  try {
+    state = await bridge.status(call.callSid);
+  } catch (err) {
+    throw providerError(err);
+  }
+  if (state.status !== "connected")
+    throw new CallBridgeRequestError("Record works only while you are connected to them", 409);
+  if (!ledger.claimRecording(callId)) return ledger.getCall(callId)!;
+  try {
+    await bridge.startRecording(call.callSid);
+  } catch (err) {
+    // Unknown outcome: the transcript step finds a recording, or gives up on none.
+    if (err instanceof CallBridgeError && err.uncertain)
+      throw new CallBridgeRequestError(
+        "Twilio did not confirm the recording started; it may be recording",
+        502,
+      );
+    ledger.updateBridgedCall(callId, { transcriptStatus: "none" });
+    throw providerError(err);
+  }
+  logEvent("call.recording_started", { call_id: callId });
+  return ledger.getCall(callId)!;
+}
+
+/**
  * The prospect declined recording: hang up if the call is still live, drop
- * the transcript and suggestion at once, then delete the provider's
- * transcripts and recording (now, or on a later read or sweep while the
- * recording is still processing).
+ * the transcript, suggestion and promises at once, then delete the
+ * provider's transcripts and recording (now, or on a later read or sweep
+ * while the recording is still processing). Separate from logging an
+ * outcome; the flag is stored first, so the sweep finishes what fails here.
  */
 export async function discardBridgedRecording(
   callId: number,
@@ -622,6 +733,7 @@ export async function discardBridgedRecording(
   ledger.markRecordingDiscard(callId);
   const bridge = bridgeFor(opts);
   if (!bridge) return ledger.getCall(callId)!;
+  // A failed hang-up is retried by every later read while the call is live.
   if (!TERMINAL.has(call.view.status ?? "")) await bridge.hangUp(call.callSid).catch(() => {});
   await inFlight.get(callId);
   await refreshBridgedCall(callId, { bridge, ...(opts.now ? { now: opts.now } : {}), wait: true });
@@ -753,6 +865,7 @@ export async function suggestCallOutcome(input: {
     ],
     temperature: 0.2,
     maxTokens: 400,
+    timeoutMs: SUGGEST_TIMEOUT_MS,
   });
   return parseCallOutcome(res.content, {
     prospectSpoke: input.transcript.some((l) => l.speaker === "prospect"),

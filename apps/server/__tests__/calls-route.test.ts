@@ -215,9 +215,14 @@ describe("mergeCalls", () => {
       enabled: false,
       bridge: { ...bridge, record: false },
     });
+    expect(mergeCalls({ record: "always" }, { enabled: true })).toEqual({
+      enabled: true,
+      bridge: { provider: "twilio", record: "always" },
+    });
+    // The legacy true is read the safe way: ask first.
     expect(mergeCalls({ record: true }, { enabled: true })).toEqual({
       enabled: true,
-      bridge: { provider: "twilio", record: true },
+      bridge: { provider: "twilio", record: "ask" },
     });
     expect(() => mergeCalls({ record: true }, { enabled: true, bridge: null })).toThrow(
       SetupValidationError,

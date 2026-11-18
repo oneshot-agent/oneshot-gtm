@@ -153,6 +153,19 @@ export function keptCommitments(
     .filter((c) => c.text && !removed.includes(c.index));
 }
 
+/**
+ * The promises Save sends: the kept ones, or null (the stored ones stay)
+ * when there were none to keep or privacy mode hid them from the member.
+ */
+export function commitmentsToSend(
+  suggestion: CallRecordView["suggestion"],
+  kept: readonly { text: string }[],
+  masked: boolean,
+): string[] | null {
+  if (masked || !suggestion?.commitments.length) return null;
+  return kept.map((c) => c.text);
+}
+
 /** What the suggestion puts in the panel: its outcome and note, untouched until the member changes them. */
 export function suggestedPick(
   suggestion: CallRecordView["suggestion"],

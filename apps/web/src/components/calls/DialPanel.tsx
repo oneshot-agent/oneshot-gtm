@@ -4,6 +4,7 @@ import type {
   CallBrief,
   CallListResponse,
   CallListRow,
+  CallRecordMode,
   CallRecordView,
   CurrentMember,
   LogCallRequest,
@@ -17,6 +18,7 @@ import {
   bridgePollMs,
   bridgeStatusLine,
   callerLabel,
+  commitmentsToSend,
   CONSENT_LINE,
   firstName,
   isLive,
@@ -167,11 +169,12 @@ export function DialPanel({
   });
 
   // The bridged call on this panel: the one Call started here, else an
-  // unlogged one from the history (a reload, or someone opened mid-call).
+  // unlogged one from the history (a reload, or someone opened mid-call),
+  // even once new calls are tel: links.
   const bridged = dialMode === "bridge";
   const [startedId, setStartedId] = useState<number | null>(null);
   const [ringPhone, setRingPhone] = useState<string | null>(null);
-  const resumed = bridged && startedId == null ? resumableCall(history.data?.calls, me.data) : null;
+  const resumed = startedId == null ? resumableCall(history.data?.calls, me.data) : null;
   const callId = startedId ?? resumed?.id ?? null;
   const live = useQuery({
     queryKey: callKey(callId),
@@ -203,6 +206,23 @@ export function DialPanel({
     onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
     onError: (err) => toast.error(`couldn't hang up · ${err.message}`),
   });
+  const recordMode: CallRecordMode = callsMe.data?.record ?? false;
+  const startRecording = useMutation({
+    mutationFn: (id: number) => api.recordCall(id),
+    onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
+    onError: (err) => toast.error(`couldn't start recording · ${err.message}`),
+  });
+  // Its own action: no outcome needed, and open from the history after Save.
+  const discard = useMutation({
+    mutationFn: (id: number) => api.discardRecording(id),
+    onSuccess: (c) => {
+      qc.setQueryData(callKey(c.id), c);
+      if (c.id === call?.id) dispatch({ kind: "forget-call" });
+      void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
+      toast.success("recording and transcript deleted");
+    },
+    onError: (err) => toast.error(`couldn't delete the recording · ${err.message}`),
+  });
   // Once it ends, the history shows it; the suggestion fills an untouched panel once.
   useEffect(() => {
     if (call?.status === "ended" || call?.status === "failed")
@@ -216,7 +236,6 @@ export function DialPanel({
     call?.suggestion ?? null,
     removed && removed.callId === call?.id ? removed.indices : [],
   );
-  const hasCommitments = (call?.suggestion?.commitments.length ?? 0) > 0;
   const removeCommitment = (index: number) => {
     if (!call) return;
     setRemoved((r) => ({
@@ -252,8 +271,11 @@ export function DialPanel({
     : null;
   const request = logCallRequest(
     state,
-    bridged && bridgedOpts
-      ? { ...bridgedOpts, commitments: hasCommitments ? commitments.map((c) => c.text) : null }
+    bridgedOpts
+      ? {
+          ...bridgedOpts,
+          commitments: commitmentsToSend(call?.suggestion ?? null, commitments, masked),
+        }
       : {
           durationSec: startedAt != null ? elapsed : null,
           playName: row.playName,
@@ -263,20 +285,6 @@ export function DialPanel({
   const holdSave = saveHeld(call, { pollFailed: live.error != null, starting: ring.isPending });
   const submit = () => {
     if (request && !holdSave && !save.isPending) save.mutate({ req: request, timer: startedAt });
-  };
-  // The prospect refused recording: log the outcome without anything the
-  // transcript wrote (the suggested note, the promises); the server deletes
-  // the recording and the transcript.
-  const declineRequest =
-    bridged && bridgedOpts
-      ? logCallRequest(
-          { ...state, note: noteIsSuggested(state.note, suggestion) ? "" : state.note },
-          { ...bridgedOpts, consentDeclined: true },
-        )
-      : null;
-  const declineConsent = () => {
-    if (declineRequest && !holdSave && !save.isPending)
-      save.mutate({ req: declineRequest, timer: startedAt });
   };
 
   // Digits pick an outcome, Enter saves. The latest submit, without re-binding.
@@ -296,7 +304,7 @@ export function DialPanel({
 
   const localTime = localTimeNow(row.local, now);
   const flags = brief.data?.flags ?? [];
-  const noteSuggested = noteIsSuggested(state.note, suggestion);
+  const noteSuggested = suggestion != null && !!state.noteFromCall;
   const needsPhone =
     !bridged &&
     callsMe.data?.bridgeReady === true &&
@@ -352,13 +360,13 @@ export function DialPanel({
         </div>
       )}
 
-      {bridged && call && (
+      {call && (
         <section>
           <SheetHeading label="call" />
           <BridgeCallView
             call={call}
             first={firstName(mask("name", row.name))}
-            record={callsMe.data?.record ?? call.transcriptStatus !== "none"}
+            record={recordMode}
             connectedSec={connectedSec}
             hangingUp={hangUp.isPending}
             onHangUp={() => hangUp.mutate(call.id)}
@@ -366,8 +374,10 @@ export function DialPanel({
             masked={masked}
             commitments={commitments}
             onRemoveCommitment={removeCommitment}
-            onDeclineConsent={declineConsent}
-            declineDisabled={!declineRequest || holdSave || save.isPending}
+            onRecord={() => startRecording.mutate(call.id)}
+            recording={startRecording.isPending}
+            onDeclineConsent={() => discard.mutate(call.id)}
+            declineDisabled={discard.isPending}
           />
         </section>
       )}
@@ -486,6 +496,9 @@ export function DialPanel({
           onRetry={() => void history.refetch()}
           masked={masked}
           me={me.data}
+          {...(recordMode === "always"
+            ? { onDiscard: (id: number) => discard.mutate(id), discarding: discard.isPending }
+            : {})}
         />
       </section>
     </div>
@@ -501,7 +514,8 @@ function PrivacyHidden() {
  * The prospect's calls, newest first, with who placed each one. A failed
  * read with nothing cached says so with Retry; "No calls logged yet." only
  * after a read that found none. Notes and transcripts are about the person:
- * hidden in privacy mode.
+ * hidden in privacy mode. With `onDiscard`, a recorded call can still have
+ * its recording deleted after it was logged.
  */
 export function CallHistory({
   calls,
@@ -510,6 +524,8 @@ export function CallHistory({
   onRetry,
   masked,
   me,
+  onDiscard,
+  discarding = false,
 }: {
   calls: CallRecordView[] | undefined;
   isLoading: boolean;
@@ -518,6 +534,8 @@ export function CallHistory({
   masked: boolean;
   /** The signed-in member, so their own calls read "you"; undefined before /api/me answers. */
   me?: CurrentMember | null;
+  onDiscard?: (callId: number) => void;
+  discarding?: boolean;
 }) {
   const mask = useMask();
   if (calls && calls.length > 0)
@@ -551,6 +569,18 @@ export function CallHistory({
                     <TranscriptView transcript={c.transcript!} className="mt-2" />
                   </details>
                 ))}
+              {onDiscard && c.provider === "twilio" && c.transcriptStatus !== "none" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={discarding}
+                  onClick={() => onDiscard(c.id)}
+                  title="They didn't agree to recording: delete the recording and transcript"
+                  {...readOnly}
+                >
+                  Delete recording
+                </Button>
+              )}
             </li>
           );
         })}
@@ -681,9 +711,10 @@ function BriefView({ brief, flags }: { brief: CallBrief; flags: string[] }) {
 
 /**
  * A bridged call as it happens: where it is, a timer once connected, Hang
- * up, and the consent line while it records. After it ends: the transcript
- * once it lands, and what the call suggests (its outcome and note are
- * already picked in the panel below, for the member to confirm).
+ * up, and the consent line: in "ask" mode with Record, pressed once they
+ * agree; in "always" mode as the call is already recorded. After it ends:
+ * the transcript once it lands, and what the call suggests (its outcome and
+ * note are already picked in the panel below, for the member to confirm).
  */
 export function BridgeCallView({
   call,
@@ -696,13 +727,15 @@ export function BridgeCallView({
   masked,
   commitments,
   onRemoveCommitment,
+  onRecord,
+  recording,
   onDeclineConsent,
   declineDisabled,
 }: {
   call: CallRecordView;
   /** The prospect's first name, as the page shows it (masked in privacy mode). */
   first: string;
-  record: boolean;
+  record: CallRecordMode;
   connectedSec: number;
   hangingUp: boolean;
   onHangUp: () => void;
@@ -711,14 +744,16 @@ export function BridgeCallView({
   /** The suggested promises still kept; Save sends these. */
   commitments: { text: string; index: number }[];
   onRemoveCommitment: (index: number) => void;
-  /** Log the outcome and delete the recording: the prospect refused it. */
+  /** "ask" mode: the prospect agreed, record from now. */
+  onRecord: () => void;
+  recording: boolean;
+  /** "always" mode: delete the recording, the prospect refused it. */
   onDeclineConsent: () => void;
-  /** No outcome picked yet, or a save is running. */
   declineDisabled: boolean;
 }) {
   const live = isLive(call);
   const s = call.suggestion;
-  const recorded = record || call.transcriptStatus !== "none";
+  const recordingNow = live && call.transcriptStatus === "pending";
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -750,12 +785,26 @@ export function BridgeCallView({
           couldn't read the call · {pollError.message}
         </div>
       )}
-      {live && record && (
-        <div className="rounded-[var(--radius-sm)] border border-ink-rule px-3 py-2 text-[12.5px] text-ink-cream-2">
-          <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-            Say this first, the call is recorded
-          </div>
-          <div className="mt-1 font-prose text-[13.5px] text-ink-cream">“{CONSENT_LINE}”</div>
+      {live && record === "always" && <ConsentLine label="Say this first, the call is recorded" />}
+      {call.status === "connected" && record === "ask" && call.transcriptStatus === "none" && (
+        <ConsentLine label="Ask first; nothing is recorded until you press Record">
+          <Button
+            size="sm"
+            variant="secondary"
+            className="mt-2"
+            disabled={recording}
+            onClick={onRecord}
+            title="Record the rest of the call, both sides"
+            {...readOnly}
+          >
+            {recording && <Loader2 size={11} className="animate-spin" />}
+            They agreed — record
+          </Button>
+        </ConsentLine>
+      )}
+      {recordingNow && record === "ask" && (
+        <div className="font-mono text-[11.5px] text-ink-muted" aria-live="polite">
+          ● Recording
         </div>
       )}
       {!live && call.transcriptStatus === "pending" && (
@@ -793,24 +842,25 @@ export function BridgeCallView({
               </ul>
             </div>
           )}
+          {masked && commitments.length > 0 && (
+            <div className="mt-1.5 text-[12px] text-ink-faint">
+              Promises hidden while privacy mode is on; turn it off to check and keep them.
+            </div>
+          )}
         </div>
       )}
       {!live &&
         call.transcriptStatus === "ready" &&
         call.transcript &&
         (masked ? <PrivacyHidden /> : <TranscriptView transcript={call.transcript} />)}
-      {call.status === "ended" && recorded && (
+      {call.status === "ended" && record === "always" && call.transcriptStatus !== "none" && (
         <div>
           <Button
             size="sm"
             variant="ghost"
             disabled={declineDisabled}
             onClick={onDeclineConsent}
-            title={
-              declineDisabled
-                ? "Pick the outcome first"
-                : "Log the outcome and delete the recording and transcript"
-            }
+            title="Delete the recording and transcript; log the outcome as usual"
             {...readOnly}
           >
             They didn't agree to recording — delete it
@@ -821,9 +871,16 @@ export function BridgeCallView({
   );
 }
 
-/** The note is still the one the transcript suggested (untouched, not empty). */
-function noteIsSuggested(note: string, suggestion: { note: string } | null): boolean {
-  return suggestion != null && suggestion.note !== "" && note === suggestion.note;
+function ConsentLine({ label, children }: { label: string; children?: React.ReactNode }) {
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-ink-rule px-3 py-2 text-[12.5px] text-ink-cream-2">
+      <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+        {label}
+      </div>
+      <div className="mt-1 font-prose text-[13.5px] text-ink-cream">“{CONSENT_LINE}”</div>
+      {children}
+    </div>
+  );
 }
 
 /** Both sides of the call, You and Them, one paragraph per turn. */

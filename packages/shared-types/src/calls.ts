@@ -126,9 +126,15 @@ export interface LogCallRequest {
   phone?: string;
   /** A bridged call: the suggested promises the member kept when saving. */
   commitments?: string[];
-  /** A bridged call: the prospect refused recording; the server deletes the recording and transcript. */
-  consentDeclined?: true;
 }
+
+/**
+ * Whether bridged calls are recorded (`calls.bridge.record`). "ask": only
+ * once the member presses Record, after the prospect agreed. "always": from
+ * the prospect's answer, for places where one party's consent is enough.
+ * false: never.
+ */
+export type CallRecordMode = "ask" | "always" | false;
 
 /**
  * A member's own phone for bridged calls. It rings first, and the prospect
@@ -152,8 +158,8 @@ export interface CallsMeResponse {
   /** The provider keys are in the workspace's `.env`. */
   bridgeReady: boolean;
   phone: MemberPhoneView;
-  /** Bridged calls are recorded and transcribed (calls.bridge.record, default true). */
-  record: boolean;
+  /** How bridged calls are recorded (calls.bridge.record, default "ask"). */
+  record: CallRecordMode;
 }
 
 /** POST /api/calls/me/phone: start verifying this number (answers with the code). */

@@ -99,8 +99,10 @@ describe("bridged-call routes", () => {
       ),
       await routes.getCallRoute(req("/x", nobody), { id: "1" }),
       await routes.hangUpCallRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
+      await routes.recordCallRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
+      await routes.discardRecordingRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
     ];
-    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403, 403]);
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403, 403, 403, 403]);
     expect(sent).toEqual([]);
   });
 
@@ -108,7 +110,7 @@ describe("bridged-call routes", () => {
     keys(false);
     expect(await routes.callsMeRoute(req("/api/calls/me")).json()).toEqual({
       bridgeReady: false,
-      record: true,
+      record: "ask",
       phone: { phone: null, status: "none", validationCode: null, verifiedAt: null, error: null },
     });
     const verify = await routes.verifyPhoneRoute(
@@ -125,7 +127,7 @@ describe("bridged-call routes", () => {
     expect(sent).toEqual([]);
   });
 
-  it("verify the member's phone, then ring it and dial the prospect", async () => {
+  it("verify the member's phone, ring it, dial the prospect, and record once they agree", async () => {
     keys();
     let listed = false;
     answers[`GET ${ACCOUNT}/OutgoingCallerIds.json?PhoneNumber=%2B14155550111`] = () => ({
@@ -176,7 +178,7 @@ describe("bridged-call routes", () => {
       member: null,
       provider: "twilio",
       status: "ringing_founder",
-      transcriptStatus: "pending",
+      transcriptStatus: "none",
     });
     const create = sent.find((s) => s.method === "POST" && s.url === `${ACCOUNT}/Calls.json`)!;
     // The member's leg alone, with machine detection: nobody else is dialled yet.
@@ -199,9 +201,10 @@ describe("bridged-call routes", () => {
     expect(await polled.json()).toMatchObject({ id: call.id, status: "ringing_prospect" });
     const updates = () =>
       sent.filter((s) => s.url === `${ACCOUNT}/Calls/CA1.json` && s.method === "POST");
+    // Nothing is recorded before the prospect agrees.
     expect(updates().map((u) => u.form)).toEqual([
       {
-        Twiml: `<Response><Dial callerId="${MEMBER}" answerOnBridge="true" record="record-from-answer-dual"><Number>${PROSPECT}</Number></Dial></Response>`,
+        Twiml: `<Response><Dial callerId="${MEMBER}" answerOnBridge="true"><Number>${PROSPECT}</Number></Dial></Response>`,
       },
     ]);
     answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({
@@ -209,6 +212,23 @@ describe("bridged-call routes", () => {
     });
     await routes.getCallRoute(req(`/api/calls/${call.id}`), { id: String(call.id) });
     expect(updates()).toHaveLength(1);
+    const record = () =>
+      routes.recordCallRoute(req("/x", { method: "POST" }), { id: String(call.id) });
+    expect((await record()).status).toBe(409);
+    answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({
+      body: {
+        calls: [{ sid: "CA2", status: "in-progress", start_time: new Date().toUTCString() }],
+      },
+    });
+    answers[`POST ${ACCOUNT}/Calls/CA1/Recordings.json`] = () => ({
+      status: 201,
+      body: { sid: "RE1", status: "in-progress" },
+    });
+    const recording = await record();
+    expect(await recording.json()).toMatchObject({ transcriptStatus: "pending" });
+    expect(sent.filter((s) => s.url.endsWith("/Recordings.json"))).toEqual([
+      expect.objectContaining({ method: "POST", form: { RecordingChannels: "dual" } }),
+    ]);
 
     const hung = await routes.hangUpCallRoute(req("/x", { method: "POST" }), {
       id: String(call.id),
@@ -253,7 +273,7 @@ describe("bridged-call routes", () => {
     ).toBe(400);
   });
 
-  it("log a bridged call's confirmed promises, and delete its recording when consent was declined", async () => {
+  it("log a bridged call's confirmed promises, and delete its recording on its own", async () => {
     keys();
     const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
     const callId = ledger.insertCall({
@@ -272,8 +292,6 @@ describe("bridged-call routes", () => {
       });
     expect((await log({ callId, commitments: "send terms" })).status).toBe(400);
     expect((await log({ callId, commitments: ["x".repeat(301)] })).status).toBe(400);
-    expect((await log({ consentDeclined: true })).status).toBe(400);
-    expect((await log({ callId, consentDeclined: "yes" })).status).toBe(400);
     const kept = await (await log({ callId, commitments: [" send terms ", ""] })).json();
     expect(kept.call.commitments).toEqual(["send terms"]);
 
@@ -288,16 +306,42 @@ describe("bridged-call routes", () => {
       body: null,
     });
     answers[`DELETE ${ACCOUNT}/Recordings/RE1.json`] = () => ({ status: 204, body: null });
-    const declined = await log({ outcome: "not_interested", callId, consentDeclined: true });
-    expect((await declined.json()).call).toMatchObject({
-      outcome: "not_interested",
+    const discard = (callIdText: string) =>
+      routes.discardRecordingRoute(req("/x", { method: "POST" }), { id: callIdText });
+    expect((await discard("x")).status).toBe(400);
+    expect((await discard("999")).status).toBe(404);
+    const declined = await discard(String(callId));
+    expect(declined.status).toBe(200);
+    const out = await declined.json();
+    expect(out).toMatchObject({
+      outcome: "interested",
       transcriptStatus: "none",
       transcript: null,
     });
+    expect(out).not.toHaveProperty("commitments");
     expect(sent.filter((s) => s.method === "DELETE").map((s) => s.url)).toEqual([
       "https://intelligence.twilio.com/v2/Transcripts/GT1",
       `${ACCOUNT}/Recordings/RE1.json`,
     ]);
+  });
+
+  it("acknowledge a declined recording once it is stored, even when Twilio is down", async () => {
+    keys();
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
+    const callId = ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+    ledger.updateBridgedCall(callId, { recordingSid: "RE1" });
+    const res = await routes.discardRecordingRoute(req("/x", { method: "POST" }), {
+      id: String(callId),
+    });
+    expect(res.status).toBe(200);
+    expect(ledger.getBridgedCall(callId)?.discardPending).toBe(true);
   });
 
   it("log a tel: call with the member who logged it", async () => {

@@ -15,7 +15,9 @@ import {
   answeredByMachine,
   callBridgeFromEnv,
   dialTwiml,
+  forgetTranscriptionService,
   holdTwiml,
+  isMissingServiceError,
   mapBridgeStatus,
   resolveTranscriptionService,
   transcriptLines,
@@ -692,5 +694,136 @@ describe("bridged call rows", () => {
     ledger.setCallOutcome({ id, prospectId, outcome: "meeting_booked", commitments: [] });
     expect(ledger.getCall(id)?.commitments).toEqual([]);
     expect(ledger.getCall(bridged(prospectId))).not.toHaveProperty("commitments");
+  });
+});
+
+/** Headers arrive, then the connection resets before the body is read. */
+const resetting = (status: number) =>
+  (async () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.error(new TypeError("Connection reset by peer"));
+        },
+      }),
+      { status },
+    )) as unknown as typeof fetch;
+
+describe("recording consent and uncertain writes", () => {
+  it("treats an accepted write whose answer was lost, or that names no call, as uncertain", async () => {
+    const lost = new TwilioBridge(KEYS, { fetch: resetting(201) });
+    expect(await lost.start({ memberPhone: "+1555", sayName: null }).catch((e) => e)).toMatchObject(
+      { uncertain: true, status: 0 },
+    );
+    expect(await lost.status("CA1").catch((e) => e)).toMatchObject({ uncertain: false });
+    const refused = new TwilioBridge(KEYS, { fetch: resetting(400) });
+    expect(
+      await refused.start({ memberPhone: "+1555", sayName: null }).catch((e) => e),
+    ).toMatchObject({ uncertain: false });
+    const { fetch } = fakeFetch({ [`POST ${ACCOUNT}/Calls.json`]: () => ({ body: {} }) });
+    expect(
+      await new TwilioBridge(KEYS, { fetch })
+        .start({ memberPhone: "+1555", sayName: null })
+        .catch((e) => e),
+    ).toMatchObject({ uncertain: true, status: 502 });
+  });
+
+  it("records a connected call on two channels through the parent call", async () => {
+    const { fetch, sent } = fakeFetch({
+      [`POST ${ACCOUNT}/Calls/CA1/Recordings.json`]: () => ({
+        status: 201,
+        body: { sid: "RE1", status: "in-progress" },
+      }),
+    });
+    await new TwilioBridge(KEYS, { fetch }).startRecording("CA1");
+    expect(sent).toEqual([
+      expect.objectContaining({
+        method: "POST",
+        url: `${ACCOUNT}/Calls/CA1/Recordings.json`,
+        form: { RecordingChannels: "dual" },
+      }),
+    ]);
+  });
+
+  it("knows a missing service and forgets only the kept one it names", () => {
+    expect(isMissingServiceError(new CallBridgeError("Twilio: not found", 404))).toBe(true);
+    expect(isMissingServiceError(new CallBridgeError("x", 400, 20404))).toBe(true);
+    expect(
+      isMissingServiceError(new CallBridgeError("Twilio: Service GA1 does not exist", 400)),
+    ).toBe(true);
+    expect(isMissingServiceError(new CallBridgeError("Twilio: rate limited", 429))).toBe(false);
+    expect(isMissingServiceError(new Error("not found"))).toBe(false);
+    const db = getSharedDb();
+    db.setInstallSetting(
+      "calls.transcriptionServiceSid",
+      JSON.stringify({ accountSid: "AC1", sid: "GAold" }),
+    );
+    forgetTranscriptionService("GAother");
+    expect(db.installSetting("calls.transcriptionServiceSid")).toContain("GAold");
+    forgetTranscriptionService("GAold");
+    expect(db.installSetting("calls.transcriptionServiceSid")).toBe("null");
+  });
+
+  it("removes a member's phone only as it was read", () => {
+    const db = getSharedDb();
+    const old = db.setMemberPhone({ member: "", phone: "+15550001111", status: "verified" });
+    db.setMemberPhone({ member: "", phone: "+15550002222", status: "verifying" });
+    expect(db.deleteMemberPhone("", old)).toBe(false);
+    expect(db.memberPhone("")?.phone).toBe("+15550002222");
+    expect(db.deleteMemberPhone("", db.memberPhone("")!)).toBe(true);
+  });
+});
+
+describe("bridged call recording rows", () => {
+  let ledger: Ledger;
+  beforeEach(() => {
+    ledger = new Ledger(":memory:");
+  });
+  afterEach(() => ledger.close());
+
+  const call = (prospectId: number, startedAt: string, transcriptStatus: "none" | "pending") =>
+    ledger.insertCall({
+      prospectId,
+      startedAt,
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus,
+    });
+
+  it("lets one Record press claim an unrecorded call, never a declined one", () => {
+    const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = call(p, "2026-11-18T10:00:00Z", "none");
+    expect(ledger.claimRecording(id)).toBe(true);
+    expect(ledger.claimRecording(id)).toBe(false);
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("pending");
+    const declined = call(p, "2026-11-18T10:00:00Z", "none");
+    ledger.markRecordingDiscard(declined);
+    expect(ledger.claimRecording(declined)).toBe(false);
+  });
+
+  it("drops the promises with a declined recording", () => {
+    const prospectId = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = call(prospectId, "2026-11-18T10:00:00Z", "pending");
+    ledger.setCallOutcome({ id, prospectId, outcome: "interested", commitments: ["send terms"] });
+    ledger.markRecordingDiscard(id);
+    expect(ledger.getCall(id)).not.toHaveProperty("commitments");
+    ledger.setCallOutcome({ id, prospectId, outcome: "interested" });
+    expect(ledger.getCall(id)).not.toHaveProperty("commitments");
+  });
+
+  it("keeps a pending deletion in the sweep past its lookback, with its own limit", () => {
+    const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const old = [1, 2, 3].map(() => call(p, "2026-11-01T10:00:00Z", "pending"));
+    for (const id of old) ledger.markRecordingDiscard(id);
+    const fresh = call(p, "2026-11-18T10:00:00Z", "pending");
+    const listed = (limit: number, discards?: number) =>
+      ledger
+        .listBridgedCallsToAdvance("2026-11-17T00:00:00Z", limit, discards)
+        .map((c) => c.view.id);
+    expect(listed(10)).toEqual([...old, fresh]);
+    expect(listed(1, 2)).toEqual([old[0], old[1], fresh]);
+    ledger.finishRecordingDiscard(old[0]!);
+    expect(listed(10)).toEqual([old[1], old[2], fresh]);
   });
 });

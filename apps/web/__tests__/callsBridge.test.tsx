@@ -23,6 +23,7 @@ import {
   bridgePollMs,
   bridgeStatusLine,
   callerLabel,
+  commitmentsToSend,
   CONSENT_LINE,
   firstName,
   isLive,
@@ -105,7 +106,7 @@ const phone = (over: Partial<MemberPhoneView> = {}): MemberPhoneView => ({
 const me = (over: Partial<CallsMeResponse> = {}): CallsMeResponse => ({
   bridgeReady: true,
   phone: phone(),
-  record: true,
+  record: "always",
   ...over,
 });
 const call = (over: Partial<CallRecordView> = {}): CallRecordView => ({
@@ -286,7 +287,7 @@ describe("bridged call logic", () => {
     expect(suggestedPick(null)).toBeNull();
   });
 
-  it("logs against the bridged call with its id, the kept promises, and a refused recording", () => {
+  it("logs against the bridged call with its id and the kept promises", () => {
     const state: DialState = { outcome: "interested", note: "", holdUntil: "2026-11-25" };
     expect(
       logCallRequest(state, { callId: 7, durationSec: 184, playName: "post-funding" }),
@@ -306,11 +307,32 @@ describe("bridged call logic", () => {
       outcome: "interested",
       callId: 7,
     });
-    expect(logCallRequest(state, { callId: 7, consentDeclined: true })).toEqual({
+  });
+
+  it("never sends a promise privacy mode hid from the member", () => {
+    const kept = keptCommitments(suggestion, []);
+    expect(commitmentsToSend(suggestion, kept, false)).toEqual(["Send the pilot terms Thursday"]);
+    expect(commitmentsToSend(suggestion, [], false)).toEqual([]);
+    expect(commitmentsToSend(suggestion, kept, true)).toBeNull();
+    expect(commitmentsToSend(null, [], false)).toBeNull();
+  });
+
+  it("knows a note the transcript wrote, even edited, and drops it when consent is declined", () => {
+    const blank: DialState = { outcome: null, note: "", holdUntil: "2026-11-25" };
+    const seeded = dialReducer(blank, { kind: "suggest", ...suggestedPick(suggestion)! });
+    expect(seeded.noteFromCall).toBe(true);
+    const edited = dialReducer(seeded, { kind: "note", note: "Wants the pilot terms!" });
+    expect(edited.noteFromCall).toBe(true);
+    expect(dialReducer(edited, { kind: "forget-call" })).toMatchObject({
+      note: "",
+      noteFromCall: false,
       outcome: "interested",
-      callId: 7,
-      consentDeclined: true,
     });
+    // The member's own note stays.
+    const typed = dialReducer(blank, { kind: "note", note: "call back at 3" });
+    expect(dialReducer(typed, { kind: "forget-call" })).toBe(typed);
+    const cleared = dialReducer(edited, { kind: "note", note: "" });
+    expect(dialReducer(cleared, { kind: "note", note: "mine" }).noteFromCall).toBe(false);
   });
 });
 
@@ -515,6 +537,38 @@ describe("the dial panel in bridge mode", () => {
     expect(html).not.toContain('title="Rings your phone, then theirs"');
   });
 
+  it("asks first in ask mode: the consent line and Record, then that it records", () => {
+    const ask = me({ record: "ask" });
+    const html = panelWith(call({ status: "connected" }), ask);
+    expect(html).toContain(CONSENT_LINE);
+    expect(html).toContain("nothing is recorded until you press Record");
+    expect(html).toContain("They agreed — record");
+    const recording = panelWith(
+      call({ id: 8, status: "connected", transcriptStatus: "pending" }),
+      ask,
+    );
+    expect(recording).toContain("● Recording");
+    expect(recording).not.toContain("They agreed — record");
+    // Before they answer, nothing to agree to yet; after, no delete button in ask mode.
+    expect(panelWith(call({ id: 9, status: "ringing_prospect" }), ask)).not.toContain(
+      "They agreed",
+    );
+    expect(
+      panelWith(call({ id: 10, status: "ended", transcriptStatus: "ready", transcript }), ask),
+    ).not.toContain("agree to recording");
+  });
+
+  it("picks up an unlogged bridged call even once new calls are tel: links", () => {
+    client.setQueryData(["me"], signedIn);
+    client.setQueryData(callsMeKey, me());
+    const c = call({ status: "connected" });
+    client.setQueryData(["prospect-calls", 1], { calls: [c] });
+    client.setQueryData(callKey(c.id), c);
+    const html = page(data({ dialMode: "tel" }));
+    expect(html).toContain("Hang up");
+    expect(html).toContain("Connected");
+  });
+
   it("names the prospect while their phone rings, and skips the consent line when not recording", () => {
     const html = panelWith(call({ status: "ringing_prospect" }), me({ record: false }));
     expect(html).toContain("Calling Dana…");
@@ -543,7 +597,7 @@ describe("the dial panel in bridge mode", () => {
     expect(html).toContain("Send the pilot terms Thursday");
   });
 
-  it("lists the promises with a remove button each, and offers to delete a refused recording", () => {
+  it("lists the promises with a remove button each, and offers to delete a refused recording (always)", () => {
     const html = panelWith(
       call({ status: "ended", transcriptStatus: "ready", transcript, suggestion }),
     );
@@ -570,6 +624,7 @@ describe("the dial panel in bridge mode", () => {
     expect(html).not.toContain("I have two minutes.");
     expect(html).not.toContain("Send the pilot terms Thursday");
     expect(html).toContain("Hidden while privacy mode is on.");
+    expect(html).toContain("Promises hidden while privacy mode is on");
   });
 
   it("says when the transcript didn't come through", () => {
@@ -592,12 +647,18 @@ describe("the dial panel in bridge mode", () => {
       <BridgeCallView
         call={call({ status: "ringing_founder" })}
         first="Dana"
-        record
+        record="always"
         connectedSec={0}
         hangingUp={false}
         onHangUp={() => {}}
         pollError={null}
         masked={false}
+        commitments={[]}
+        onRemoveCommitment={() => {}}
+        onRecord={() => {}}
+        recording={false}
+        onDeclineConsent={() => {}}
+        declineDisabled={false}
       />,
     );
     expect(html).toContain("Ringing your phone…");
@@ -607,7 +668,7 @@ describe("the dial panel in bridge mode", () => {
 
 describe("call history", () => {
   const jo = { email: "jo@example.com", name: "Jo", role: "member" as const };
-  const history = (calls: CallRecordView[], masked = false) =>
+  const history = (calls: CallRecordView[], masked = false, onDiscard?: (id: number) => void) =>
     render(
       <CallHistory
         calls={calls}
@@ -616,6 +677,7 @@ describe("call history", () => {
         onRetry={() => {}}
         masked={masked}
         me={jo}
+        {...(onDiscard ? { onDiscard } : {})}
       />,
     );
   const logged = call({
@@ -650,6 +712,13 @@ describe("call history", () => {
     expect(html).toContain("sam•••@example.com");
     expect(html).not.toContain("I have two minutes.");
     expect(html).toContain("transcript hidden");
+  });
+
+  it("offers to delete a logged call's recording when the panel allows it", () => {
+    const unrecorded = call({ id: 8, status: "ended", outcome: "no_answer" });
+    expect(history([logged, unrecorded])).not.toContain("Delete recording");
+    const html = history([logged, unrecorded], false, () => {});
+    expect(html.match(/Delete recording/g)).toHaveLength(1);
   });
 
   it("an empty recording says so", () => {

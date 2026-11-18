@@ -20,9 +20,10 @@ import {
   refreshBridgedCall,
   removeMemberPhone,
   startBridgedCall,
+  startBridgedRecording,
   verifyMemberPhone,
 } from "@oneshot-gtm/plays";
-import { isCallOutcome, type CallRecordView, type LogCallRequest } from "@oneshot-gtm/shared-types";
+import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
 import { currentMember } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
@@ -146,14 +147,6 @@ export async function logCallRoute(
       400,
       req,
     );
-  const consentDeclined = body["consentDeclined"];
-  if (consentDeclined !== undefined && consentDeclined !== null && consentDeclined !== true)
-    return jsonResponse({ error: "consentDeclined must be true" }, 400, req);
-  if (
-    consentDeclined === true &&
-    (callId == null || !getLedger().getBridgedCall(prospectIdOf(callId)!))
-  )
-    return jsonResponse({ error: "only a bridged call has a recording to delete" }, 400, req);
   const request: LogCallRequest = {
     outcome: body["outcome"],
     ...(typeof note === "string" ? { note } : {}),
@@ -169,20 +162,10 @@ export async function logCallRoute(
   try {
     const member = currentMember(req)?.email ?? null;
     const call = recordCall(prospectId, request, new Date(), member);
-    if (consentDeclined !== true) return jsonResponse({ call }, 200, req);
-    return jsonResponse({ call: await discardRecordingQuietly(call.id) }, 200, req);
+    return jsonResponse({ call }, 200, req);
   } catch (err) {
     if (err instanceof CallLogError) return jsonResponse({ error: err.message }, err.status, req);
     return jsonResponse({ error: (err as Error).message ?? "logging the call failed" }, 500, req);
-  }
-}
-
-/** The outcome is logged; a failed delete is left to the sweep, which retries it. */
-async function discardRecordingQuietly(callId: number): Promise<CallRecordView> {
-  try {
-    return await discardBridgedRecording(callId);
-  } catch {
-    return getLedger().getCall(callId)!;
   }
 }
 
@@ -298,5 +281,37 @@ export async function hangUpCallRoute(
     return jsonResponse(await hangUpBridgedCall(id), 200, req);
   } catch (err) {
     return bridgeError(req, err, "hanging up failed");
+  }
+}
+
+/** The prospect agreed to recording: record the connected call from now. */
+export async function recordCallRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const id = prospectIdOf(params["id"]);
+  if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
+  try {
+    return jsonResponse(await startBridgedRecording(id), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "starting the recording failed");
+  }
+}
+
+/** The prospect declined recording: delete it, whether or not an outcome is logged. */
+export async function discardRecordingRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const id = prospectIdOf(params["id"]);
+  if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
+  try {
+    return jsonResponse(await discardBridgedRecording(id), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "deleting the recording failed");
   }
 }

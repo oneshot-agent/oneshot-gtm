@@ -1568,9 +1568,23 @@ export class SharedDb {
       .map((r) => r.member);
   }
 
-  /** Forget a member's phone. False when none was set. */
-  deleteMemberPhone(member: string): boolean {
-    return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;
+  /**
+   * Forget a member's phone. With `expected`, only the row read before
+   * (same phone, same write): one stored since is kept. False when nothing
+   * was deleted.
+   */
+  deleteMemberPhone(
+    member: string,
+    expected?: Pick<MemberPhoneRow, "phone" | "updated_at" | "status">,
+  ): boolean {
+    if (!expected)
+      return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;
+    return (
+      this.db.run(
+        "DELETE FROM member_phones WHERE member = ? AND phone = ? AND updated_at = ? AND status = ?",
+        [member, expected.phone, expected.updated_at, expected.status],
+      ).changes === 1
+    );
   }
 
   installSetting(key: string): string | null {
