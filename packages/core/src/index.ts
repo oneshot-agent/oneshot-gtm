@@ -86,13 +86,17 @@ export * from "./mail-enrichment.ts";
 
 export { isProspectOptedOut } from "./contact-optout.ts";
 export {
+  BRIDGE_CALL_STATUSES,
   CALL_REPLY_OUTCOMES,
   callReplyIntent,
   pickCallPhone,
+  type BridgeCallStatus,
+  type BridgedCall,
   type CallCandidate,
   type CallTier,
 } from "./ledger-calls.ts";
 export * from "./phone-timezone.ts";
+export * from "./call-bridge.ts";
 export * from "./trigger-overlay.ts";
 export * from "./demo-day.ts";
 export * from "./accelerator-names.ts";

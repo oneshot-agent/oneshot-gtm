@@ -160,16 +160,32 @@ export interface DialState {
   outcome: CallOutcome | null;
   note: string;
   holdUntil: string;
+  /** The note was filled from the call's transcript; edits keep it so. */
+  noteFromCall?: boolean;
 }
 
 export type DialAction =
   | { kind: "pick"; outcome: CallOutcome }
   | { kind: "note"; note: string }
-  | { kind: "hold"; holdUntil: string };
+  | { kind: "hold"; holdUntil: string }
+  /** The transcript's suggestion: fills only a panel the member hasn't touched. */
+  | { kind: "suggest"; outcome: CallOutcome; note: string }
+  /** A new call started: a blank draft for it. */
+  | { kind: "reset"; holdUntil: string }
+  /** The prospect declined recording: drop a note the transcript wrote. */
+  | { kind: "forget-call" };
 
 export function dialReducer(state: DialState, action: DialAction): DialState {
   if (action.kind === "pick") return { ...state, outcome: action.outcome };
-  if (action.kind === "note") return { ...state, note: action.note };
+  if (action.kind === "suggest")
+    return state.outcome == null && !state.note.trim()
+      ? { ...state, outcome: action.outcome, note: action.note, noteFromCall: !!action.note }
+      : state;
+  if (action.kind === "reset") return { outcome: null, note: "", holdUntil: action.holdUntil };
+  if (action.kind === "forget-call")
+    return state.noteFromCall ? { ...state, note: "", noteFromCall: false } : state;
+  if (action.kind === "note")
+    return { ...state, note: action.note, noteFromCall: !!state.noteFromCall && !!action.note };
   return { ...state, holdUntil: action.holdUntil };
 }
 
@@ -223,7 +239,9 @@ function isInteractive(target: EventTarget | null): boolean {
  * on. Typing in the note keeps its keys, and a focused button or link keeps
  * its own Enter; ⌘/Ctrl+Enter saves from anywhere.
  */
-export function dialKeyAction(e: DialKeyEvent): DialAction | { kind: "save" } | null {
+export function dialKeyAction(
+  e: DialKeyEvent,
+): Extract<DialAction, { kind: "pick" }> | { kind: "save" } | null {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return { kind: "save" };
   if (inEditable(e.target) || e.metaKey || e.ctrlKey || e.altKey) return null;
   if (e.key === "Enter") return isInteractive(e.target) ? null : { kind: "save" };
@@ -238,6 +256,10 @@ export function logCallRequest(
     durationSec?: number | null;
     playName?: string | null;
     phone?: string | null;
+    /** The bridged call this logs against. */
+    callId?: number | null;
+    /** A bridged call: the suggested promises kept; null when there were none to keep. */
+    commitments?: string[] | null;
     /** The row's `currentStep`: null on the call list, where no step is due. */
     currentStep?: number | null;
     enrolledAt?: string | null;
@@ -248,10 +270,12 @@ export function logCallRequest(
   const note = state.note.trim();
   return {
     outcome: state.outcome,
+    ...(opts.callId != null ? { callId: opts.callId } : {}),
     ...(note ? { note } : {}),
     ...(opts.durationSec != null ? { durationSec: Math.round(opts.durationSec) } : {}),
     ...(opts.playName ? { playName: opts.playName } : {}),
     ...(opts.phone ? { phone: opts.phone } : {}),
+    ...(opts.commitments ? { commitments: opts.commitments } : {}),
     ...(opts.currentStep !== undefined ? { currentStep: opts.currentStep } : {}),
     ...(opts.enrolledAt ? { enrolledAt: opts.enrolledAt } : {}),
     ...(opts.clientKey ? { clientKey: opts.clientKey } : {}),
@@ -288,6 +312,22 @@ export interface CallTimer {
   phone: string | null;
   currentStep?: number | null;
   enrolledAt?: string | null;
+}
+
+/**
+ * The step a bridged call's log names: none for a call placed from the call
+ * list (whatever is due by now); the row's (`stepOfLog`) when the call is
+ * this row's play; nothing for another play's, so the server judges it by
+ * the call's own play.
+ */
+export function bridgedStep(
+  call: { playName: string | null },
+  rowPlay: string | null,
+  timer: Pick<CallTimer, "currentStep" | "enrolledAt"> | null | undefined,
+  opened: Pick<CallListRow, "currentStep" | "enrolledAt">,
+): { currentStep?: number | null; enrolledAt?: string | null } {
+  if (call.playName == null) return { currentStep: null };
+  return call.playName === rowPlay ? stepOfLog(timer, opened) : {};
 }
 
 /**

@@ -32,8 +32,21 @@ describe("callsOf", () => {
       enabled: false,
       cadenceStep: null,
       window: { start: "09:00", end: "17:00", weekdays: true },
-      bridge: null,
+      // Absent = the defaults: the keys decide whether it can dial.
+      bridge: { provider: "twilio", record: "ask", transcriptionServiceSid: null },
     });
+  });
+
+  it("records only on a press unless set to always or off; the legacy true asks", () => {
+    const mode = (record: unknown) =>
+      callsOf({ calls: { bridge: { provider: "twilio", record } } }).bridge?.record;
+    expect([mode("always"), mode("ask"), mode(true), mode(false), mode("yes")]).toEqual([
+      "always",
+      "ask",
+      "ask",
+      false,
+      "ask",
+    ]);
   });
 
   it("reads a full config and fills holdDays", () => {
@@ -43,14 +56,14 @@ describe("callsOf", () => {
           enabled: true,
           cadenceStep: { position: 3, delayDays: 2 },
           window: { start: "10:00", end: "16:30", weekdays: false },
-          bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
+          bridge: { provider: "twilio", record: false, transcriptionServiceSid: " GA1 " },
         },
       }),
     ).toEqual({
       enabled: true,
       cadenceStep: { position: 3, delayDays: 2, holdDays: DEFAULT_CALL_HOLD_DAYS },
       window: { start: "10:00", end: "16:30", weekdays: false },
-      bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
+      bridge: { provider: "twilio", record: false, transcriptionServiceSid: "GA1" },
     });
   });
 
@@ -60,13 +73,14 @@ describe("callsOf", () => {
         enabled: "yes",
         cadenceStep: { position: 1, delayDays: 2 },
         window: { start: "17:00", end: "09:00" },
-        bridge: { provider: "twilio", founderPhone: "" },
+        bridge: { provider: "other" },
       },
     });
     expect(out.enabled).toBe(false);
     expect(out.cadenceStep).toBeNull();
     expect(out.window).toEqual({ start: "09:00", end: "17:00", weekdays: true });
     expect(out.bridge).toBeNull();
+    expect(callsOf({ calls: { enabled: true, bridge: null } }).bridge).toBeNull();
   });
 
   it("drops a step delay past a year and falls back from a hold past one", () => {

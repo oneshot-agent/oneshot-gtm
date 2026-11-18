@@ -93,6 +93,8 @@ export interface CallRecordView {
   id: number;
   prospectId: number;
   playName: string | null;
+  /** The member who placed or logged it (email); null for the install's unlisted local owner. */
+  member: string | null;
   startedAt: string;
   durationSec: number | null;
   outcome: CallOutcome | null;
@@ -100,6 +102,14 @@ export interface CallRecordView {
   provider: "tel" | "twilio";
   /** Phase 2: the bridged call's live state. */
   status?: "ringing_founder" | "ringing_prospect" | "connected" | "ended" | "failed";
+  /** Why a bridged call failed or ended early, in plain words ("it went to your voicemail"). */
+  statusReason?: string;
+  /** The promises the member confirmed when logging it (`LogCallRequest.commitments`). */
+  commitments?: string[];
+  /** A bridged call's recording: from the prospect's answer, or from the member's Record press. */
+  recordedFrom?: "answer" | "consent";
+  /** A recording the prospect declined: still being deleted, or deleted. */
+  discard?: "pending" | "done";
   transcriptStatus: "none" | "pending" | "ready" | "failed";
   transcript: { speaker: "founder" | "prospect"; text: string; startSec: number }[] | null;
   /** Phase 2: the model's proposal from the transcript; the founder confirms it. */
@@ -122,6 +132,8 @@ export interface LogCallRequest {
   holdUntil?: string;
   /** The number the founder dialled (a new call): a wrong_number lands on it, not on a number stored since. */
   phone?: string;
+  /** A bridged call: the suggested promises the member kept when saving. */
+  commitments?: string[];
   /**
    * The step `playName`'s cadence was on when the row was opened: the call
    * completes that step only while it is still current. Null: no step was
@@ -132,4 +144,49 @@ export interface LogCallRequest {
   enrolledAt?: string;
   /** The dashboard's id for this save, the same on a retry: the server writes one call for it. */
   clientKey?: string;
+}
+
+/**
+ * Whether bridged calls are recorded (`calls.bridge.record`). "ask": only
+ * once the member presses Record, after the prospect agreed. "always": from
+ * the prospect's answer, for places where one party's consent is enough.
+ * false: never.
+ */
+export type CallRecordMode = "ask" | "always" | false;
+
+/**
+ * A member's own phone for bridged calls. It rings first, and the prospect
+ * sees it as the caller ID, so a callback reaches the person who called.
+ * Kept install-wide (shared database), so every workspace uses it.
+ */
+export interface MemberPhoneView {
+  /** E.164; null when none is set. */
+  phone: string | null;
+  /** "verifying": the provider is ringing the phone with `validationCode` to type. */
+  status: "none" | "verifying" | "verified" | "failed";
+  /** While verifying: the 6-digit code the member types when the phone rings. */
+  validationCode: string | null;
+  verifiedAt: string | null;
+  /** Why the last verification failed, in plain words. */
+  error: string | null;
+}
+
+/** GET /api/calls/me: what this member's Call button can do. */
+export interface CallsMeResponse {
+  /** The provider keys are in the workspace's `.env`. */
+  bridgeReady: boolean;
+  phone: MemberPhoneView;
+  /** How bridged calls are recorded (calls.bridge.record, default "ask"). */
+  record: CallRecordMode;
+}
+
+/** POST /api/calls/me/phone: start verifying this number (answers with the code). */
+export interface VerifyPhoneRequest {
+  phone: string;
+}
+
+/** POST /api/calls/start */
+export interface StartCallRequest {
+  prospectId: number;
+  playName?: string;
 }

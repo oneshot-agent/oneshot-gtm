@@ -9,6 +9,7 @@ import {
   saveSecrets,
   secretsPath,
   isSlackWebhookUrl,
+  twilioKeysFromEnv,
 } from "@oneshot-gtm/core";
 import {
   TRIGGERS,
@@ -373,11 +374,17 @@ function whole(
   return n;
 }
 
+const RECORD_TEXT: Record<string, string> = {
+  ask: "recorded only once you press Record, after they agree",
+  always: "recorded from their answer (only where one party's consent is enough)",
+  false: "not recorded (no transcript, no suggested outcome)",
+};
+
 /**
  * Show or set the dialler (`calls`); off by default. Subcommands: `on|off`,
  * `step <position> [delay] [hold]` (position counts the first email as 1),
- * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`. Anything but whole
- * numbers is refused rather than saved, and `bridge` is never touched here.
+ * `step off`, `window <HH:MM-HH:MM> [weekdays|every-day]`, `record ask|always|off`.
+ * Anything but whole numbers is refused rather than saved.
  */
 export async function configCalls(action?: string, args: string[] = []): Promise<void> {
   header("Calls");
@@ -395,10 +402,18 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     note(
       `call window ${calls.window.start}–${calls.window.end} their time, ${calls.window.weekdays ? "weekdays" : "every day"}`,
     );
-    note(calls.bridge ? `rings ${calls.bridge.founderPhone} first` : "Call opens a tel: link");
+    note(
+      !calls.bridge
+        ? "bridged calls off: Call opens a tel: link"
+        : !twilioKeysFromEnv()
+          ? "Call opens a tel: link (add TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to .env to ring your phone)"
+          : !calls.enabled
+            ? `bridged calls set up but inactive while calls are off; ${RECORD_TEXT[String(calls.bridge.record)]}`
+            : `bridged calls: Call rings a verified member's own phone, others get a tel: link; ${RECORD_TEXT[String(calls.bridge.record)]}`,
+    );
     note(
       c.dim(
-        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day]",
+        "set with: oneshot-gtm config calls <on|off> | step <position> [delay] [hold] | step off | window <09:00-17:00> [weekdays|every-day] | record <ask|always|off>",
       ),
     );
     return;
@@ -457,7 +472,25 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     return;
   }
 
-  throw new Error(`unknown action '${action}' — pass on, off, step or window`);
+  if (action === "record") {
+    const value = args[0];
+    if (value !== "ask" && value !== "always" && value !== "off")
+      throw new Error(`invalid record '${value ?? ""}' — pass ask, always or off`);
+    // The bridge as callsOf reads it: an unknown provider is off, and stays off.
+    if (callsOf(cfg).bridge === null)
+      throw new Error(
+        "bridged calls are off for this workspace (calls.bridge is null or not twilio)",
+      );
+    const record = value === "off" ? false : value;
+    saveConfig({
+      ...cfg,
+      calls: { ...current, bridge: { ...current.bridge, provider: "twilio", record } },
+    });
+    ok(`bridged calls are ${RECORD_TEXT[String(record)]}`);
+    return;
+  }
+
+  throw new Error(`unknown action '${action}' — pass on, off, step, window or record`);
 }
 
 const X_TRIGGER = "x-reposters";

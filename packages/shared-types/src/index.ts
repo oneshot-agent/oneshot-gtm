@@ -1,4 +1,5 @@
 import type { DecisionReason } from "./learning.ts";
+import type { CallRecordMode } from "./calls.ts";
 import type { LinkedInTemplateStep } from "./linkedin-template.ts";
 export * from "./reply-email-view.ts";
 export * from "./linkedin-reads.ts";
@@ -694,7 +695,8 @@ export interface SetupRequest {
   /**
    * The dialler. `undefined` = leave unchanged. Each key present replaces the
    * stored one (`cadenceStep: null` = the Calls page only); a key left out is
-   * kept, and so is a configured `bridge`, which this form never edits.
+   * kept. `record` sets how bridged calls are recorded (`calls.bridge.record`;
+   * true reads as "ask"); the rest of the bridge is never edited here.
    * Positions count the first email as 1 (2 or more); times are HH:MM with
    * the start first. Anything else is a 400.
    */
@@ -702,6 +704,7 @@ export interface SetupRequest {
     enabled?: boolean;
     cadenceStep?: { position: number; delayDays: number; holdDays?: number } | null;
     window?: { start: string; end: string; weekdays?: boolean };
+    record?: CallRecordMode | true;
   };
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;

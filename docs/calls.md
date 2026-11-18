@@ -50,6 +50,44 @@ Opening a row shows a brief: an opener that points back to your email, the offer
 
 Replies and the funnel count a call the way they count an email reply. Do not contact is final: a call logged with it cannot be changed to another outcome.
 
+## Ringing your phone (bridged calls)
+
+Without it, Call opens a `tel:` link. With it, Call rings your own phone; when you pick up, it dials the prospect, and they see your number. The call is recorded (by default only once the prospect agrees and you press **Record**, see [Recording consent](#recording-consent)), transcribed with each side labelled, and a suggested outcome is waiting when you hang up.
+
+**Setup:**
+
+1. Add a Twilio API key to the workspace's `.env`:
+
+   ```sh
+   TWILIO_ACCOUNT_SID=AC…      # the account or subaccount
+   TWILIO_API_KEY_SID=SK…
+   TWILIO_API_KEY_SECRET=…
+   ```
+
+2. Each member verifies their own phone in **Setup → Calls → Your phone**: type the mobile, press Verify, and type the 6-digit code on the screen when Twilio rings you. Your phone is yours across every workspace on the install; nobody else's Call rings it, and another member cannot add it. Removing it also removes it from Twilio, so using it again needs a new code.
+
+No webhook, tunnel or Twilio number is needed: the server asks Twilio for everything and polls. The transcription service is created on the first transcript and shared by every workspace.
+
+**While and after the call:** the dial panel shows ringing you, ringing them, connected, then ended. The prospect is dialled once Twilio's answering-machine detection says a person answered your phone and the open dial panel picks that up. If your phone goes to voicemail, the call is hung up and nobody else is dialled. When detection cannot tell (`unknown`), the prospect is dialled anyway, so now and then a voicemail it missed is connected to them; hang up from the panel if you hear one. Just before dialling, the opt-outs and their call hours are checked again: if they no longer allow the call, it hangs up and says why. If no dial panel or sweep reads the call within about 40 seconds of you answering, it hangs up without dialling anyone. After hangup the recording is transcribed (usually within a few minutes) and your configured model proposes an outcome, a note and any promises made. Nothing is logged until you confirm it. If you close the tab, the server finishes the transcript on its own; one still missing after 6 hours is marked failed. Once you confirm the call, your note and the promises you kept go into the next follow-up email, so it picks up from the call.
+
+**Cost per call (Twilio US list prices, October 2026):** two call legs at $0.014/min each, answering-machine detection on your leg at $0.0075 a call, recording at $0.0025/min, transcription at $0.024/min: about $0.28 for a 5-minute call, plus one model completion for the suggestion.
+
+| Setting                          | Default       | What it does                                                             |
+| -------------------------------- | ------------- | ------------------------------------------------------------------------ |
+| `bridge`                         | on            | `null` in `config.json` turns bridged calls off, even with the keys set. |
+| `bridge.record`                  | `ask`         | `oneshot-gtm config calls record ask\|always\|off`. See below.           |
+| `bridge.transcriptionServiceSid` | the install's | Use a Twilio Conversational Intelligence service of your own.            |
+
+## Recording consent
+
+Some states and countries require everyone on a call to agree to it being recorded. `record` decides when recording starts:
+
+- **`ask`** (the default, and what an older `true` means): nothing is recorded until you press **They agreed — record** in the dial panel. Ask first ("I record my calls so I can take notes, is that OK?"); the panel shows the line once you're connected. If they say no, don't press it: the call stays unrecorded and has no transcript.
+- **`always`**: recording starts when the prospect answers, before anyone has agreed. Use it only where one party's consent is enough. If they say no, press **They didn't agree to recording — delete it** (in the panel, or **Delete recording** in the call history, with or without an outcome logged): the recording, its transcript, the suggestion and the promises read from it are deleted from Twilio and the ledger.
+- **`off`**: no recording, transcript or suggestion.
+
+The mode is read when the prospect is dialled; a call keeps what it recorded if the mode changes later. Only the member who placed a call can hang it up or record it; they or an owner can delete its recording from the call history at any time. Twilio's copy is deleted in the background, even with Calls off, and a recording that shows up late is looked for for a week.
+
 ## Your responsibility
 
 OneShot GTM does not check national do-not-call registers, line types or calling-hour laws. Who you call, when, and whether you may record the call is your responsibility.

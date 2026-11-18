@@ -625,6 +625,41 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // Bridged calls (call-bridge.ts) and who made each call. `member` is the
+    // email of the member who placed or logged it, NULL for the install's
+    // unlisted local owner (and for calls logged before this). `status` is a
+    // bridged call's last-read state (shared-types CallRecordView.status);
+    // `transcript_sid` the provider's transcript, once one was asked for.
+    // `bridged_at` is set once, by the one poll that dials the prospect.
+    // `discard_recording`: 1 = the prospect declined recording, delete it; 2 = deleted.
+    version: 28,
+    name: "calls-bridge",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "member", "TEXT");
+      addColumnIfMissing(db, "calls", "status", "TEXT");
+      addColumnIfMissing(db, "calls", "transcript_sid", "TEXT");
+      addColumnIfMissing(db, "calls", "status_reason", "TEXT");
+      addColumnIfMissing(db, "calls", "member_phone", "TEXT");
+      addColumnIfMissing(db, "calls", "bridged_at", "TEXT");
+      addColumnIfMissing(db, "calls", "commitments_json", "TEXT");
+      addColumnIfMissing(db, "calls", "discard_recording", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
+  {
+    // A bridged call's recording. `recording_from` is how it was asked for:
+    // 'answer' (recorded from the prospect's answer) or 'consent' (the member
+    // pressed Record); NULL = never. `recording_requested_at` starts the
+    // transcript's give-up window. `discard_next_at` is when a pending
+    // deletion is retried, so one that keeps failing waits behind the rest.
+    version: 29,
+    name: "calls-recording",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "recording_from", "TEXT");
+      addColumnIfMissing(db, "calls", "recording_requested_at", "TEXT");
+      addColumnIfMissing(db, "calls", "discard_next_at", "TEXT");
+    },
+  },
 ];
 
 /**

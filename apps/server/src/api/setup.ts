@@ -925,11 +925,11 @@ const whole = (v: unknown, min: number, max = Number.MAX_SAFE_INTEGER) =>
 
 /**
  * `calls` merge, like `mergeLinkedIn`: rebuilt from the stored object, so the
- * `bridge` (set by `calls setup`, never by this form) survives a Setup save.
- * Each key present replaces the stored one; `cadenceStep: null` removes the
- * step (the Calls page only). A position under 2 (the first email is 1), a
- * delay outside 0 to `MAX_CALL_STEP_DAYS` whole days or a hold outside 1 to
- * it, or a window not two HH:MM times with the start first, is a 400.
+ * `bridge` survives a Setup save; `record` is the only bridge key set here,
+ * and a bridge off in config.json stays off. `cadenceStep: null` removes the
+ * step. A position under 2 (the first email is 1), a delay outside 0 to
+ * `MAX_CALL_STEP_DAYS` days or a hold outside 1 to it, or a window not two
+ * HH:MM times with the start first, is a 400.
  */
 export function mergeCalls(
   incoming: SetupRequest["calls"],
@@ -992,6 +992,22 @@ export function mergeCalls(
       end: w.end,
       ...(w.weekdays !== undefined ? { weekdays: w.weekdays } : {}),
     };
+  }
+  if (incoming.record !== undefined) {
+    if (
+      incoming.record !== "ask" &&
+      incoming.record !== "always" &&
+      incoming.record !== false &&
+      incoming.record !== true
+    )
+      throw new SetupValidationError('calls.record must be "ask", "always" or false');
+    if (next.bridge === null)
+      throw new SetupValidationError(
+        "bridged calls are off for this workspace (calls.bridge is null in config.json)",
+      );
+    // The legacy true is the safe reading: ask first.
+    const record = incoming.record === true ? "ask" : incoming.record;
+    next.bridge = { ...next.bridge, provider: "twilio", record };
   }
   return next;
 }

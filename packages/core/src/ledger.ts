@@ -155,6 +155,17 @@ import {
   callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
   callPhone as callsCallPhone,
+  claimBridge as callsClaimBridge,
+  claimRecording as callsClaimRecording,
+  updateUnclaimedCall as callsUpdateUnclaimedCall,
+  deferDiscard as callsDeferDiscard,
+  releaseRecording as callsReleaseRecording,
+  failStaleTranscripts as callsFailStaleTranscripts,
+  finishRecordingDiscard as callsFinishRecordingDiscard,
+  markRecordingDiscard as callsMarkRecordingDiscard,
+  getBridgedCall as callsGetBridgedCall,
+  listBridgedCallsToAdvance as callsListBridgedCallsToAdvance,
+  updateBridgedCall as callsUpdateBridgedCall,
   getCall as callsGetCall,
   getCallBrief as callsGetCallBrief,
   insertCall as callsInsertCall,
@@ -1936,6 +1947,74 @@ export class Ledger {
   /** @see ledger-calls.ts#getCall */
   getCall(id: number): CallRecordView | null {
     return callsGetCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#getBridgedCall */
+  getBridgedCall(id: number): ReturnType<typeof callsGetBridgedCall> {
+    return callsGetBridgedCall(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#updateBridgedCall */
+  updateBridgedCall(id: number, patch: Parameters<typeof callsUpdateBridgedCall>[2]): void {
+    callsUpdateBridgedCall(this.db, id, patch);
+  }
+
+  /** @see ledger-calls.ts#listBridgedCallsToAdvance */
+  listBridgedCallsToAdvance(
+    sinceIso: string,
+    limit: number,
+    discardLimit?: number,
+    nowIso?: string,
+    onlyDiscards?: boolean,
+  ): ReturnType<typeof callsListBridgedCallsToAdvance> {
+    return callsListBridgedCallsToAdvance(
+      this.db,
+      sinceIso,
+      limit,
+      discardLimit,
+      nowIso,
+      onlyDiscards,
+    );
+  }
+
+  /** @see ledger-calls.ts#claimBridge */
+  claimBridge(id: number, atIso: string): boolean {
+    return callsClaimBridge(this.db, id, atIso);
+  }
+
+  /** @see ledger-calls.ts#updateUnclaimedCall */
+  updateUnclaimedCall(id: number, patch: Parameters<typeof callsUpdateUnclaimedCall>[2]): void {
+    callsUpdateUnclaimedCall(this.db, id, patch);
+  }
+
+  /** @see ledger-calls.ts#claimRecording */
+  claimRecording(id: number, atIso: string): boolean {
+    return callsClaimRecording(this.db, id, atIso);
+  }
+
+  /** @see ledger-calls.ts#releaseRecording */
+  releaseRecording(id: number): void {
+    callsReleaseRecording(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#deferDiscard */
+  deferDiscard(id: number, nextIso: string): void {
+    callsDeferDiscard(this.db, id, nextIso);
+  }
+
+  /** @see ledger-calls.ts#markRecordingDiscard */
+  markRecordingDiscard(id: number): void {
+    callsMarkRecordingDiscard(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#finishRecordingDiscard */
+  finishRecordingDiscard(id: number): void {
+    callsFinishRecordingDiscard(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#failStaleTranscripts */
+  failStaleTranscripts(beforeIso: string): number {
+    return callsFailStaleTranscripts(this.db, beforeIso);
   }
 
   /** @see ledger-calls.ts#listCallsForProspect */

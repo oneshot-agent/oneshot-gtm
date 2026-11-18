@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { demoMode } from "./demo.ts";
 import { openStateDatabase } from "./sqlite-open.ts";
 import { personAliases, SharedPeople } from "./shared-people.ts";
@@ -148,6 +149,36 @@ export class LastOwnerError extends Error {
 }
 
 /** The stored form of a member email: trimmed and lowercased. Null when it cannot be one. */
+export type MemberPhoneStatus = "verifying" | "verified" | "failed";
+
+/** A `member_phones` row. */
+export interface MemberPhoneRow {
+  member: string;
+  phone: string;
+  status: MemberPhoneStatus;
+  validation_code: string | null;
+  verified_at: string | null;
+  error: string | null;
+  updated_at: string;
+  /** New on every write: a later check or delete acts only on the write it read. */
+  write_token: string | null;
+}
+
+/** One write to a member's phone row (`SharedDb.setMemberPhone`). */
+export interface MemberPhoneWrite {
+  member: string;
+  phone: string;
+  status: MemberPhoneStatus;
+  validationCode?: string | null;
+  verifiedAt?: string | null;
+  error?: string | null;
+}
+
+/** The `member_phones` key for a request's member: the email, '' for the unlisted local owner. */
+export function memberPhoneKey(email: string | null | undefined): string {
+  return email ? (normalizeMemberEmail(email) ?? email.trim().toLowerCase()) : "";
+}
+
 export function normalizeMemberEmail(input: string): string | null {
   const email = input.trim().toLowerCase();
   return /^[^\s@]+@[^\s@]+$/.test(email) ? email : null;
@@ -375,6 +406,27 @@ export class SharedDb {
         host     TEXT PRIMARY KEY,
         added_at TEXT NOT NULL
       );
+      -- Each member's own phone for bridged calls (call-bridge.ts): it rings
+      -- first and is the caller ID the prospect sees. Keyed by the member's
+      -- email, '' for the unlisted local owner. status: verifying (the
+      -- provider is calling it with validation_code), verified, failed.
+      CREATE TABLE IF NOT EXISTS member_phones (
+        member          TEXT PRIMARY KEY,
+        phone           TEXT NOT NULL,
+        status          TEXT NOT NULL,
+        validation_code TEXT,
+        verified_at     TEXT,
+        error           TEXT,
+        updated_at      TEXT NOT NULL,
+        write_token     TEXT
+      );
+      -- Install-wide values every workspace shares (the call bridge's
+      -- transcription service: the provider subaccount is install-wide).
+      CREATE TABLE IF NOT EXISTS install_settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
     // Shared files created before reservations existed. Every workspace's
     // server runs this on boot, possibly at the same instant: take the write
@@ -397,6 +449,12 @@ export class SharedDb {
         if (!paymentCols.some((c) => c.name === name))
           this.db.exec(`ALTER TABLE payment_holds ADD COLUMN ${name} ${definition}`);
       }
+      // A phone row's write: a later check or delete acts only on the row it read.
+      const phoneCols = this.db
+        .query<{ name: string }, []>("PRAGMA table_info(member_phones)")
+        .all();
+      if (!phoneCols.some((c) => c.name === "write_token"))
+        this.db.exec("ALTER TABLE member_phones ADD COLUMN write_token TEXT");
       const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
         name: string;
       }>;
@@ -1445,6 +1503,15 @@ export class SharedDb {
           new Date().toISOString(),
           normalized,
         ]).changes === 1;
+      // Their phone is no longer proven: a member added back verifies it again.
+      if (removed)
+        this.db.run(
+          `UPDATE member_phones SET status = 'failed', validation_code = NULL, verified_at = NULL,
+                  error = 'the member was removed; verify the phone again', updated_at = ?,
+                  write_token = ?
+            WHERE member = ? AND status <> 'failed'`,
+          [new Date().toISOString(), randomUUID(), normalized],
+        );
       this.db.exec("COMMIT");
       return removed;
     } catch (err) {
@@ -1529,6 +1596,158 @@ export class SharedDb {
       this.db
         .query<{ host: string }, [string]>("SELECT host FROM allowed_hosts WHERE host = ?")
         .get(normalized) != null
+    );
+  }
+
+  /** A member's phone for bridged calls, or null. `member` is `memberPhoneKey`'s. */
+  memberPhone(member: string): MemberPhoneRow | null {
+    return (
+      this.db
+        .query<MemberPhoneRow, [string]>("SELECT * FROM member_phones WHERE member = ?")
+        .get(member) ?? null
+    );
+  }
+
+  /**
+   * Write a member's phone and its verification state; the fields left out
+   * are cleared, and the row gets a new `write_token`. With `ifToken`, only
+   * while the row is still the write that token names (else null). A number
+   * verified here is no one else's verified number any more.
+   */
+  setMemberPhone(input: MemberPhoneWrite): MemberPhoneRow;
+  setMemberPhone(input: MemberPhoneWrite, ifToken: string): MemberPhoneRow | null;
+  setMemberPhone(input: MemberPhoneWrite, ifToken?: string): MemberPhoneRow | null {
+    const now = new Date().toISOString();
+    const values = [
+      input.phone,
+      input.status,
+      input.validationCode ?? null,
+      input.verifiedAt ?? null,
+      input.error ?? null,
+      now,
+      randomUUID(),
+    ];
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const wrote =
+        ifToken === undefined
+          ? this.db.run(
+              `INSERT INTO member_phones(phone, status, validation_code, verified_at, error, updated_at,
+                                         write_token, member)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = excluded.status,
+                 validation_code = excluded.validation_code, verified_at = excluded.verified_at,
+                 error = excluded.error, updated_at = excluded.updated_at,
+                 write_token = excluded.write_token`,
+              [...values, input.member],
+            ).changes > 0
+          : this.db.run(
+              `UPDATE member_phones SET phone = ?, status = ?, validation_code = ?, verified_at = ?,
+                      error = ?, updated_at = ?, write_token = ?
+                WHERE member = ? AND write_token = ?`,
+              [...values, input.member, ifToken],
+            ).changes > 0;
+      if (wrote && input.status === "verified")
+        this.db.run(
+          `UPDATE member_phones SET status = 'failed', verified_at = NULL, updated_at = ?,
+                  error = 'another member verified this number', write_token = ?
+            WHERE phone = ? AND member <> ? AND status = 'verified'`,
+          [now, randomUUID(), input.phone, input.member],
+        );
+      this.db.exec("COMMIT");
+      return wrote ? this.memberPhone(input.member) : null;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /**
+   * Hold `phone` for `member` as being verified, unless another active
+   * member (or the unlisted local owner, '') holds it. Checked and written
+   * under one write lock, so two workspaces never both claim one number
+   * while the provider is asked. False when someone else holds it.
+   */
+  reserveMemberPhone(member: string, phone: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const held = this.db
+        .query<{ one: number }, [string, string]>(
+          `SELECT 1 AS one FROM member_phones
+            WHERE phone = ? AND member <> ? AND status <> 'failed'
+              AND (member = '' OR member IN (SELECT email FROM members WHERE removed_at IS NULL))
+            LIMIT 1`,
+        )
+        .get(phone, member);
+      if (held) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      const now = new Date().toISOString();
+      // A removed member's leftover claim on it holds nothing any more.
+      this.db.run(
+        `UPDATE member_phones SET status = 'failed', verified_at = NULL, updated_at = ?,
+                error = 'the member was removed; verify the phone again', write_token = ?
+          WHERE phone = ? AND member <> ? AND status <> 'failed'`,
+        [now, randomUUID(), phone, member],
+      );
+      this.db.run(
+        `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error,
+                                   updated_at, write_token)
+         VALUES(?, ?, 'verifying', NULL, NULL, NULL, ?, ?)
+         ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = 'verifying',
+           validation_code = NULL, verified_at = NULL, error = NULL, updated_at = excluded.updated_at,
+           write_token = excluded.write_token`,
+        [member, phone, now, randomUUID()],
+      );
+      this.db.exec("COMMIT");
+      return true;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** The members (keys) whose phone is `phone`, verified or being verified. */
+  memberPhoneHolders(phone: string): string[] {
+    return this.db
+      .query<{ member: string }, [string]>(
+        "SELECT member FROM member_phones WHERE phone = ? AND status <> 'failed'",
+      )
+      .all(phone)
+      .map((r) => r.member);
+  }
+
+  /**
+   * Forget a member's phone. With `expected`, only the write read before
+   * (its `write_token`): one stored since is kept. False when nothing was
+   * deleted.
+   */
+  deleteMemberPhone(member: string, expected?: Pick<MemberPhoneRow, "write_token">): boolean {
+    if (!expected)
+      return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;
+    if (!expected.write_token) return false;
+    return (
+      this.db.run("DELETE FROM member_phones WHERE member = ? AND write_token = ?", [
+        member,
+        expected.write_token,
+      ]).changes === 1
+    );
+  }
+
+  installSetting(key: string): string | null {
+    return (
+      this.db
+        .query<{ value: string }, [string]>("SELECT value FROM install_settings WHERE key = ?")
+        .get(key)?.value ?? null
+    );
+  }
+
+  setInstallSetting(key: string, value: string): void {
+    this.db.run(
+      `INSERT INTO install_settings(key, value, updated_at) VALUES(?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      [key, value, new Date().toISOString()],
     );
   }
 

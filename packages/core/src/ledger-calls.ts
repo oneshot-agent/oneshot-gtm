@@ -75,6 +75,31 @@ interface CallRow {
   transcript_json: string | null;
   summary_json: string | null;
   created_at: string;
+  member: string | null;
+  status: string | null;
+  transcript_sid: string | null;
+  status_reason: string | null;
+  member_phone: string | null;
+  bridged_at: string | null;
+  commitments_json: string | null;
+  discard_recording: number;
+  recording_from?: string | null;
+  recording_requested_at?: string | null;
+  discard_next_at?: string | null;
+}
+
+/** A bridged call's live states (`CallRecordView.status`). */
+export const BRIDGE_CALL_STATUSES = [
+  "ringing_founder",
+  "ringing_prospect",
+  "connected",
+  "ended",
+  "failed",
+] as const;
+export type BridgeCallStatus = (typeof BRIDGE_CALL_STATUSES)[number];
+
+function bridgeStatusOf(value: string | null): BridgeCallStatus {
+  return BRIDGE_CALL_STATUSES.find((s) => s === value) ?? "ringing_founder";
 }
 
 function parseJson<T>(raw: string | null): T | null {
@@ -88,6 +113,7 @@ function parseJson<T>(raw: string | null): T | null {
 
 function toView(row: CallRow): CallRecordView {
   const status = row.transcript_status;
+  const commitments = parseJson<unknown>(row.commitments_json);
   return {
     id: row.id,
     prospectId: row.prospect_id,
@@ -96,7 +122,21 @@ function toView(row: CallRow): CallRecordView {
     durationSec: row.duration_sec,
     outcome: (row.outcome as CallOutcome | null) ?? null,
     note: row.note,
+    member: row.member ?? null,
     provider: row.provider === "twilio" ? "twilio" : "tel",
+    ...(row.provider === "twilio" ? { status: bridgeStatusOf(row.status) } : {}),
+    ...(row.status_reason ? { statusReason: row.status_reason } : {}),
+    ...(Array.isArray(commitments)
+      ? { commitments: commitments.filter((c): c is string => typeof c === "string") }
+      : {}),
+    ...(row.recording_from === "answer" || row.recording_from === "consent"
+      ? { recordedFrom: row.recording_from }
+      : {}),
+    ...(row.discard_recording === 1
+      ? { discard: "pending" as const }
+      : row.discard_recording === 2
+        ? { discard: "done" as const }
+        : {}),
     transcriptStatus:
       status === "pending" || status === "ready" || status === "failed" ? status : "none",
     transcript: parseJson<CallRecordView["transcript"]>(row.transcript_json),
@@ -117,6 +157,16 @@ export function insertCall(
     phone?: string | null;
     provider?: "tel" | "twilio";
     providerCallSid?: string | null;
+    /** The member who placed or logged it (email); null for the unlisted local owner. */
+    member?: string | null;
+    /** A bridged call's state when written. */
+    status?: BridgeCallStatus | null;
+    /** 'pending' for a bridged call that is recorded; 'none' otherwise. */
+    transcriptStatus?: "none" | "pending";
+    /** The member's phone a bridged call rang and dials from. */
+    memberPhone?: string | null;
+    statusReason?: string | null;
+    commitments?: readonly string[] | null;
     /** The dashboard's id for this save (`callByClientKey`). */
     clientKey?: string | null;
   },
@@ -124,8 +174,9 @@ export function insertCall(
   const result = db
     .prepare(
       `INSERT INTO calls (prospect_id, play_name, started_at, duration_sec, outcome, reply_intent,
-                          note, phone, provider, provider_call_sid, client_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          note, phone, provider, provider_call_sid, member, status, transcript_status,
+                          member_phone, status_reason, commitments_json, client_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.prospectId,
@@ -138,6 +189,12 @@ export function insertCall(
       input.phone ?? null,
       input.provider ?? "tel",
       input.providerCallSid ?? null,
+      input.member ?? null,
+      input.status ?? null,
+      input.transcriptStatus ?? "none",
+      input.memberPhone ?? null,
+      input.statusReason ?? null,
+      input.commitments ? JSON.stringify(input.commitments) : null,
       input.clientKey ?? null,
     );
   return Number(result.lastInsertRowid);
@@ -209,13 +266,17 @@ export function setCallOutcome(
     note?: string | null;
     durationSec?: number | null;
     playName?: string | null;
+    /** The promises the member confirmed; absent keeps what is stored. */
+    commitments?: readonly string[] | null;
   },
 ): boolean {
   return (
     db
       .prepare(
         `UPDATE calls SET outcome = ?, reply_intent = ?, note = COALESCE(?, note),
-                duration_sec = COALESCE(?, duration_sec), play_name = COALESCE(play_name, ?)
+                duration_sec = COALESCE(?, duration_sec), play_name = COALESCE(play_name, ?),
+                commitments_json = CASE WHEN discard_recording <> 0 THEN NULL
+                                        ELSE COALESCE(?, commitments_json) END
          WHERE id = ? AND prospect_id = ?
            AND (COALESCE(outcome, '') <> 'do_not_contact' OR ? = 'do_not_contact')`,
       )
@@ -225,11 +286,249 @@ export function setCallOutcome(
         input.note ?? null,
         input.durationSec ?? null,
         input.playName ?? null,
+        input.commitments ? JSON.stringify(input.commitments) : null,
         input.id,
         input.prospectId,
         input.outcome,
       ).changes > 0
   );
+}
+
+/** What the bridge needs of a bridged call besides its view: the provider's ids. */
+export interface BridgedCall {
+  view: CallRecordView;
+  callSid: string;
+  recordingSid: string | null;
+  transcriptSid: string | null;
+  /** The number dialled, E.164. */
+  phone: string | null;
+  memberPhone: string | null;
+  bridgedAt: string | null;
+  /** The prospect declined recording: its recording and transcript are being deleted. */
+  discardPending: boolean;
+}
+
+function toBridged(row: CallRow): BridgedCall | null {
+  if (row.provider !== "twilio" || !row.provider_call_sid) return null;
+  return {
+    view: toView(row),
+    callSid: row.provider_call_sid,
+    recordingSid: row.recording_sid,
+    transcriptSid: row.transcript_sid,
+    phone: row.phone,
+    memberPhone: row.member_phone,
+    bridgedAt: row.bridged_at,
+    discardPending: row.discard_recording === 1,
+  };
+}
+
+/** A bridged call by id; null for a `tel:` call or none. */
+export function getBridgedCall(db: Database, id: number): BridgedCall | null {
+  const row = db.query("SELECT * FROM calls WHERE id = ?").get(id) as CallRow | null;
+  return row ? toBridged(row) : null;
+}
+
+/**
+ * Write what the bridge read or did on a call. Each key present replaces the
+ * stored value. The recording and transcript keys are dropped once the
+ * prospect declined recording: a read in flight must not write them back.
+ */
+export function updateBridgedCall(
+  db: Database,
+  id: number,
+  patch: {
+    status?: BridgeCallStatus;
+    statusReason?: string | null;
+    durationSec?: number | null;
+    recordingSid?: string | null;
+    transcriptSid?: string | null;
+    transcriptStatus?: CallRecordView["transcriptStatus"];
+    transcript?: CallRecordView["transcript"];
+    suggestion?: CallRecordView["suggestion"];
+    /** The recording was asked for: how, and when (`recording_requested_at`). */
+    recordingFrom?: "answer" | null;
+    recordingRequestedAt?: string | null;
+  },
+): void {
+  const write = (cols: Array<[string, string | number | null | undefined]>, where: string) => {
+    const present = cols.filter((c): c is [string, string | number | null] => c[1] !== undefined);
+    if (present.length === 0) return;
+    db.prepare(
+      `UPDATE calls SET ${present.map(([c]) => `${c} = ?`).join(", ")} WHERE id = ? ${where}`,
+    ).run(...present.map(([, v]) => v), id);
+  };
+  write(
+    [
+      ["status", patch.status],
+      ["status_reason", patch.statusReason],
+      ["duration_sec", patch.durationSec],
+    ],
+    // A late read of a live state never replaces an ended one.
+    patch.status !== undefined && !TERMINAL_STATUSES.has(patch.status) ? LIVE_ONLY : "",
+  );
+  write(
+    [
+      ["recording_sid", patch.recordingSid],
+      ["recording_from", patch.recordingFrom],
+      ["recording_requested_at", patch.recordingRequestedAt],
+      ["transcript_sid", patch.transcriptSid],
+      ["transcript_status", patch.transcriptStatus],
+      [
+        "transcript_json",
+        patch.transcript === undefined
+          ? undefined
+          : patch.transcript && JSON.stringify(patch.transcript),
+      ],
+      [
+        "summary_json",
+        patch.suggestion === undefined
+          ? undefined
+          : patch.suggestion && JSON.stringify(patch.suggestion),
+      ],
+    ],
+    "AND discard_recording = 0",
+  );
+}
+
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["ended", "failed"]);
+const LIVE_ONLY = "AND COALESCE(status, '') NOT IN ('ended', 'failed')";
+
+/**
+ * The member's leg as read before anyone was dialled: written only while no
+ * poll has claimed the call (`claimBridge`), so a stale read never ends or
+ * unrecords a call another poll has bridged.
+ */
+export function updateUnclaimedCall(
+  db: Database,
+  id: number,
+  patch: { status: BridgeCallStatus; statusReason?: string; transcriptStatus?: "none" },
+): void {
+  const cols: Array<[string, string]> = [["status", patch.status]];
+  if (patch.statusReason !== undefined) cols.push(["status_reason", patch.statusReason]);
+  if (patch.transcriptStatus !== undefined)
+    cols.push(["transcript_status", patch.transcriptStatus]);
+  db.prepare(
+    `UPDATE calls SET ${cols.map(([c]) => `${c} = ?`).join(", ")}
+      WHERE id = ? AND bridged_at IS NULL
+        ${TERMINAL_STATUSES.has(patch.status) ? "" : LIVE_ONLY}`,
+  ).run(...cols.map(([, v]) => v), id);
+}
+
+/** Claim a held call for dialling the prospect: true for exactly one caller. */
+export function claimBridge(db: Database, id: number, atIso: string): boolean {
+  return (
+    db.prepare("UPDATE calls SET bridged_at = ? WHERE id = ? AND bridged_at IS NULL").run(atIso, id)
+      .changes === 1
+  );
+}
+
+/**
+ * The prospect declined recording: drop the transcript, the suggestion and
+ * the promises read from it now, delete the provider's copies next.
+ */
+export function markRecordingDiscard(db: Database, id: number): void {
+  db.prepare(
+    `UPDATE calls SET discard_recording = 1, transcript_status = 'none', transcript_json = NULL,
+            summary_json = NULL, commitments_json = NULL
+      WHERE id = ? AND provider = 'twilio' AND discard_recording = 0`,
+  ).run(id);
+}
+
+/** The member pressed Record (the prospect agreed): true for exactly one caller, on a call not yet recorded. */
+export function claimRecording(db: Database, id: number, atIso: string): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE calls SET transcript_status = 'pending', recording_from = 'consent',
+                recording_requested_at = ?
+          WHERE id = ? AND provider = 'twilio' AND transcript_status = 'none'
+            AND recording_sid IS NULL AND discard_recording = 0`,
+      )
+      .run(atIso, id).changes === 1
+  );
+}
+
+/** A Record press Twilio refused for certain: nothing records, so Record can be pressed again. */
+export function releaseRecording(db: Database, id: number): void {
+  db.prepare(
+    `UPDATE calls SET transcript_status = 'none', recording_from = NULL, recording_requested_at = NULL
+      WHERE id = ? AND discard_recording = 0 AND recording_from = 'consent'`,
+  ).run(id);
+}
+
+/** A pending deletion's next try: `nextIso`, behind deletions ready sooner. */
+export function deferDiscard(db: Database, id: number, nextIso: string): void {
+  db.prepare("UPDATE calls SET discard_next_at = ? WHERE id = ? AND discard_recording = 1").run(
+    nextIso,
+    id,
+  );
+}
+
+/** The provider's recording and transcripts are deleted. */
+export function finishRecordingDiscard(db: Database, id: number): void {
+  db.prepare(
+    `UPDATE calls SET discard_recording = 2, recording_sid = NULL, transcript_sid = NULL
+      WHERE id = ? AND discard_recording = 1`,
+  ).run(id);
+}
+
+/**
+ * Bridged calls started since `sinceIso` with work left: still live as last
+ * read, a transcript pending, or a ready transcript with no suggestion yet.
+ * Oldest first, at most `limit` (the scheduler's sweep). A recording
+ * deletion still pending is taken however old, up to `discardLimit` more,
+ * so a long outage never leaves one behind and never crowds out new calls.
+ */
+export function listBridgedCallsToAdvance(
+  db: Database,
+  sinceIso: string,
+  limit: number,
+  discardLimit = 5,
+  nowIso = new Date().toISOString(),
+  /** Calls are off: only declined recordings are still worked. */
+  onlyDiscards = false,
+): BridgedCall[] {
+  const discardDue = "discard_recording = 1 AND (discard_next_at IS NULL OR discard_next_at <= ?)";
+  const work = onlyDiscards
+    ? `COALESCE(status, '') NOT IN ('ended', 'failed') AND discard_recording = 1 OR (${discardDue})`
+    : `COALESCE(status, '') NOT IN ('ended', 'failed')
+               OR (${discardDue})
+               OR (transcript_status = 'pending' AND discard_recording = 0)
+               OR (transcript_status = 'ready' AND summary_json IS NULL
+                   AND COALESCE(json_array_length(transcript_json), 0) > 0)`;
+  const recent = db
+    .query(
+      `SELECT * FROM calls
+        WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at >= ?
+          AND (${work})
+        ORDER BY started_at ASC, id ASC LIMIT ?`,
+    )
+    .all(sinceIso, nowIso, limit) as CallRow[];
+  // Ready soonest first: one that keeps failing is pushed behind the rest.
+  const oldDiscards = db
+    .query(
+      `SELECT * FROM calls
+        WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at < ?
+          AND ${discardDue}
+        ORDER BY COALESCE(discard_next_at, started_at) ASC, id ASC LIMIT ?`,
+    )
+    .all(sinceIso, nowIso, discardLimit) as CallRow[];
+  return [...oldDiscards, ...recent].map(toBridged).filter((c): c is BridgedCall => c != null);
+}
+
+/**
+ * Bridged calls whose recording was asked for (else started) before
+ * `beforeIso` and whose transcript is still pending: the sweep gives up on them (`transcript_status = 'failed'`). Returns how
+ * many it marked.
+ */
+export function failStaleTranscripts(db: Database, beforeIso: string): number {
+  return db
+    .prepare(
+      `UPDATE calls SET transcript_status = 'failed'
+        WHERE provider = 'twilio' AND transcript_status = 'pending'
+          AND COALESCE(recording_requested_at, started_at) < ?`,
+    )
+    .run(beforeIso).changes;
 }
 
 export function getCall(db: Database, id: number): CallRecordView | null {

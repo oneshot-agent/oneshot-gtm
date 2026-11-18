@@ -11,12 +11,12 @@ import {
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
+import type { CallRecordMode } from "@oneshot-gtm/shared-types";
 import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
 import {
   LINKEDIN_TEMPLATE_SLOTS,
   OFFER_CHECKS,
-  type CallsConfig,
   type LinkedInTemplates,
   type LinkedInWriter,
   type OfferAnchor,
@@ -408,7 +408,12 @@ export interface ResolvedCalls {
   enabled: boolean;
   cadenceStep: { position: number; delayDays: number; holdDays: number } | null;
   window: { start: string; end: string; weekdays: boolean };
-  bridge: NonNullable<CallsConfig["bridge"]> | null;
+  /** Null only for `bridge: null`; whether it can dial depends on the keys (`twilioKeysFromEnv`). */
+  bridge: {
+    provider: "twilio";
+    record: CallRecordMode;
+    transcriptionServiceSid: string | null;
+  } | null;
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -467,16 +472,22 @@ export function callsOf(cfg: { calls?: unknown }): ResolvedCalls {
     raw["bridge"] && typeof raw["bridge"] === "object"
       ? (raw["bridge"] as Record<string, unknown>)
       : null;
+  const serviceSid = b?.["transcriptionServiceSid"];
   const bridge =
-    b &&
-    b["provider"] === "twilio" &&
-    typeof b["founderPhone"] === "string" &&
-    b["founderPhone"].trim() &&
-    typeof b["callerId"] === "string" &&
-    b["callerId"].trim()
-      ? (b as unknown as NonNullable<CallsConfig["bridge"]>)
-      : null;
+    raw["bridge"] === null || (b && b["provider"] !== "twilio")
+      ? null
+      : {
+          provider: "twilio" as const,
+          record: callRecordModeOf(b?.["record"]),
+          transcriptionServiceSid:
+            typeof serviceSid === "string" && serviceSid.trim() ? serviceSid.trim() : null,
+        };
   return { enabled: raw["enabled"] === true, cadenceStep, window, bridge };
+}
+
+/** `calls.bridge.record`: anything but "always" or false asks first; the legacy `true` too. */
+export function callRecordModeOf(value: unknown): CallRecordMode {
+  return value === false ? false : value === "always" ? "always" : "ask";
 }
 
 /** Who writes LinkedIn copy: only the exact string `model` turns templates off. */
@@ -710,6 +721,10 @@ export const ENV_ONLY_SECRET_KEYS = [
   "X_ACCESS_TOKEN",
   "X_ACCESS_SECRET",
   "TWITTERAPI_IO_KEY",
+  // Bridged calls (call-bridge.ts): a provider API key, never the account's auth token.
+  "TWILIO_ACCOUNT_SID",
+  "TWILIO_API_KEY_SID",
+  "TWILIO_API_KEY_SECRET",
 ] as const;
 export type EnvOnlySecretKey = (typeof ENV_ONLY_SECRET_KEYS)[number];
 

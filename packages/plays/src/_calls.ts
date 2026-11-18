@@ -26,6 +26,7 @@ import {
   phoneLocalTime,
   pickCallPhone,
   productBriefText,
+  twilioKeysFromEnv,
   type CallCandidate,
   type OneShotConfig,
   type ProspectRecord,
@@ -456,6 +457,7 @@ export function recordCall(
   prospectId: number,
   req: LogCallRequest,
   now: Date = new Date(),
+  member: string | null = null,
 ): CallRecordView {
   const ledger = getLedger();
   const outcome: CallOutcome = req.outcome;
@@ -473,7 +475,7 @@ export function recordCall(
   // One transaction: the call row, its touch and what the outcome does to
   // the cadences land together, or none of them does.
   const { callId, stepPlay } = ledger.inTransaction(() =>
-    applyCallOutcome(prospectId, req, { outcome, note, durationSec, phone, cfg, now }),
+    applyCallOutcome(prospectId, req, { outcome, note, durationSec, phone, cfg, now, member }),
   );
   logEvent("call.logged", { prospect_id: prospectId, outcome, cadence_step: stepPlay != null });
   return ledger.getCall(callId)!;
@@ -491,10 +493,11 @@ function applyCallOutcome(
     phone: string | null;
     cfg: OneShotConfig;
     now: Date;
+    member: string | null;
   },
 ): { callId: number; stepPlay: string | null } {
   const ledger = getLedger();
-  const { outcome, note, durationSec, cfg, now } = ctx;
+  const { outcome, note, durationSec, cfg, now, member } = ctx;
   const replayed =
     req.callId == null && req.clientKey ? ledger.callByClientKey(req.clientKey) : null;
   if (replayed && replayed.prospectId !== prospectId)
@@ -503,6 +506,9 @@ function applyCallOutcome(
   const existing = existingId != null ? ledger.getCall(existingId) : null;
   if (existingId != null && existing?.prospectId !== prospectId)
     throw new CallLogError("call not found", 404);
+  // Promises come from a recording's transcript: a tel: call has none to confirm.
+  if (req.commitments?.length && existing?.provider !== "twilio")
+    throw new CallLogError("only a bridged call has promises to confirm", 400);
   if (existing?.outcome === "do_not_contact" && outcome !== "do_not_contact")
     throw new CallLogError("this call was logged do not contact; that stays", 409);
   // An existing call's own cadence, when it recorded one: never another
@@ -521,7 +527,15 @@ function applyCallOutcome(
   let dialled: string | null;
   if (existingId != null) {
     if (
-      !ledger.setCallOutcome({ id: existingId, prospectId, outcome, note, durationSec, playName })
+      !ledger.setCallOutcome({
+        id: existingId,
+        prospectId,
+        outcome,
+        note,
+        durationSec,
+        playName,
+        ...(req.commitments ? { commitments: req.commitments } : {}),
+      })
     )
       throw new CallLogError("call not found", 404);
     callId = existingId;
@@ -537,6 +551,8 @@ function applyCallOutcome(
       note,
       phone: dialled,
       provider: "tel",
+      member,
+      commitments: req.commitments ?? null,
       clientKey: req.clientKey ?? null,
     });
   }
@@ -635,8 +651,7 @@ export function listCalls(
   const calls = callsOf(cfg);
   const base = {
     enabled: calls.enabled,
-    // Ringing the founder's phone is not built yet: a configured bridge still dials by tel:.
-    dialMode: "tel" as const,
+    dialMode: calls.bridge && twilioKeysFromEnv() ? ("bridge" as const) : ("tel" as const),
     window: calls.window,
   };
   if (!calls.enabled) return { ...base, due: [], list: [] };

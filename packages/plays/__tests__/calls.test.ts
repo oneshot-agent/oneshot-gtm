@@ -397,11 +397,21 @@ describe("listCalls", () => {
     });
   });
 
-  it("dials by tel: even with a bridge configured: ringing the founder's phone is not built yet", () => {
-    callsOn(3, {
-      bridge: { provider: "twilio", founderPhone: "+15550001111", callerId: "+15550002222" },
-    });
-    expect(listCalls().dialMode).toBe("tel");
+  it("dialMode is bridge only once the provider keys are set, and never with bridge: null", () => {
+    callsOn(3);
+    try {
+      // Never the developer's own keys.
+      vi.stubEnv("TWILIO_ACCOUNT_SID", "");
+      expect(listCalls().dialMode).toBe("tel");
+      vi.stubEnv("TWILIO_ACCOUNT_SID", "AC1");
+      vi.stubEnv("TWILIO_API_KEY_SID", "SK1");
+      vi.stubEnv("TWILIO_API_KEY_SECRET", "secret");
+      expect(listCalls().dialMode).toBe("bridge");
+      callsOn(3, { bridge: null });
+      expect(listCalls().dialMode).toBe("tel");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("lists a person due in two plays once per play, each with its step", () => {
@@ -905,6 +915,51 @@ describe("review fixes", () => {
     });
     expect(cadence(id).current_step).toBe(2);
     expect(JSON.parse(callEvents(id)[0]!.metadata_json!)).toMatchObject({ callId: due.id });
+  });
+
+  it("a bridged call logged from its due row completes that step only while it is current", () => {
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    const bridged = () =>
+      ledger.insertCall({
+        prospectId: id,
+        playName: PLAY,
+        startedAt: new Date().toISOString(),
+        provider: "twilio",
+        providerCallSid: "CA1",
+        status: "ended",
+      });
+    // Opened on step 0, logged once the cadence was on its call step: the call only.
+    const stale = bridged();
+    const log = (callId: number, currentStep: number, key: string) =>
+      recordCall(id, { outcome: "no_answer", callId, playName: PLAY, currentStep, clientKey: key });
+    expect(log(stale, 0, "k-stale-0001")).toMatchObject({ id: stale, outcome: "no_answer" });
+    expect(cadence(id).current_step).toBe(1);
+    // The right step of another enrolment (a stop and re-enrol since): the call only.
+    const reEnrolled = bridged();
+    recordCall(id, {
+      outcome: "no_answer",
+      callId: reEnrolled,
+      playName: PLAY,
+      currentStep: 1,
+      enrolledAt: "2020-01-01T00:00:00.000Z",
+    });
+    expect(cadence(id).current_step).toBe(1);
+    const due = bridged();
+    recordCall(id, {
+      outcome: "no_answer",
+      callId: due,
+      playName: PLAY,
+      currentStep: 1,
+      enrolledAt: cadence(id).enrolled_at,
+      clientKey: "k-due-00001",
+    });
+    // A retried save of the same bridged call writes nothing new.
+    log(due, 1, "k-due-00001");
+    expect(cadence(id).current_step).toBe(2);
+    expect(callEvents(id)).toHaveLength(1);
+    expect(ledger.listCallsForProspect(id)).toHaveLength(3);
   });
 
   it("a changed outcome on a call whose cadence moved on marks that call's step, not the latest email", () => {

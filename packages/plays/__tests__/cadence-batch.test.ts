@@ -99,6 +99,7 @@ vi.mock("@oneshot-gtm/core", async () => {
           : null;
       },
       findProspectByEmail: () => null,
+      listCallsForProspect: () => [],
       listSequenceEventsForProspectPlay: () => [
         { step_index: 0, status: "sent", metadata_json: JSON.stringify({}) },
       ],
