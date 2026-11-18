@@ -42,6 +42,7 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { currentMember, isAllowedOrigin, linkedInViewer } from "../members.ts";
 import { jsonResponse } from "../server.ts";
+import { evidenceFor } from "../learning-evidence.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import {
   startLinkedInBackfill,
@@ -805,6 +806,7 @@ export async function replyLearningRoute(req: Request) {
         ledger.learning.setGuidanceEnabled(b.preferenceId, b.enabled);
       else learning.setEnabled(workspace, b.enabled);
     }
+    const viewer = linkedInViewer(req);
     const status: ReplyLearningStatus = {
       ...learning.status(workspace),
       version: ledger.learning.guidanceVersion(),
@@ -816,7 +818,9 @@ export async function replyLearningRoute(req: Request) {
           instruction: g.instruction,
           source: g.source,
           enabled: g.status === "enabled",
-          evidence: (g.evidence.samples ?? []).map((s, i) => ({
+          // The rule is shared; a LinkedIn reply it was learned from is shown
+          // only to the member who connected that account.
+          evidence: (evidenceFor(viewer, g.evidence).samples ?? []).map((s, i) => ({
             id: `${g.id}:${i}`,
             threadKey: "",
             name: s.name ?? "",

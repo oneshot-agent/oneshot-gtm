@@ -13,6 +13,8 @@ import type {
   LearningProposalView,
   LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
+import { evidenceFor } from "../learning-evidence.ts";
+import { linkedInViewer } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
 /**
@@ -53,14 +55,18 @@ function parseKind(v: string | null): LearningKind | undefined {
 }
 
 /**
- * The scope as the founder knows it — a prospect's name rather than its id,
- * the play's name for a campaign angle — resolved at read time so rows
- * proposed before this field existed get it too.
+ * The proposal as the member making the request reads it. The scope is named
+ * as the founder knows it — a prospect's name rather than its id, the play's
+ * name for a campaign angle — resolved at read time so rows proposed before
+ * this field existed get it too. The evidence leaves out LinkedIn messages on
+ * an account another member connected (`evidenceFor`).
  */
 function withScopeLabel(
+  req: Request,
   ledger: ReturnType<typeof getLedger>,
-  p: LearningProposalView,
+  stored: LearningProposalView,
 ): LearningProposalView {
+  const p = { ...stored, evidence: evidenceFor(linkedInViewer(req), stored.evidence, stored) };
   if (p.kind === "prospect_angle" && p.scope.prospectId != null) {
     const prospect = ledger.getProspectById(p.scope.prospectId);
     const label = [prospect?.name, prospect?.company].filter(Boolean).join(" · ");
@@ -95,7 +101,7 @@ export function listLearningProposalsRoute(req: Request): Response {
           : {}),
         limit: Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 200,
       })
-      .map((p) => withScopeLabel(ledger, p)),
+      .map((p) => withScopeLabel(req, ledger, p)),
   };
   return jsonResponse(body, 200, req);
 }
@@ -129,6 +135,7 @@ function decisionResponse(
   try {
     const ledger = getLedger();
     const proposal = withScopeLabel(
+      req,
       ledger,
       decideLearning(ledger, params["id"] ?? "", action, value),
     );
@@ -158,9 +165,13 @@ export function rollbackLearningProposalRoute(
 /** GET /api/learning/guidance — every approved preference, enabled or not, with the current guidance version. */
 export function listLearningGuidanceRoute(req: Request): Response {
   const learning = getLedger().learning;
+  const viewer = linkedInViewer(req);
   const body: LearningGuidanceResult = {
     version: learning.guidanceVersion(),
-    guidance: learning.listGuidance(true),
+    // The rule is every member's; the LinkedIn messages behind it are not.
+    guidance: learning
+      .listGuidance(true)
+      .map((g) => Object.assign({}, g, { evidence: evidenceFor(viewer, g.evidence) })),
   };
   return jsonResponse(body, 200, req);
 }

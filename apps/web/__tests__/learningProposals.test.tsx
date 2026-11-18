@@ -249,6 +249,10 @@ describe("learning helpers", () => {
       "Three edited replies dropped the greeting. · learned before review existed",
     );
     expect(whyLine(CAMPAIGN)).toBe("cheap was rotated away 4 times and never sent. · hypothesis");
+    // Examples on another member's LinkedIn account are counted, not shown (#1040).
+    expect(whyLine({ ...PREF, legacy: false, evidence: { ...PREF.evidence, withheld: 2 } })).toBe(
+      "Three edited replies dropped the greeting. · 2 LinkedIn examples are shown only to the member who connected the account",
+    );
   });
 
   it("queue search accepts the learning deep link and never remembers it", () => {
