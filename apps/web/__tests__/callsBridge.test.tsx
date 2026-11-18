@@ -25,6 +25,10 @@ import {
   callerLabel,
   commitmentsToSend,
   CONSENT_LINE,
+  discardToast,
+  panelCallId,
+  recordingDeletable,
+  visibleDraft,
   firstName,
   isLive,
   LIVE_POLL_MS,
@@ -246,6 +250,36 @@ describe("bridged call logic", () => {
     expect(resumableCall([jos], owner, now)).toBeNull();
   });
 
+  it("holds Save while this call's recording is being deleted", () => {
+    const ended = call({ status: "ended" });
+    expect(saveHeld(ended, { pollFailed: false, starting: false, discarding: true })).toBe(true);
+    expect(saveHeld(ended, { pollFailed: false, starting: false, discarding: false })).toBe(false);
+  });
+
+  it("keeps the resumed call while a newer one shows up, and stops resuming after a tel: call", () => {
+    const older = call({ id: 1, startedAt: "2026-11-18T15:00:00Z" });
+    const newer = call({ id: 2, startedAt: "2026-11-18T16:00:00Z" });
+    const at = NOW.getTime();
+    const none = { startedId: null, pinnedId: null, noResume: false };
+    expect(panelCallId(none, [older], signedIn, at)).toBe(1);
+    expect(panelCallId({ ...none, pinnedId: 1 }, [older, newer], signedIn, at)).toBe(1);
+    expect(panelCallId({ ...none, startedId: 9, pinnedId: 1 }, [older], signedIn, at)).toBe(9);
+    expect(panelCallId({ ...none, noResume: true }, [older, newer], signedIn, at)).toBeNull();
+  });
+
+  it("never sends a note privacy mode hid because the transcript wrote it", () => {
+    const seeded = {
+      outcome: "interested" as const,
+      note: "From the call",
+      holdUntil: "",
+      noteFromCall: true,
+    };
+    expect(visibleDraft(seeded, true).note).toBe("");
+    expect(visibleDraft(seeded, false).note).toBe("From the call");
+    const typed = { ...seeded, note: "mine", noteFromCall: false };
+    expect(visibleDraft(typed, true).note).toBe("mine");
+  });
+
   it("holds Save while the call is live or Call is starting one", () => {
     const idle = { pollFailed: false, starting: false };
     expect(saveHeld(call({ status: "connected" }), idle)).toBe(true);
@@ -384,14 +418,18 @@ describe("bridged call API", () => {
 });
 
 describe("Your phone", () => {
-  const view = (screen: Parameters<typeof YourPhoneView>[0]["screen"], p = phone()) =>
+  const view = (
+    screen: Parameters<typeof YourPhoneView>[0]["screen"],
+    p = phone(),
+    inputError: string | null = null,
+  ) =>
     render(
       <YourPhoneView
         screen={screen}
         phone={p}
         failure="The code wasn't typed in within two minutes."
         draft=""
-        inputError={null}
+        inputError={inputError}
         busy={false}
         removeError={null}
         canCancel={false}
@@ -501,6 +539,14 @@ describe("Your phone", () => {
     const html = view("failed", phone({ status: "failed", phone: "+15125550100" }));
     expect(html).toContain("The code wasn&#x27;t typed in within two minutes.");
     expect(html).toContain("Try again");
+    // A retry the server just refused says why, not the older failure.
+    const refused = view(
+      "failed",
+      phone({ status: "failed", phone: "+15125550100" }),
+      "Twilio: The phone number is invalid",
+    );
+    expect(refused).toContain("Twilio: The phone number is invalid");
+    expect(refused).not.toContain("within two minutes");
   });
 
   it("sits in Setup → Calls, read from /api/calls/me", () => {
@@ -527,7 +573,7 @@ describe("Your phone", () => {
 
 describe("the dial panel in bridge mode", () => {
   it("while connected: the timer, Hang up, the consent line, and Save waits", () => {
-    const html = panelWith(call({ status: "connected" }));
+    const html = panelWith(call({ status: "connected", transcriptStatus: "pending" }));
     expect(html).toContain("Connected");
     expect(html).toContain('aria-label="call time"');
     expect(html).toContain("Hang up");
@@ -544,18 +590,58 @@ describe("the dial panel in bridge mode", () => {
     expect(html).toContain("nothing is recorded until you press Record");
     expect(html).toContain("They agreed — record");
     const recording = panelWith(
-      call({ id: 8, status: "connected", transcriptStatus: "pending" }),
+      call({ id: 8, status: "connected", transcriptStatus: "pending", recordedFrom: "consent" }),
       ask,
     );
     expect(recording).toContain("● Recording");
     expect(recording).not.toContain("They agreed — record");
-    // Before they answer, nothing to agree to yet; after, no delete button in ask mode.
+    // Before they answer, nothing to agree to yet; after, a plain delete for one they agreed to.
     expect(panelWith(call({ id: 9, status: "ringing_prospect" }), ask)).not.toContain(
       "They agreed",
     );
-    expect(
-      panelWith(call({ id: 10, status: "ended", transcriptStatus: "ready", transcript }), ask),
-    ).not.toContain("agree to recording");
+    const agreed = panelWith(
+      call({
+        id: 10,
+        status: "ended",
+        transcriptStatus: "ready",
+        transcript,
+        recordedFrom: "consent",
+      }),
+      ask,
+    );
+    expect(agreed).not.toContain("agree to recording");
+    expect(agreed).toContain("Delete recording");
+  });
+
+  it("shows what the call itself records, whatever the workspace records now", () => {
+    // Recorded from the answer, then the workspace switched to ask, or off.
+    const fromAnswer = call({
+      status: "connected",
+      transcriptStatus: "pending",
+      recordedFrom: "answer",
+    });
+    const live = panelWith(fromAnswer, me({ record: "ask" }));
+    expect(live).toContain("Say this first, the call is recorded");
+    expect(live).not.toContain("They agreed — record");
+    const ended = panelWith(
+      call({
+        id: 11,
+        status: "ended",
+        transcriptStatus: "ready",
+        transcript,
+        recordedFrom: "answer",
+      }),
+      me({ record: false }),
+    );
+    expect(ended).toContain("They didn&#x27;t agree to recording — delete it");
+    expect(recordingDeletable(call({ transcriptStatus: "ready", discard: "pending" }))).toBe(false);
+    expect(recordingDeletable(call({ transcriptStatus: "none" }))).toBe(false);
+    expect(recordingDeletable(call({ transcriptStatus: "failed" }))).toBe(true);
+  });
+
+  it("says a deletion still finishing was requested, not done", () => {
+    expect(discardToast({ discard: "done" })).toBe("recording and transcript deleted");
+    expect(discardToast({ discard: "pending" })).toMatch(/requested/);
   });
 
   it("picks up an unlogged bridged call even once new calls are tel: links", () => {
@@ -714,11 +800,46 @@ describe("call history", () => {
     expect(html).toContain("transcript hidden");
   });
 
-  it("offers to delete a logged call's recording when the panel allows it", () => {
+  it("offers to delete a logged call's recording to its caller or an owner", () => {
     const unrecorded = call({ id: 8, status: "ended", outcome: "no_answer" });
     expect(history([logged, unrecorded])).not.toContain("Delete recording");
     const html = history([logged, unrecorded], false, () => {});
     expect(html.match(/Delete recording/g)).toHaveLength(1);
+    const sams = call({
+      id: 9,
+      member: "sam@example.com",
+      status: "ended",
+      transcriptStatus: "ready",
+      transcript,
+    });
+    expect(history([sams], false, () => {})).not.toContain("Delete recording");
+    const asOwner = render(
+      <CallHistory
+        calls={[sams]}
+        isLoading={false}
+        error={null}
+        onRetry={() => {}}
+        masked={false}
+        me={{ ...jo, role: "owner" }}
+        onDiscard={() => {}}
+      />,
+    );
+    expect(asOwner).toContain("Delete recording");
+  });
+
+  it("labels another member's side of a transcript with their name, not You", () => {
+    const sams = call({
+      id: 9,
+      member: "sam@example.com",
+      status: "ended",
+      outcome: "interested",
+      transcriptStatus: "ready",
+      transcript,
+    });
+    const html = history([sams]);
+    expect(html).toContain(">sam</dt>");
+    expect(html).not.toContain(">You</dt>");
+    expect(history([logged])).toContain(">You</dt>");
   });
 
   it("an empty recording says so", () => {

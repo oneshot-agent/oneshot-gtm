@@ -30,9 +30,10 @@ export function isLive(call: Pick<CallRecordView, "status"> | null | undefined):
  */
 export function saveHeld(
   call: Pick<CallRecordView, "status"> | null | undefined,
-  opts: { pollFailed: boolean; starting: boolean },
+  opts: { pollFailed: boolean; starting: boolean; discarding?: boolean },
 ): boolean {
-  return (isLive(call) && !opts.pollFailed) || opts.starting;
+  // A delete of this call's recording in flight: the draft may still hold its transcript.
+  return (isLive(call) && !opts.pollFailed) || opts.starting || opts.discarding === true;
 }
 
 /** The next read of this call: fast while live, slower for the transcript, then none. */
@@ -141,6 +142,42 @@ export function resumableCall(
   );
   open.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   return open[0] ?? null;
+}
+
+/**
+ * The call the panel follows: the one Call started here, else the one it
+ * resumed first (kept while a newer one appears, so the draft stays its),
+ * else a resumable one, unless a tel: call started here ended resuming.
+ */
+export function panelCallId(
+  panel: { startedId: number | null; pinnedId: number | null; noResume: boolean },
+  calls: CallRecordView[] | undefined,
+  me: CurrentMember | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (panel.startedId != null) return panel.startedId;
+  if (panel.pinnedId != null) return panel.pinnedId;
+  return panel.noResume ? null : (resumableCall(calls, me, now)?.id ?? null);
+}
+
+/** A bridged call with a recording not yet declined: its own state, whatever the workspace records now. */
+export function recordingDeletable(c: CallRecordView): boolean {
+  return c.provider === "twilio" && c.transcriptStatus !== "none" && c.discard == null;
+}
+
+/** What Delete tells the member: deleted, or asked for while Twilio finishes it. */
+export function discardToast(c: Pick<CallRecordView, "discard">): string {
+  return c.discard === "done"
+    ? "recording and transcript deleted"
+    : "deletion requested; Twilio's copy is removed in the background";
+}
+
+/** The draft Save sends: a transcript-written note privacy mode hides is left out, as nobody checked it. */
+export function visibleDraft<T extends { note: string; noteFromCall?: boolean }>(
+  state: T,
+  masked: boolean,
+): T {
+  return masked && state.noteFromCall ? { ...state, note: "" } : state;
 }
 
 /** The suggested promises the member kept: all of them but the ones they removed (by position). */

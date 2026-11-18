@@ -157,6 +157,8 @@ import {
   callPhone as callsCallPhone,
   claimBridge as callsClaimBridge,
   claimRecording as callsClaimRecording,
+  deferDiscard as callsDeferDiscard,
+  releaseRecording as callsReleaseRecording,
   failStaleTranscripts as callsFailStaleTranscripts,
   finishRecordingDiscard as callsFinishRecordingDiscard,
   markRecordingDiscard as callsMarkRecordingDiscard,
@@ -1961,8 +1963,17 @@ export class Ledger {
     sinceIso: string,
     limit: number,
     discardLimit?: number,
+    nowIso?: string,
+    onlyDiscards?: boolean,
   ): ReturnType<typeof callsListBridgedCallsToAdvance> {
-    return callsListBridgedCallsToAdvance(this.db, sinceIso, limit, discardLimit);
+    return callsListBridgedCallsToAdvance(
+      this.db,
+      sinceIso,
+      limit,
+      discardLimit,
+      nowIso,
+      onlyDiscards,
+    );
   }
 
   /** @see ledger-calls.ts#claimBridge */
@@ -1971,8 +1982,18 @@ export class Ledger {
   }
 
   /** @see ledger-calls.ts#claimRecording */
-  claimRecording(id: number): boolean {
-    return callsClaimRecording(this.db, id);
+  claimRecording(id: number, atIso: string): boolean {
+    return callsClaimRecording(this.db, id, atIso);
+  }
+
+  /** @see ledger-calls.ts#releaseRecording */
+  releaseRecording(id: number): void {
+    callsReleaseRecording(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#deferDiscard */
+  deferDiscard(id: number, nextIso: string): void {
+    callsDeferDiscard(this.db, id, nextIso);
   }
 
   /** @see ledger-calls.ts#markRecordingDiscard */

@@ -506,6 +506,9 @@ function applyCallOutcome(
   const existing = existingId != null ? ledger.getCall(existingId) : null;
   if (existingId != null && existing?.prospectId !== prospectId)
     throw new CallLogError("call not found", 404);
+  // Promises come from a recording's transcript: a tel: call has none to confirm.
+  if (req.commitments?.length && existing?.provider !== "twilio")
+    throw new CallLogError("only a bridged call has promises to confirm", 400);
   if (existing?.outcome === "do_not_contact" && outcome !== "do_not_contact")
     throw new CallLogError("this call was logged do not contact; that stays", 409);
   // An existing call's own cadence, when it recorded one: never another

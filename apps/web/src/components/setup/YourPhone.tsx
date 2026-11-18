@@ -255,7 +255,10 @@ export function YourPhoneView({
   } else {
     body = (
       <div className="flex flex-col gap-2">
-        <span className="text-[13px] text-[color:var(--ink-blocked-2)]">{failure}</span>
+        {/* A retry the server refused says why now; the stored failure is older. */}
+        <span className="text-[13px] text-[color:var(--ink-blocked-2)]">
+          {inputError ?? failure}
+        </span>
         <div className="flex items-center gap-2">
           <Button type="button" size="sm" disabled={busy} onClick={onRetry} {...readOnly}>
             {spinner} Try again

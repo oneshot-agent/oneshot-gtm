@@ -106,6 +106,10 @@ export interface CallRecordView {
   statusReason?: string;
   /** The promises the member confirmed when logging it (`LogCallRequest.commitments`). */
   commitments?: string[];
+  /** A bridged call's recording: from the prospect's answer, or from the member's Record press. */
+  recordedFrom?: "answer" | "consent";
+  /** A recording the prospect declined: still being deleted, or deleted. */
+  discard?: "pending" | "done";
   transcriptStatus: "none" | "pending" | "ready" | "failed";
   transcript: { speaker: "founder" | "prospect"; text: string; startSec: number }[] | null;
   /** Phase 2: the model's proposal from the transcript; the founder confirms it. */

@@ -65,6 +65,7 @@ const {
   settleBridgedCallWork,
   discardBridgedRecording,
   startBridgedRecording,
+  assertCallActor,
   VERIFY_TIMEOUT_MS,
 } = bridgeMod;
 const { recordCall } = await import("../src/_calls.ts");
@@ -1111,5 +1112,247 @@ describe("the next email knows about the call", () => {
       "- 2026-11-12: Left voicemail",
     ]);
     expect(block).not.toContain("Wrong number");
+  });
+});
+
+describe("calls a teammate made, in the next email", () => {
+  it("names a colleague's call and keeps a long promise whole", () => {
+    getSharedDb().addMember({ email: "jo@example.com", name: "Jo Park", role: "member" });
+    try {
+      const id = prospect();
+      const promise = `send the pilot terms ${"x".repeat(230)} only after procurement approves`;
+      const placed = (member: string | null, at: string) =>
+        ledger.insertCall({
+          prospectId: id,
+          startedAt: at,
+          provider: "twilio",
+          providerCallSid: `CA${at}`,
+          status: "ended",
+          member,
+        });
+      const jo = placed("jo@example.com", "2026-11-17T10:00:00Z");
+      recordCall(id, { outcome: "interested", callId: jo, commitments: [promise] });
+      const own = placed(null, "2026-11-16T10:00:00Z");
+      recordCall(id, { outcome: "voicemail", callId: own });
+      const lines = buildPriorCallsBlock(id, "Sam")!.split("\n");
+      expect(lines).toContain("- 2026-11-17: Interested (by Jo Park)");
+      expect(lines).toContain("- 2026-11-16: Left voicemail");
+      expect(lines.find((l) => l.startsWith("  Promised:"))).toContain(
+        "only after procurement approves",
+      );
+      expect(lines[0]).toMatch(/colleague/);
+      // Jo writing as the sender: their own call is theirs.
+      expect(buildPriorCallsBlock(id, "Jo Park")).toContain("- 2026-11-17: Interested\n");
+    } finally {
+      getSharedDb().removeMember("jo@example.com");
+    }
+  });
+
+  it("confirms promises only on a bridged call", () => {
+    const id = prospect();
+    expect(() => recordCall(id, { outcome: "interested", commitments: ["send it"] })).toThrow(
+      expect.objectContaining({ status: 400 }),
+    );
+    expect(recordCall(id, { outcome: "interested", commitments: [] }).provider).toBe("tel");
+  });
+});
+
+describe("the mode and the gates as they are when the prospect is dialled", () => {
+  async function held(bridge: Fake): Promise<number> {
+    verifyOwner();
+    const call = await startBridgedCall({
+      prospectId: prospect(),
+      member: null,
+      now: IN_WINDOW,
+      bridge,
+    });
+    bridge.state = st("ringing_prospect", null, false, "human");
+    return call.id;
+  }
+
+  it("records from the answer only if the mode is still always, and dials nobody once bridging is off", async () => {
+    const bridge = fakeBridge();
+    const id = await held(bridge);
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("pending");
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "ask" } } };
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW });
+    expect(vi.mocked(bridge.connect).mock.calls[0]![1].record).toBe(false);
+    expect(ledger.getCall(id)).toMatchObject({ transcriptStatus: "none" });
+    expect(ledger.getCall(id)).not.toHaveProperty("recordedFrom");
+
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "always" } } };
+    const other = await held(bridge);
+    await refreshBridgedCall(other, { bridge, now: IN_WINDOW });
+    expect(vi.mocked(bridge.connect).mock.calls[1]![1].record).toBe(true);
+    expect(ledger.getCall(other)).toMatchObject({
+      transcriptStatus: "pending",
+      recordedFrom: "answer",
+    });
+
+    const third = await held(bridge);
+    cfg = { calls: { enabled: true, bridge: null } };
+    expect(await refreshBridgedCall(third, { bridge, now: IN_WINDOW })).toMatchObject({
+      status: "failed",
+      statusReason: "bridged calls were turned off, so nobody was dialled",
+    });
+    expect(bridge.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it("judges the call window by the clock after the provider answered", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(IN_WINDOW);
+      const bridge = fakeBridge();
+      const id = await held(bridge);
+      vi.mocked(bridge.status).mockImplementationOnce(async () => {
+        // 17:30 in Chicago by the time Twilio answers.
+        vi.setSystemTime(new Date("2026-11-18T23:30:00Z"));
+        return st("ringing_prospect", null, false, "human");
+      });
+      expect((await refreshBridgedCall(id, { bridge })).statusReason).toMatch(/call hours closed/);
+      expect(bridge.connect).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("checks recording is still on after reading the call, and leaves Record free", async () => {
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "ask" } } };
+    const bridge = fakeBridge();
+    const id = await held(bridge);
+    await refreshBridgedCall(id, { bridge, now: IN_WINDOW });
+    vi.mocked(bridge.status).mockImplementationOnce(async () => {
+      cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: false } } };
+      return st("connected", 5, true);
+    });
+    await expect(startBridgedRecording(id, { bridge })).rejects.toMatchObject({ status: 409 });
+    expect(bridge.startRecording).not.toHaveBeenCalled();
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("none");
+  });
+});
+
+describe("who may act on a bridged call", () => {
+  it("lets the caller hang up and record; an owner may also delete the recording", () => {
+    const id = ledger.insertCall({
+      prospectId: prospect(),
+      startedAt: IN_WINDOW.toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      member: "jo@example.com",
+      status: "connected",
+    });
+    const jo = { email: "Jo@Example.com", role: "member" as const };
+    const sam = { email: "sam@example.com", role: "member" as const };
+    const owner = { email: "owner@example.com", role: "owner" as const };
+    for (const action of ["hangup", "record", "discard"] as const)
+      expect(() => assertCallActor(id, jo, action)).not.toThrow();
+    for (const action of ["hangup", "record", "discard"] as const)
+      expect(() => assertCallActor(id, sam, action)).toThrow(
+        expect.objectContaining({ status: 403 }),
+      );
+    expect(() => assertCallActor(id, owner, "record")).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+    expect(() => assertCallActor(id, owner, "discard")).not.toThrow();
+    // The unlisted local owner's call belongs to every owner.
+    const local = ledger.insertCall({
+      prospectId: prospect({ email: "b@acme.test", phone: "+15126531188", name: "Bo" }),
+      startedAt: IN_WINDOW.toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA2",
+      status: "connected",
+    });
+    expect(() => assertCallActor(local, owner, "hangup")).not.toThrow();
+    expect(() => assertCallActor(local, sam, "hangup")).toThrow(
+      expect.objectContaining({ status: 403 }),
+    );
+    expect(() => assertCallActor(9999, owner, "hangup")).toThrow(
+      expect.objectContaining({ status: 404 }),
+    );
+  });
+});
+
+describe("declined recordings that are slow or failing to delete", () => {
+  function declinedCall(
+    over: { startedAt?: string; recordedFrom?: boolean; recordingSid?: string } = {},
+  ): number {
+    const id = ledger.insertCall({
+      prospectId: prospect({ email: `p${Math.random()}@acme.test`, name: "P" }),
+      startedAt: over.startedAt ?? IN_WINDOW.toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+    if (over.recordedFrom)
+      ledger.updateBridgedCall(id, {
+        recordingFrom: "answer",
+        recordingRequestedAt: IN_WINDOW.toISOString(),
+      });
+    if (over.recordingSid) ledger.updateBridgedCall(id, { recordingSid: over.recordingSid });
+    ledger.markRecordingDiscard(id);
+    return id;
+  }
+
+  it("keeps looking for a recording that was asked for, then gives up after a week", async () => {
+    const bridge = fakeBridge();
+    const asked = declinedCall({ recordedFrom: true });
+    const never = declinedCall();
+    const later = new Date(IN_WINDOW.getTime() + 60 * 60_000);
+    await sweepBridgedCalls({ bridge, now: later });
+    expect(ledger.getBridgedCall(never)?.discardPending).toBe(false);
+    expect(ledger.getBridgedCall(asked)?.discardPending).toBe(true);
+    bridge.rec = { sid: "RElate", status: "completed", durationSec: 30 };
+    await sweepBridgedCalls({ bridge, now: new Date(later.getTime() + 2 * 3600_000) });
+    expect(bridge.deleteRecording).toHaveBeenCalledWith("RElate");
+    expect(ledger.getBridgedCall(asked)?.discardPending).toBe(false);
+
+    const quiet = declinedCall({ recordedFrom: true });
+    bridge.rec = null;
+    await sweepBridgedCalls({ bridge, now: new Date(IN_WINDOW.getTime() + 8 * 24 * 3600_000) });
+    expect(ledger.getBridgedCall(quiet)?.discardPending).toBe(false);
+  });
+
+  it("puts a deletion that failed behind the others, and still deletes with Calls off", async () => {
+    const old = (n: number) =>
+      new Date(IN_WINDOW.getTime() - (5 * 24 + n) * 3600_000).toISOString();
+    const failing = [1, 2, 3, 4, 5].map((n) =>
+      declinedCall({ startedAt: old(10 - n), recordingSid: `REfail${n}` }),
+    );
+    const sixth = declinedCall({ startedAt: old(0), recordingSid: "REok" });
+    const bridge = fakeBridge({
+      deleteRecording: vi.fn(async (sid: string) => {
+        if (sid !== "REok") throw new CallBridgeError("Twilio: down", 503);
+      }),
+    });
+    await sweepBridgedCalls({ bridge, now: IN_WINDOW });
+    expect(ledger.getBridgedCall(sixth)?.discardPending).toBe(true);
+    // The five failed and wait; the sixth gets its turn.
+    cfg = { calls: { enabled: false, bridge: { provider: "twilio" } } };
+    expect(
+      (await sweepBridgedCalls({ bridge, now: new Date(IN_WINDOW.getTime() + 60_000) })).checked,
+    ).toBe(1);
+    expect(ledger.getBridgedCall(sixth)?.discardPending).toBe(false);
+    expect(ledger.getBridgedCall(failing[0]!)?.discardPending).toBe(true);
+  });
+});
+
+describe("a failed phone needs a fresh Verify", () => {
+  it("stays failed even once Twilio lists the number", async () => {
+    const bridge = fakeBridge();
+    getSharedDb().setMemberPhone({ member: "", phone: MEMBER, status: "failed", error: "x" });
+    bridge.verified.add(MEMBER);
+    expect((await checkMemberPhone(null, { bridge })).status).toBe("failed");
+  });
+});
+
+describe("the suggestion's JSON", () => {
+  it("falls back when the model answers something that is not an object", () => {
+    for (const content of ["null", "[1,2]", '"interested"', "42"])
+      expect(parseCallOutcome(content, { prospectSpoke: true })).toEqual({
+        outcome: "not_now",
+        note: "",
+        commitments: [],
+      });
   });
 });

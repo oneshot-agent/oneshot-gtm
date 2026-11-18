@@ -399,11 +399,13 @@ describe("listCalls", () => {
 
   it("dialMode is bridge only once the provider keys are set, and never with bridge: null", () => {
     callsOn(3);
-    expect(listCalls().dialMode).toBe("tel");
-    vi.stubEnv("TWILIO_ACCOUNT_SID", "AC1");
-    vi.stubEnv("TWILIO_API_KEY_SID", "SK1");
-    vi.stubEnv("TWILIO_API_KEY_SECRET", "secret");
     try {
+      // Never the developer's own keys.
+      vi.stubEnv("TWILIO_ACCOUNT_SID", "");
+      expect(listCalls().dialMode).toBe("tel");
+      vi.stubEnv("TWILIO_ACCOUNT_SID", "AC1");
+      vi.stubEnv("TWILIO_API_KEY_SID", "SK1");
+      vi.stubEnv("TWILIO_API_KEY_SECRET", "secret");
       expect(listCalls().dialMode).toBe("bridge");
       callsOn(3, { bridge: null });
       expect(listCalls().dialMode).toBe("tel");

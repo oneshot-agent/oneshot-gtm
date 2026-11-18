@@ -235,6 +235,22 @@ export function transcriptLines(
     });
 }
 
+/** Errors that say the connection never opened, so no request reached the provider. */
+const NEVER_CONNECTED = new Set([
+  "ConnectionRefused",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "FailedToOpenSocket",
+  "UnableToConnect",
+]);
+
+function neverConnected(err: unknown): boolean {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.code ?? e?.cause?.code;
+  return typeof code === "string" && NEVER_CONNECTED.has(code);
+}
+
 /** Twilio over REST, with `fetch` injectable for tests. */
 export class TwilioBridge implements CallBridge {
   private readonly fetchImpl: () => typeof fetch;
@@ -277,10 +293,10 @@ export class TwilioBridge implements CallBridge {
       });
       text = await res.text();
     } catch (err) {
-      const name = (err as Error).name;
-      const timedOut = name === "TimeoutError" || name === "AbortError";
-      // An accepted write whose answer was lost is as unknown as a timeout.
-      if (method !== "GET" && (timedOut || res?.ok))
+      // A write that may have reached Twilio (a timeout, a reset before or
+      // after the headers, an accepted answer lost) is unknown, not refused.
+      const refusedBefore = res ? !res.ok : neverConnected(err);
+      if (method !== "GET" && !refusedBefore)
         throw new CallBridgeError(
           "Twilio did not answer in time, so it may or may not have done it",
           0,

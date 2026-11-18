@@ -48,6 +48,10 @@ export const TRANSCRIPT_GIVE_UP_MS = 6 * 3600_000;
 /** How far back the sweep looks for calls with work left, and how many it takes per run. */
 const SWEEP_LOOKBACK_MS = 2 * 24 * 3600_000;
 const SWEEP_LIMIT = 20;
+/** A deletion that failed is tried again after this. */
+const DISCARD_RETRY_MS = 15 * 60_000;
+/** How long a declined recording that was asked for is looked for before none counts as none. */
+const DISCARD_LOOKUP_MS = 7 * 24 * 3600_000;
 /** The provider does not transcribe a recording shorter than this. */
 const MIN_RECORDING_SEC = 2;
 /** Longest transcript text the suggestion reads; a longer call keeps its start and its end. */
@@ -68,7 +72,7 @@ const KEYS_MISSING =
 export class CallBridgeRequestError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 | 409 | 502,
+    readonly status: 400 | 403 | 404 | 409 | 502,
   ) {
     super(message);
     this.name = "CallBridgeRequestError";
@@ -211,7 +215,8 @@ export async function checkMemberPhone(
   } catch (err) {
     throw providerError(err);
   }
-  if (listed) {
+  // Only this member's own pending challenge: a failed row waits for a fresh Verify.
+  if (listed && row.status === "verifying") {
     shared.setMemberPhone({
       member,
       phone: row.phone,
@@ -219,6 +224,7 @@ export async function checkMemberPhone(
       verifiedAt: now.toISOString(),
     });
   } else if (
+    !listed &&
     row.status === "verifying" &&
     now.getTime() - Date.parse(row.updated_at) > VERIFY_TIMEOUT_MS
   ) {
@@ -306,6 +312,7 @@ function dialRefusal(prospectId: number, phone: string, now: Date): string | nul
   const calls = callsOf(cfg);
   const ledger = getLedger();
   const prospect = ledger.getProspectById(prospectId);
+  if (!calls.bridge) return "bridged calls were turned off, so nobody was dialled";
   if (
     !calls.enabled ||
     !prospect ||
@@ -412,6 +419,32 @@ export async function startBridgedCall(input: {
   return ledger.getCall(id)!;
 }
 
+/**
+ * Whether `actor` may act on a bridged call: hanging up and recording are
+ * the placing member's alone (recording waits on their own consent); an
+ * owner may also delete its recording. A call the unlisted local owner
+ * placed belongs to every owner. Refusal is a 403, before anything is done.
+ */
+export function assertCallActor(
+  callId: number,
+  actor: { email: string | null; role: "owner" | "member" },
+  action: "hangup" | "record" | "discard",
+): void {
+  const call = getLedger().getCall(callId);
+  if (!call || call.provider !== "twilio")
+    throw new CallBridgeRequestError("bridged call not found", 404);
+  const placedBy = call.member == null ? null : memberPhoneKey(call.member);
+  const own = placedBy === (actor.email == null ? null : memberPhoneKey(actor.email));
+  const owner = actor.role === "owner";
+  if (own || (owner && (placedBy == null || action === "discard"))) return;
+  throw new CallBridgeRequestError(
+    action === "discard"
+      ? "only the member who placed this call, or an owner, can delete its recording"
+      : `only the member who placed this call can ${action === "record" ? "record" : "hang up"} it`,
+    403,
+  );
+}
+
 /** Hang up a bridged call (ringing or connected), then read its state. */
 export async function hangUpBridgedCall(
   callId: number,
@@ -474,7 +507,8 @@ export async function refreshBridgedCall(
               "warn",
             ),
           );
-      if (!call.bridgedAt) await holdStep(call, state, bridge, now);
+      // Read after the status request: the window may have closed while it ran.
+      if (!call.bridgedAt) await holdStep(call, state, bridge, opts.now ?? new Date());
       else
         ledger.updateBridgedCall(callId, {
           status: state.status,
@@ -541,17 +575,31 @@ async function holdStep(
       status: "failed",
       statusReason: reason,
       transcriptStatus: "none",
+      recordingFrom: null,
+      recordingRequestedAt: null,
     });
   };
   if (answeredByMachine(state.answeredBy)) return fail(VOICEMAIL);
   if (!call.memberPhone || !call.phone) return fail("the call is missing a number");
   const refusal = dialRefusal(call.view.prospectId, call.phone, now);
   if (refusal) return fail(refusal);
+  // The mode as it is now, not when the call was placed; a declined one never records.
+  const record = callsOf(loadConfig()).bridge?.record === "always" && !call.discardPending;
+  ledger.updateBridgedCall(
+    id,
+    record
+      ? {
+          transcriptStatus: "pending",
+          recordingFrom: "answer",
+          recordingRequestedAt: now.toISOString(),
+        }
+      : { transcriptStatus: "none" },
+  );
   try {
     await bridge.connect(call.callSid, {
       memberPhone: call.memberPhone,
       prospectPhone: call.phone,
-      record: call.view.transcriptStatus === "pending",
+      record,
     });
   } catch (err) {
     // Unknown outcome: the next read sees the prospect's leg, or the hold running out.
@@ -699,7 +747,10 @@ export async function startBridgedRecording(
   }
   if (state.status !== "connected")
     throw new CallBridgeRequestError("Record works only while you are connected to them", 409);
-  if (!ledger.claimRecording(callId)) return ledger.getCall(callId)!;
+  // Again after the status request: recording may have been turned off while it ran.
+  if (!callsOf(loadConfig()).bridge?.record)
+    throw new CallBridgeRequestError("recording is off for this workspace", 409);
+  if (!ledger.claimRecording(callId, new Date().toISOString())) return ledger.getCall(callId)!;
   try {
     await bridge.startRecording(call.callSid);
   } catch (err) {
@@ -709,7 +760,7 @@ export async function startBridgedRecording(
         "Twilio did not confirm the recording started; it may be recording",
         502,
       );
-    ledger.updateBridgedCall(callId, { transcriptStatus: "none" });
+    ledger.releaseRecording(callId);
     throw providerError(err);
   }
   logEvent("call.recording_started", { call_id: callId });
@@ -741,15 +792,30 @@ export async function discardBridgedRecording(
 }
 
 async function advanceDiscard(callId: number, bridge: CallBridge, now: Date): Promise<void> {
+  try {
+    await discardStep(callId, bridge, now);
+  } catch (err) {
+    // Behind the deletions that can run now, so one failing never holds them up.
+    getLedger().deferDiscard(callId, new Date(now.getTime() + DISCARD_RETRY_MS).toISOString());
+    throw err;
+  }
+}
+
+async function discardStep(callId: number, bridge: CallBridge, now: Date): Promise<void> {
   const ledger = getLedger();
   const call = ledger.getBridgedCall(callId)!;
   const rec = call.recordingSid
     ? { sid: call.recordingSid, status: "completed" }
     : await bridge.recording(call.callSid);
   if (!rec) {
-    const waited =
-      Date.parse(call.view.startedAt) + (call.view.durationSec ?? 0) * 1000 + RECORDING_WAIT_MS;
-    if (now.getTime() > waited) ledger.finishRecordingDiscard(callId);
+    const ended = Date.parse(call.view.startedAt) + (call.view.durationSec ?? 0) * 1000;
+    if (now.getTime() <= ended + RECORDING_WAIT_MS) return;
+    // A recording that was asked for may surface late: keep looking, hourly, for a week.
+    if (call.view.recordedFrom && now.getTime() <= ended + DISCARD_LOOKUP_MS) {
+      ledger.deferDiscard(callId, new Date(now.getTime() + 3600_000).toISOString());
+      return;
+    }
+    ledger.finishRecordingDiscard(callId);
     return;
   }
   const transcripts = new Set(await bridge.transcriptsFor(rec.sid));
@@ -771,17 +837,21 @@ export async function sweepBridgedCalls(
   opts: { bridge?: CallBridge | null; now?: Date } = {},
 ): Promise<{ checked: number; gaveUp: number }> {
   const calls = callsOf(loadConfig());
-  if (!calls.enabled || !calls.bridge) return { checked: 0, gaveUp: 0 };
+  if (!calls.bridge) return { checked: 0, gaveUp: 0 };
   const bridge = bridgeFor(opts);
   if (!bridge) return { checked: 0, gaveUp: 0 };
   const now = opts.now ?? new Date();
   const ledger = getLedger();
-  const gaveUp = ledger.failStaleTranscripts(
-    new Date(now.getTime() - TRANSCRIPT_GIVE_UP_MS).toISOString(),
-  );
+  // With Calls off, only declined recordings are still worked: they must not stay on the provider.
+  const gaveUp = calls.enabled
+    ? ledger.failStaleTranscripts(new Date(now.getTime() - TRANSCRIPT_GIVE_UP_MS).toISOString())
+    : 0;
   const rows = ledger.listBridgedCallsToAdvance(
     new Date(now.getTime() - SWEEP_LOOKBACK_MS).toISOString(),
     SWEEP_LIMIT,
+    undefined,
+    now.toISOString(),
+    !calls.enabled,
   );
   for (const row of rows) {
     try {
@@ -824,7 +894,12 @@ export function parseCallOutcome(
   content: string,
   fallback: { prospectSpoke: boolean },
 ): NonNullable<CallRecordView["suggestion"]> {
-  const parsed = tryParseJsonObject<Record<string, unknown>>(content, {});
+  const value: unknown = tryParseJsonObject<unknown>(content, {});
+  // `null`, an array or a scalar parses too: anything but an object is the fallback.
+  const parsed: Record<string, unknown> =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
   const raw = parsed["outcome"];
   const outcome: CallOutcome = isCallOutcome(raw)
     ? raw

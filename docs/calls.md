@@ -86,6 +86,8 @@ Some states and countries require everyone on a call to agree to it being record
 - **`always`**: recording starts when the prospect answers, before anyone has agreed. Use it only where one party's consent is enough. If they say no, press **They didn't agree to recording — delete it** (in the panel, or **Delete recording** in the call history, with or without an outcome logged): the recording, its transcript, the suggestion and the promises read from it are deleted from Twilio and the ledger.
 - **`off`**: no recording, transcript or suggestion.
 
+The mode is read when the prospect is dialled; a call keeps what it recorded if the mode changes later. Only the member who placed a call can hang it up or record it; they or an owner can delete its recording from the call history at any time. Twilio's copy is deleted in the background, even with Calls off, and a recording that shows up late is looked for for a week.
+
 ## Your responsibility
 
 OneShot GTM does not check national do-not-call registers, line types or calling-hour laws. Who you call, when, and whether you may record the call is your responsibility.

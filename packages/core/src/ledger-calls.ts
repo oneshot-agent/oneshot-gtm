@@ -83,6 +83,9 @@ interface CallRow {
   bridged_at: string | null;
   commitments_json: string | null;
   discard_recording: number;
+  recording_from?: string | null;
+  recording_requested_at?: string | null;
+  discard_next_at?: string | null;
 }
 
 /** A bridged call's live states (`CallRecordView.status`). */
@@ -126,6 +129,14 @@ function toView(row: CallRow): CallRecordView {
     ...(Array.isArray(commitments)
       ? { commitments: commitments.filter((c): c is string => typeof c === "string") }
       : {}),
+    ...(row.recording_from === "answer" || row.recording_from === "consent"
+      ? { recordedFrom: row.recording_from }
+      : {}),
+    ...(row.discard_recording === 1
+      ? { discard: "pending" as const }
+      : row.discard_recording === 2
+        ? { discard: "done" as const }
+        : {}),
     transcriptStatus:
       status === "pending" || status === "ready" || status === "failed" ? status : "none",
     transcript: parseJson<CallRecordView["transcript"]>(row.transcript_json),
@@ -264,7 +275,8 @@ export function setCallOutcome(
       .prepare(
         `UPDATE calls SET outcome = ?, reply_intent = ?, note = COALESCE(?, note),
                 duration_sec = COALESCE(?, duration_sec), play_name = COALESCE(play_name, ?),
-                commitments_json = COALESCE(?, commitments_json)
+                commitments_json = CASE WHEN discard_recording <> 0 THEN NULL
+                                        ELSE COALESCE(?, commitments_json) END
          WHERE id = ? AND prospect_id = ?
            AND (COALESCE(outcome, '') <> 'do_not_contact' OR ? = 'do_not_contact')`,
       )
@@ -333,6 +345,9 @@ export function updateBridgedCall(
     transcriptStatus?: CallRecordView["transcriptStatus"];
     transcript?: CallRecordView["transcript"];
     suggestion?: CallRecordView["suggestion"];
+    /** The recording was asked for: how, and when (`recording_requested_at`). */
+    recordingFrom?: "answer" | null;
+    recordingRequestedAt?: string | null;
   },
 ): void {
   const write = (cols: Array<[string, string | number | null | undefined]>, where: string) => {
@@ -353,6 +368,8 @@ export function updateBridgedCall(
   write(
     [
       ["recording_sid", patch.recordingSid],
+      ["recording_from", patch.recordingFrom],
+      ["recording_requested_at", patch.recordingRequestedAt],
       ["transcript_sid", patch.transcriptSid],
       ["transcript_status", patch.transcriptStatus],
       [
@@ -393,15 +410,32 @@ export function markRecordingDiscard(db: Database, id: number): void {
 }
 
 /** The member pressed Record (the prospect agreed): true for exactly one caller, on a call not yet recorded. */
-export function claimRecording(db: Database, id: number): boolean {
+export function claimRecording(db: Database, id: number, atIso: string): boolean {
   return (
     db
       .prepare(
-        `UPDATE calls SET transcript_status = 'pending'
+        `UPDATE calls SET transcript_status = 'pending', recording_from = 'consent',
+                recording_requested_at = ?
           WHERE id = ? AND provider = 'twilio' AND transcript_status = 'none'
             AND recording_sid IS NULL AND discard_recording = 0`,
       )
-      .run(id).changes === 1
+      .run(atIso, id).changes === 1
+  );
+}
+
+/** A Record press Twilio refused for certain: nothing records, so Record can be pressed again. */
+export function releaseRecording(db: Database, id: number): void {
+  db.prepare(
+    `UPDATE calls SET transcript_status = 'none', recording_from = NULL, recording_requested_at = NULL
+      WHERE id = ? AND discard_recording = 0 AND recording_from = 'consent'`,
+  ).run(id);
+}
+
+/** A pending deletion's next try: `nextIso`, behind deletions ready sooner. */
+export function deferDiscard(db: Database, id: number, nextIso: string): void {
+  db.prepare("UPDATE calls SET discard_next_at = ? WHERE id = ? AND discard_recording = 1").run(
+    nextIso,
+    id,
   );
 }
 
@@ -425,40 +459,49 @@ export function listBridgedCallsToAdvance(
   sinceIso: string,
   limit: number,
   discardLimit = 5,
+  nowIso = new Date().toISOString(),
+  /** Calls are off: only declined recordings are still worked. */
+  onlyDiscards = false,
 ): BridgedCall[] {
+  const discardDue = "discard_recording = 1 AND (discard_next_at IS NULL OR discard_next_at <= ?)";
+  const work = onlyDiscards
+    ? "discard_recording = 1"
+    : `COALESCE(status, '') NOT IN ('ended', 'failed')
+               OR (${discardDue})
+               OR (transcript_status = 'pending' AND discard_recording = 0)
+               OR (transcript_status = 'ready' AND summary_json IS NULL
+                   AND COALESCE(json_array_length(transcript_json), 0) > 0)`;
   const recent = db
     .query(
       `SELECT * FROM calls
         WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at >= ?
-          AND (COALESCE(status, '') NOT IN ('ended', 'failed')
-               OR discard_recording = 1
-               OR (transcript_status = 'pending' AND discard_recording = 0)
-               OR (transcript_status = 'ready' AND summary_json IS NULL
-                   AND COALESCE(json_array_length(transcript_json), 0) > 0))
+          AND (${work})
         ORDER BY started_at ASC, id ASC LIMIT ?`,
     )
-    .all(sinceIso, limit) as CallRow[];
+    .all(...(onlyDiscards ? [sinceIso, limit] : [sinceIso, nowIso, limit])) as CallRow[];
+  // Ready soonest first: one that keeps failing is pushed behind the rest.
   const oldDiscards = db
     .query(
       `SELECT * FROM calls
         WHERE provider = 'twilio' AND provider_call_sid IS NOT NULL AND started_at < ?
-          AND discard_recording = 1
-        ORDER BY started_at ASC, id ASC LIMIT ?`,
+          AND ${discardDue}
+        ORDER BY COALESCE(discard_next_at, started_at) ASC, id ASC LIMIT ?`,
     )
-    .all(sinceIso, discardLimit) as CallRow[];
+    .all(sinceIso, nowIso, discardLimit) as CallRow[];
   return [...oldDiscards, ...recent].map(toBridged).filter((c): c is BridgedCall => c != null);
 }
 
 /**
- * Bridged calls started before `beforeIso` whose transcript is still pending:
- * the sweep gives up on them (`transcript_status = 'failed'`). Returns how
+ * Bridged calls whose recording was asked for (else started) before
+ * `beforeIso` and whose transcript is still pending: the sweep gives up on them (`transcript_status = 'failed'`). Returns how
  * many it marked.
  */
 export function failStaleTranscripts(db: Database, beforeIso: string): number {
   return db
     .prepare(
       `UPDATE calls SET transcript_status = 'failed'
-        WHERE provider = 'twilio' AND transcript_status = 'pending' AND started_at < ?`,
+        WHERE provider = 'twilio' AND transcript_status = 'pending'
+          AND COALESCE(recording_requested_at, started_at) < ?`,
     )
     .run(beforeIso).changes;
 }

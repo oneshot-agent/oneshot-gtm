@@ -75,7 +75,9 @@ beforeEach(() => {
       const out = key
         ? answers[key]!()
         : { status: 500, body: { message: `no answer for ${url}` } };
-      return new Response(JSON.stringify(out.body), { status: out.status ?? 200 });
+      // A 204 carries no body, as Twilio's deletes answer.
+      const status = out.status ?? 200;
+      return new Response(status === 204 ? null : JSON.stringify(out.body), { status });
     }),
   );
 });
@@ -345,6 +347,33 @@ describe("bridged-call routes", () => {
     });
     expect(res.status).toBe(200);
     expect(ledger.getBridgedCall(callId)?.discardPending).toBe(true);
+  });
+
+  it("refuse hang-up and Record on another member's call before touching Twilio", async () => {
+    keys();
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
+    const callId = ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "connected",
+      member: "sam@example.com",
+    });
+    const post = (route: typeof routes.hangUpCallRoute) =>
+      route(req("/x", { method: "POST" }), { id: String(callId) });
+    const hang = await post(routes.hangUpCallRoute);
+    expect(hang.status).toBe(403);
+    expect((await hang.json()).error).toMatch(/only the member who placed this call/);
+    expect((await post(routes.recordCallRoute)).status).toBe(403);
+    expect(sent).toEqual([]);
+    // The local owner may still delete its recording.
+    answers[`GET ${ACCOUNT}/Calls/CA1.json`] = () => ({
+      body: { sid: "CA1", status: "completed" },
+    });
+    answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({ body: { calls: [] } });
+    answers[`GET ${ACCOUNT}/Recordings.json?CallSid=CA1`] = () => ({ body: { recordings: [] } });
+    expect((await post(routes.discardRecordingRoute)).status).toBe(200);
   });
 
   it("log a tel: call with the member who logged it", async () => {

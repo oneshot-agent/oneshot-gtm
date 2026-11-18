@@ -553,7 +553,7 @@ describe("migration v28", () => {
 
   it("adds member, status and transcript_sid to a v27 ledger's calls and keeps its rows", () => {
     expect(LEDGER_MIGRATIONS.find((m) => m.name === "calls-bridge")?.version).toBe(28);
-    expect(LEDGER_SCHEMA_VERSION).toBe(28);
+    expect(LEDGER_SCHEMA_VERSION).toBe(29);
     const first = new Ledger(dbPath);
     const id = first.upsertProspect({ name: "Dana", email: "d@a.test" });
     first.close();
@@ -625,6 +625,31 @@ describe("migration v28", () => {
       });
     } finally {
       ledger.close();
+    }
+  });
+});
+
+describe("migration v29", () => {
+  it("adds the recording columns to a v28 ledger", () => {
+    const dbPath = join(tmpdir(), `oneshot-gtm-test-v29-${Date.now()}-${Math.random()}.sqlite`);
+    try {
+      new Ledger(dbPath).close();
+      const raw = new Database(dbPath);
+      for (const col of ["recording_from", "recording_requested_at", "discard_next_at"])
+        raw.exec(`ALTER TABLE calls DROP COLUMN ${col}`);
+      raw.exec("PRAGMA user_version = 28");
+      raw.close();
+      new Ledger(dbPath).close();
+      const check = new Database(dbPath, { readonly: true });
+      const cols = (check.query("PRAGMA table_info(calls)").all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+      check.close();
+      expect(cols).toEqual(
+        expect.arrayContaining(["recording_from", "recording_requested_at", "discard_next_at"]),
+      );
+    } finally {
+      for (const suffix of ["", "-wal", "-shm"]) rmSync(`${dbPath}${suffix}`, { force: true });
     }
   });
 });
@@ -794,12 +819,12 @@ describe("bridged call recording rows", () => {
   it("lets one Record press claim an unrecorded call, never a declined one", () => {
     const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
     const id = call(p, "2026-11-18T10:00:00Z", "none");
-    expect(ledger.claimRecording(id)).toBe(true);
-    expect(ledger.claimRecording(id)).toBe(false);
+    expect(ledger.claimRecording(id, "2026-11-18T10:01:00Z")).toBe(true);
+    expect(ledger.claimRecording(id, "2026-11-18T10:01:01Z")).toBe(false);
     expect(ledger.getCall(id)?.transcriptStatus).toBe("pending");
     const declined = call(p, "2026-11-18T10:00:00Z", "none");
     ledger.markRecordingDiscard(declined);
-    expect(ledger.claimRecording(declined)).toBe(false);
+    expect(ledger.claimRecording(declined, "2026-11-18T10:01:00Z")).toBe(false);
   });
 
   it("drops the promises with a declined recording", () => {
@@ -825,5 +850,101 @@ describe("bridged call recording rows", () => {
     expect(listed(1, 2)).toEqual([old[0], old[1], fresh]);
     ledger.finishRecordingDiscard(old[0]!);
     expect(listed(10)).toEqual([old[1], old[2], fresh]);
+  });
+});
+
+/** A fetch that fails before any response, the way a network error does. */
+const throwing = (err: unknown) =>
+  (async () => {
+    throw err;
+  }) as unknown as typeof fetch;
+
+describe("writes that may have reached Twilio", () => {
+  it("treats a reset before the headers as uncertain, a connection never opened as refused", async () => {
+    const reset = Object.assign(new TypeError("socket closed"), { code: "ECONNRESET" });
+    const write = (fetchImpl: typeof fetch) =>
+      new TwilioBridge(KEYS, { fetch: fetchImpl }).startRecording("CA1").catch((e) => e);
+    expect(await write(throwing(reset))).toMatchObject({ uncertain: true });
+    const refused = Object.assign(new TypeError("refused"), { code: "ConnectionRefused" });
+    expect(await write(throwing(refused))).toMatchObject({ uncertain: false, status: 0 });
+    const dns = new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+    expect(await write(throwing(dns))).toMatchObject({ uncertain: false });
+    // A read is never uncertain: nothing changed.
+    expect(
+      await new TwilioBridge(KEYS, { fetch: throwing(reset) }).status("CA1").catch((e) => e),
+    ).toMatchObject({ uncertain: false });
+  });
+});
+
+describe("recording rows over time", () => {
+  let ledger: Ledger;
+  beforeEach(() => {
+    ledger = new Ledger(":memory:");
+  });
+  afterEach(() => ledger.close());
+
+  const call = (prospectId: number, startedAt: string) =>
+    ledger.insertCall({
+      prospectId,
+      startedAt,
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus: "none",
+    });
+
+  it("never writes back promises after the recording was declined", () => {
+    const prospectId = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = call(prospectId, "2026-11-18T10:00:00Z");
+    ledger.markRecordingDiscard(id);
+    ledger.setCallOutcome({ id, prospectId, outcome: "interested", commitments: ["send terms"] });
+    expect(ledger.getCall(id)).toMatchObject({ outcome: "interested", discard: "pending" });
+    expect(ledger.getCall(id)).not.toHaveProperty("commitments");
+  });
+
+  it("starts the give-up window when the recording was asked for, not when the call began", () => {
+    const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const long = call(p, "2026-11-18T00:00:00Z");
+    expect(ledger.claimRecording(long, "2026-11-18T07:00:00Z")).toBe(true);
+    expect(ledger.getCall(long)).toMatchObject({
+      transcriptStatus: "pending",
+      recordedFrom: "consent",
+    });
+    expect(ledger.failStaleTranscripts("2026-11-18T06:30:00Z")).toBe(0);
+    expect(ledger.failStaleTranscripts("2026-11-18T13:30:00Z")).toBe(1);
+  });
+
+  it("lets Record be pressed again after a sure refusal", () => {
+    const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = call(p, "2026-11-18T10:00:00Z");
+    ledger.claimRecording(id, "2026-11-18T10:01:00Z");
+    ledger.releaseRecording(id);
+    expect(ledger.getCall(id)?.transcriptStatus).toBe("none");
+    expect(ledger.getCall(id)).not.toHaveProperty("recordedFrom");
+    expect(ledger.claimRecording(id, "2026-11-18T10:02:00Z")).toBe(true);
+  });
+
+  it("leaves a deferred deletion out of the sweep until it is due", () => {
+    const p = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = call(p, "2026-11-01T10:00:00Z");
+    ledger.markRecordingDiscard(id);
+    ledger.deferDiscard(id, "2026-11-18T12:00:00Z");
+    const listed = (now: string, onlyDiscards = false) =>
+      ledger
+        .listBridgedCallsToAdvance("2026-11-17T00:00:00Z", 10, 5, now, onlyDiscards)
+        .map((c) => c.view.id);
+    expect(listed("2026-11-18T11:00:00Z")).toEqual([]);
+    expect(listed("2026-11-18T12:00:00Z")).toEqual([id]);
+    const recent = ledger.insertCall({
+      prospectId: p,
+      startedAt: "2026-11-18T10:00:00Z",
+      provider: "twilio",
+      providerCallSid: "CA2",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+    // Calls off: the pending transcript waits, the deletion does not.
+    expect(listed("2026-11-18T12:00:00Z", true)).toEqual([id]);
+    expect(listed("2026-11-18T12:00:00Z")).toEqual([id, recent]);
   });
 });

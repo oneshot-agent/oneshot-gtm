@@ -19,6 +19,7 @@ import {
   recordCall,
   refreshBridgedCall,
   removeMemberPhone,
+  assertCallActor,
   startBridgedCall,
   startBridgedRecording,
   verifyMemberPhone,
@@ -204,10 +205,10 @@ export function prospectCallsRoute(req: Request, params: Record<string, string>)
 // Bridged calls (docs/calls.md): every route acts for the requesting member,
 // so a request that is nobody's is refused even past the server's own gate.
 
-function memberOf(req: Request): { email: string | null } | Response {
+function memberOf(req: Request): { email: string | null; role: "owner" | "member" } | Response {
   const member = currentMember(req);
   return member
-    ? { email: member.email }
+    ? { email: member.email, role: member.role }
     : jsonResponse({ error: "sign in as a member to use calls" }, 403, req);
 }
 
@@ -304,6 +305,7 @@ export async function hangUpCallRoute(
   const id = prospectIdOf(params["id"]);
   if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
   try {
+    assertCallActor(id, member, "hangup");
     return jsonResponse(await hangUpBridgedCall(id), 200, req);
   } catch (err) {
     return bridgeError(req, err, "hanging up failed");
@@ -320,6 +322,7 @@ export async function recordCallRoute(
   const id = prospectIdOf(params["id"]);
   if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
   try {
+    assertCallActor(id, member, "record");
     return jsonResponse(await startBridgedRecording(id), 200, req);
   } catch (err) {
     return bridgeError(req, err, "starting the recording failed");
@@ -336,6 +339,7 @@ export async function discardRecordingRoute(
   const id = prospectIdOf(params["id"]);
   if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
   try {
+    assertCallActor(id, member, "discard");
     return jsonResponse(await discardBridgedRecording(id), 200, req);
   } catch (err) {
     return bridgeError(req, err, "deleting the recording failed");

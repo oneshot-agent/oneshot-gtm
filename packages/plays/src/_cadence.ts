@@ -87,6 +87,7 @@ import {
   callsOf,
   defaultPhoneCountry,
   DEFAULT_CALL_HOLD_DAYS,
+  getSharedDb,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -3595,7 +3596,10 @@ export function buildFollowUpEmail(opts: {
     // PRIOR CALLS rides with the emails: a follow-up after a call picks up
     // from what was said. No logged call = byte-identical to before.
     const priorBlock =
-      [buildPriorEmailsBlock(ctx.prospect.id, opts.playName), buildPriorCallsBlock(ctx.prospect.id)]
+      [
+        buildPriorEmailsBlock(ctx.prospect.id, opts.playName),
+        buildPriorCallsBlock(ctx.prospect.id, ctx.cfg.founderName ?? null),
+      ]
         .filter((b): b is string => b != null)
         .join("\n\n") || null;
     // Optional first-name field: prompt rule lets the LLM occasionally open
@@ -3915,30 +3919,51 @@ const CALLS_NOT_WITH_THEM = new Set(["wrong_number", "wrong_person"]);
 const callLine = (text: string, max: number) => text.replace(/\s+/g, " ").trim().slice(0, max);
 
 /**
- * The calls the founder logged with this prospect (any play), newest first,
- * for a follow-up's history: when, the outcome, the founder's note and what
- * was promised on the call (only what the member confirmed). A call with no
- * outcome logged is not confirmed, and one that reached someone else says
- * nothing about this person. Null when none is left.
+ * The calls logged with this prospect (any play), newest first, for a
+ * follow-up's history: when, the outcome, the note and what was promised
+ * (only what the member confirmed). A call with no outcome logged is not
+ * confirmed, and one that reached someone else says nothing about this
+ * person. A call a teammate placed (not the sender, `senderName`) names
+ * them, so the email never claims it. Null when none is left.
  */
-export function buildPriorCallsBlock(prospectId: number): string | null {
+export function buildPriorCallsBlock(
+  prospectId: number,
+  senderName: string | null = null,
+): string | null {
   const calls = getLedger()
     .listCallsForProspect(prospectId)
     .filter((c) => c.outcome != null && !CALLS_NOT_WITH_THEM.has(c.outcome))
     .slice(0, PRIOR_CALLS_MAX);
   if (calls.length === 0) return null;
   const lines = [
-    "PRIOR CALLS (the sender phoned this prospect, newest first. When they spoke, this email picks up from the latest call: refer to it plainly, keep any promise listed, never re-introduce yourself or repeat the first email's pitch):",
+    'PRIOR CALLS (calls with this prospect, newest first; one marked "by" was a colleague\'s call: say so, e.g. "when my colleague spoke with you", never "I called". When they spoke, this email picks up from the latest call: refer to it plainly, keep any promise listed, never re-introduce yourself or repeat the first email\'s pitch):',
   ];
   for (const c of calls) {
     const title = CALL_OUTCOMES.find((o) => o.outcome === c.outcome)?.title ?? c.outcome;
-    lines.push(`- ${c.startedAt.slice(0, 10)}: ${title}`);
+    const by = colleagueOf(c.member ?? null, senderName);
+    lines.push(`- ${c.startedAt.slice(0, 10)}: ${title}${by ? ` (by ${by})` : ""}`);
     if (c.note?.trim()) lines.push(`  Note: ${callLine(c.note, 400)}`);
     const promised = c.commitments?.filter((x) => x.trim()) ?? [];
+    // The log route's own limit: a condition at the end of a promise is kept.
     if (promised.length > 0)
-      lines.push(`  Promised: ${promised.map((x) => callLine(x, 200)).join("; ")}`);
+      lines.push(`  Promised: ${promised.map((x) => callLine(x, 300)).join("; ")}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Who placed a call when it was not the email's sender: the member's name,
+ * else "a colleague"; null for the sender's own (the unlisted local owner, a
+ * member with the sender's name, or an owner with no name to tell apart).
+ */
+function colleagueOf(member: string | null, senderName: string | null): string | null {
+  if (member == null) return null;
+  const m = getSharedDb().activeMember(member);
+  const name = m?.name?.trim() || null;
+  const sender = senderName?.trim() || null;
+  if (name && sender) return name.toLowerCase() === sender.toLowerCase() ? null : name;
+  if (m?.role === "owner") return null;
+  return name ?? "a colleague";
 }
 
 export function buildSmsStep(opts: {

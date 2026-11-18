@@ -405,9 +405,11 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     note(
       !calls.bridge
         ? "bridged calls off: Call opens a tel: link"
-        : twilioKeysFromEnv()
-          ? `bridged calls: Call rings the member's verified phone; ${RECORD_TEXT[String(calls.bridge.record)]}`
-          : "Call opens a tel: link (add TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to .env to ring your phone)",
+        : !twilioKeysFromEnv()
+          ? "Call opens a tel: link (add TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to .env to ring your phone)"
+          : !calls.enabled
+            ? `bridged calls set up but inactive while calls are off; ${RECORD_TEXT[String(calls.bridge.record)]}`
+            : `bridged calls: Call rings a verified member's own phone, others get a tel: link; ${RECORD_TEXT[String(calls.bridge.record)]}`,
     );
     note(
       c.dim(
@@ -474,8 +476,11 @@ export async function configCalls(action?: string, args: string[] = []): Promise
     const value = args[0];
     if (value !== "ask" && value !== "always" && value !== "off")
       throw new Error(`invalid record '${value ?? ""}' — pass ask, always or off`);
-    if (current.bridge === null)
-      throw new Error("bridged calls are off for this workspace (calls.bridge is null)");
+    // The bridge as callsOf reads it: an unknown provider is off, and stays off.
+    if (callsOf(cfg).bridge === null)
+      throw new Error(
+        "bridged calls are off for this workspace (calls.bridge is null or not twilio)",
+      );
     const record = value === "off" ? false : value;
     saveConfig({
       ...cfg,

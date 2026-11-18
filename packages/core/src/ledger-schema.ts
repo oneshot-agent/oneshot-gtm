@@ -646,6 +646,20 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       addColumnIfMissing(db, "calls", "discard_recording", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    // A bridged call's recording. `recording_from` is how it was asked for:
+    // 'answer' (recorded from the prospect's answer) or 'consent' (the member
+    // pressed Record); NULL = never. `recording_requested_at` starts the
+    // transcript's give-up window. `discard_next_at` is when a pending
+    // deletion is retried, so one that keeps failing waits behind the rest.
+    version: 29,
+    name: "calls-recording",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "recording_from", "TEXT");
+      addColumnIfMissing(db, "calls", "recording_requested_at", "TEXT");
+      addColumnIfMissing(db, "calls", "discard_next_at", "TEXT");
+    },
+  },
 ];
 
 /**

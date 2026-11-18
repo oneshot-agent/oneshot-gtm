@@ -21,9 +21,13 @@ import {
   commitmentsToSend,
   CONSENT_LINE,
   firstName,
+  discardToast,
   isLive,
+  isOwnCall,
   keptCommitments,
-  resumableCall,
+  panelCallId,
+  recordingDeletable,
+  visibleDraft,
   saveHeld,
   speakerLabel,
   suggestedPick,
@@ -184,15 +188,36 @@ export function DialPanel({
   const bridged = dialMode === "bridge";
   const [startedId, setStartedId] = useState<number | null>(null);
   const [ringPhone, setRingPhone] = useState<string | null>(null);
-  const resumed = startedId == null ? resumableCall(history.data?.calls, me.data) : null;
-  const callId = startedId ?? resumed?.id ?? null;
+  // The resumed call stays the one the draft is for, even when a newer one
+  // shows up; a tel: call started here ends resuming for this panel.
+  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const [noResume, setNoResume] = useState(false);
+  const callId = panelCallId({ startedId, pinnedId, noResume }, history.data?.calls, me.data);
+  useEffect(() => {
+    if (startedId == null && pinnedId == null && callId != null) setPinnedId(callId);
+  }, [callId, startedId, pinnedId]);
+  const resumed =
+    startedId == null && callId != null
+      ? (history.data?.calls.find((c) => c.id === callId) ?? null)
+      : null;
   const live = useQuery({
     queryKey: callKey(callId),
     queryFn: () => api.call(callId!),
     enabled: callId != null,
     refetchInterval: (q) => bridgePollMs(q.state.data),
   });
-  const call = live.data ?? resumed ?? undefined;
+  const call = callId == null ? undefined : (live.data ?? resumed ?? undefined);
+  // A tel: call after a bridged one: a blank draft, so a save never reuses
+  // the bridged call's id or duration.
+  const startTel = (phone: string | null) => {
+    if (call) {
+      setStartedId(null);
+      setPinnedId(null);
+      setNoResume(true);
+      dispatch({ kind: "reset", holdUntil: defaultHoldUntil() });
+    }
+    onStart(phone);
+  };
   const callLive = isLive(call);
   const connectedSec = useElapsed(useConnectedAt(call));
 
@@ -227,11 +252,13 @@ export function DialPanel({
   // Its own action: no outcome needed, and open from the history after Save.
   const discard = useMutation({
     mutationFn: (id: number) => api.discardRecording(id),
-    onSuccess: (c) => {
+    onSuccess: async (c) => {
+      // A poll that read the transcript before the delete must not write it back.
+      await qc.cancelQueries({ queryKey: callKey(c.id), exact: true });
       qc.setQueryData(callKey(c.id), c);
       if (c.id === call?.id) dispatch({ kind: "forget-call" });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
-      toast.success("recording and transcript deleted");
+      toast.success(discardToast(c));
     },
     onError: (err) => toast.error(`couldn't delete the recording · ${err.message}`),
   });
@@ -286,7 +313,7 @@ export function DialPanel({
     ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
     : null;
   const request = logCallRequest(
-    state,
+    visibleDraft(state, masked),
     bridgedOpts
       ? {
           ...bridgedOpts,
@@ -302,7 +329,11 @@ export function DialPanel({
           clientKey: saveKey,
         },
   );
-  const holdSave = saveHeld(call, { pollFailed: live.error != null, starting: ring.isPending });
+  const holdSave = saveHeld(call, {
+    pollFailed: live.error != null,
+    starting: ring.isPending,
+    discarding: discard.isPending && discard.variables === call?.id,
+  });
   const submit = () => {
     if (request && !holdSave && !save.isPending) save.mutate({ req: request, timer: startedAt });
   };
@@ -324,7 +355,7 @@ export function DialPanel({
 
   const localTime = localTimeNow(row.local, now);
   const flags = brief.data?.flags ?? [];
-  const noteSuggested = suggestion != null && !!state.noteFromCall;
+  const noteSuggested = !!state.noteFromCall;
   const needsPhone =
     !bridged &&
     callsMe.data?.bridgeReady === true &&
@@ -356,7 +387,7 @@ export function DialPanel({
               dialMode={dialMode}
               window={callWindow}
               now={now}
-              onStart={onStart}
+              onStart={startTel}
               onRefresh={onRefresh}
               onRing={() => ring.mutate()}
               ringing={ring.isPending}
@@ -516,9 +547,8 @@ export function DialPanel({
           onRetry={() => void history.refetch()}
           masked={masked}
           me={me.data}
-          {...(recordMode === "always"
-            ? { onDiscard: (id: number) => discard.mutate(id), discarding: discard.isPending }
-            : {})}
+          onDiscard={(id: number) => discard.mutate(id)}
+          discarding={discard.isPending}
         />
       </section>
     </div>
@@ -564,6 +594,12 @@ export function CallHistory({
         {calls.map((c) => {
           const who = callerLabel(c.member ?? null, me);
           const hasTranscript = c.transcriptStatus === "ready" && (c.transcript?.length ?? 0) > 0;
+          const shownWho = who === c.member ? mask("email", who) : who;
+          // The placing member, or an owner, may delete it, as the server allows.
+          const canDiscard =
+            onDiscard != null &&
+            recordingDeletable(c) &&
+            (isOwnCall(c.member ?? null, me) || me?.role === "owner");
           return (
             <li key={c.id}>
               <span className="font-mono text-[11px] text-ink-muted">{timeAgo(c.startedAt)}</span>{" "}
@@ -573,10 +609,7 @@ export function CallHistory({
               {c.durationSec != null && (
                 <span className="text-ink-muted"> · {formatDuration(c.durationSec)}</span>
               )}
-              <span className="text-ink-muted">
-                {" "}
-                · by {who === c.member ? mask("email", who) : who}
-              </span>
+              <span className="text-ink-muted"> · by {shownWho}</span>
               {c.note && !masked && <span className="text-ink-muted"> · {c.note}</span>}
               {hasTranscript &&
                 (masked ? (
@@ -586,16 +619,20 @@ export function CallHistory({
                     <summary className="cursor-pointer text-[11.5px] text-ink-muted">
                       Transcript
                     </summary>
-                    <TranscriptView transcript={c.transcript!} className="mt-2" />
+                    <TranscriptView
+                      transcript={c.transcript!}
+                      className="mt-2"
+                      caller={who === "you" ? undefined : (shownWho.split("@")[0] ?? shownWho)}
+                    />
                   </details>
                 ))}
-              {onDiscard && c.provider === "twilio" && c.transcriptStatus !== "none" && (
+              {canDiscard && (
                 <Button
                   variant="ghost"
                   size="sm"
                   disabled={discarding}
                   onClick={() => onDiscard(c.id)}
-                  title="They didn't agree to recording: delete the recording and transcript"
+                  title="Delete the recording and its transcript"
                   {...readOnly}
                 >
                   Delete recording
@@ -773,7 +810,10 @@ export function BridgeCallView({
 }) {
   const live = isLive(call);
   const s = call.suggestion;
+  // What this call records is its own: the workspace's mode only decides
+  // whether a call not recorded yet offers Record.
   const recordingNow = live && call.transcriptStatus === "pending";
+  const fromAnswer = recordingNow && call.recordedFrom !== "consent";
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -805,7 +845,7 @@ export function BridgeCallView({
           couldn't read the call · {pollError.message}
         </div>
       )}
-      {live && record === "always" && <ConsentLine label="Say this first, the call is recorded" />}
+      {fromAnswer && <ConsentLine label="Say this first, the call is recorded" />}
       {call.status === "connected" && record === "ask" && call.transcriptStatus === "none" && (
         <ConsentLine label="Ask first; nothing is recorded until you press Record">
           <Button
@@ -822,7 +862,7 @@ export function BridgeCallView({
           </Button>
         </ConsentLine>
       )}
-      {recordingNow && record === "ask" && (
+      {recordingNow && !fromAnswer && (
         <div className="font-mono text-[11.5px] text-ink-muted" aria-live="polite">
           ● Recording
         </div>
@@ -873,7 +913,7 @@ export function BridgeCallView({
         call.transcriptStatus === "ready" &&
         call.transcript &&
         (masked ? <PrivacyHidden /> : <TranscriptView transcript={call.transcript} />)}
-      {call.status === "ended" && record === "always" && call.transcriptStatus !== "none" && (
+      {call.status === "ended" && recordingDeletable(call) && (
         <div>
           <Button
             size="sm"
@@ -883,7 +923,9 @@ export function BridgeCallView({
             title="Delete the recording and transcript; log the outcome as usual"
             {...readOnly}
           >
-            They didn't agree to recording — delete it
+            {call.recordedFrom === "consent"
+              ? "Delete recording"
+              : "They didn't agree to recording — delete it"}
           </Button>
         </div>
       )}
@@ -903,13 +945,18 @@ function ConsentLine({ label, children }: { label: string; children?: React.Reac
   );
 }
 
-/** Both sides of the call, You and Them, one paragraph per turn. */
+/**
+ * Both sides of the call, one paragraph per turn: You and Them, or the
+ * caller's name for another member's call (`caller`).
+ */
 export function TranscriptView({
   transcript,
   className,
+  caller,
 }: {
   transcript: NonNullable<CallRecordView["transcript"]>;
   className?: string;
+  caller?: string | undefined;
 }) {
   const turns = transcriptTurns(transcript);
   if (turns.length === 0)
@@ -929,7 +976,7 @@ export function TranscriptView({
               t.speaker === "founder" ? "text-ink-faint" : "text-ink-cream-2",
             )}
           >
-            {speakerLabel(t.speaker)}
+            {t.speaker === "founder" && caller ? caller : speakerLabel(t.speaker)}
           </dt>
           <dd className={t.speaker === "founder" ? "text-ink-muted" : "text-ink-cream"}>
             {t.text}
