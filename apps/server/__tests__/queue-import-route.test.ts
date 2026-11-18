@@ -214,6 +214,24 @@ describe("POST /api/queue/import", () => {
     expect(calls.payload).toHaveLength(0);
   });
 
+  it("refuses a row meant for another workspace before writing it, and takes its own", async () => {
+    vi.stubEnv("ONESHOT_GTM_WORKSPACE", "alpha");
+    try {
+      const res = await importQueueRowRoute(req({ ...good, toWorkspace: "gamma" }));
+      expect(res.status).toBe(409);
+      expect(((await res.json()) as { error: string }).error).toContain('workspace "alpha"');
+      expect(calls.enqueue).toEqual([]);
+      expect(calls.status).toEqual([]);
+
+      expect((await importQueueRowRoute(req({ ...good, toWorkspace: "alpha" }))).status).toBe(201);
+      // A sender from a build that names no destination is not checked.
+      expect((await importQueueRowRoute(req(good))).status).toBe(201);
+      expect(calls.enqueue).toHaveLength(2);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("rejects malformed bodies and unknown plays", async () => {
     expect((await importQueueRowRoute(req("not json"))).status).toBe(400);
     expect((await importQueueRowRoute(req({ ...good, dedupeKey: "" }))).status).toBe(400);

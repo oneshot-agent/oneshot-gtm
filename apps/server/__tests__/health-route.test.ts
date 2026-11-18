@@ -1,10 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetInflight, beginDraining, beginSend, endSend } from "@oneshot-gtm/core";
 import { health } from "../src/api/health.ts";
 
 function req(): Request {
   return new Request("http://localhost/api/health", { headers: { host: "127.0.0.1:3030" } });
 }
+
+describe("health route — which workspace answered", () => {
+  it("names the workspace this server acts as, so a probe can tell servers apart", async () => {
+    vi.stubEnv("ONESHOT_GTM_WORKSPACE", "acme");
+    try {
+      expect(await health(req()).json()).toMatchObject({ ok: true, workspace: "acme" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("health route — in-flight send count for the restart guard", () => {
   beforeEach(() => {

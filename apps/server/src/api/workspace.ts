@@ -36,16 +36,42 @@ function boundPort(): number {
   return Number.isFinite(p) ? p : 3030;
 }
 
-/** ~300ms liveness probe against another workspace's /api/health. */
-export async function probe(port: number): Promise<boolean> {
+/**
+ * Who answered a workspace's port, by the name its `/api/health` carries:
+ *  - `verified`: it named this workspace.
+ *  - `unknown`: a 2xx answer with no name, as older builds send. Running,
+ *    but never proof of identity.
+ *  - `other`: it named a different workspace (`answeredAs`).
+ *  - `stopped`: no answer within ~300ms, or a non-2xx one.
+ */
+export type WorkspaceProbe =
+  | { state: "verified" | "unknown" | "stopped" }
+  | { state: "other"; answeredAs: string };
+
+/** ~300ms probe of `name`'s /api/health on `port`: is it up, and is it that workspace? */
+export async function probeWorkspace(name: string, port: number): Promise<WorkspaceProbe> {
+  let res: Response;
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+    res = await fetch(`http://127.0.0.1:${port}/api/health`, {
       signal: AbortSignal.timeout(300),
     });
-    return res.ok;
   } catch {
-    return false;
+    return { state: "stopped" };
   }
+  if (!res.ok) return { state: "stopped" };
+  let answeredAs: unknown;
+  try {
+    answeredAs = ((await res.json()) as { workspace?: unknown } | null)?.workspace;
+  } catch {
+    // Not JSON, or the body outlived the timeout: something answered, unnamed.
+  }
+  if (typeof answeredAs !== "string" || !answeredAs) return { state: "unknown" };
+  return answeredAs === name ? { state: "verified" } : { state: "other", answeredAs };
+}
+
+/** Why a workspace can't be started or reached: its port serves a different one. */
+function portTakenError(name: string, port: number, answeredAs: string): string {
+  return `port ${port} is registered to workspace "${name}" but workspace "${answeredAs}" is answering on it — stop that server, then try again`;
 }
 
 export async function workspaceInfo(req: Request): Promise<Response> {
@@ -59,26 +85,44 @@ export async function workspaceInfo(req: Request): Promise<Response> {
     roster = await Promise.all(
       entries.map(async ([wsName, entry]) => {
         const isCurrent = wsName === name;
+        // An unnamed answer (older build) still counts as running; a
+        // different workspace on the port means this one is not.
+        const state = isCurrent ? "verified" : (await probeWorkspace(wsName, entry.port)).state;
         return {
           name: wsName,
           home: entry.home,
           port: isCurrent ? current.port : entry.port,
           isCurrent,
           isDefault: wsName === reg.default,
-          running: isCurrent ? true : await probe(entry.port),
+          running: state === "verified" || state === "unknown",
+          verified: state === "verified",
         };
       }),
     );
     // A server started with a bare ONESHOT_GTM_HOME (unregistered) won't match
     // any roster row: surface it so the badge never lies about identity.
     if (!roster.some((w) => w.isCurrent)) {
-      roster.unshift({ ...current, isCurrent: true, isDefault: false, running: true });
+      roster.unshift({
+        ...current,
+        isCurrent: true,
+        isDefault: false,
+        running: true,
+        verified: true,
+      });
     }
   } catch (err) {
     if (!(err instanceof WorkspaceError)) throw err;
     // Corrupt registry: degrade to self-only rather than a 500. The badge
     // (identity) matters more than the switcher (roster).
-    roster = [{ ...current, isCurrent: true, isDefault: name === "default", running: true }];
+    roster = [
+      {
+        ...current,
+        isCurrent: true,
+        isDefault: name === "default",
+        running: true,
+        verified: true,
+      },
+    ];
   }
 
   const body: WorkspaceInfo = { current, workspaces: roster };
@@ -240,7 +284,12 @@ export async function workspaceLaunch(req: Request): Promise<Response> {
     return jsonResponse({ error: `unknown workspace "${name}"` }, 404, req);
   }
 
-  if (await probe(entry.port)) {
+  const answer = await probeWorkspace(name, entry.port);
+  if (answer.state === "other") {
+    // Spawning would only lose the bind, and the tab would open the wrong workspace.
+    return jsonResponse({ error: portTakenError(name, entry.port, answer.answeredAs) }, 409, req);
+  }
+  if (answer.state !== "stopped") {
     return jsonResponse({ status: "already-running", port: entry.port }, 200, req);
   }
 
@@ -312,7 +361,8 @@ const LAUNCH_POLL_MS = 500;
 
 /**
  * Resolve another workspace by name and make sure its server answers: probe,
- * spawn if needed, poll until healthy. The building block of a queue move:
+ * spawn if needed, poll until healthy. A port answering as a different
+ * workspace is a 409, never a destination. The building block of a queue move:
  * the move route talks to the destination over its own HTTP API, so the
  * destination must be up. Never throws on a registry problem; every failure
  * is a message the route can return verbatim.
@@ -326,7 +376,15 @@ export async function ensureWorkspaceRunning(
   const resolved = resolveOtherWorkspace(name);
   if (!resolved.ok) return resolved;
   const { entry } = resolved;
-  if (await probe(entry.port)) return { ok: true, port: entry.port, started: false };
+  // A different workspace on the port must never receive this one's rows.
+  const taken = (answeredAs: string) => ({
+    ok: false as const,
+    status: 409,
+    error: portTakenError(name, entry.port, answeredAs),
+  });
+  const first = await probeWorkspace(name, entry.port);
+  if (first.state === "other") return taken(first.answeredAs);
+  if (first.state !== "stopped") return { ok: true, port: entry.port, started: false };
 
   spawnWorkspace(name, entry);
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -335,7 +393,9 @@ export async function ensureWorkspaceRunning(
   const deadline = Date.now() + waitMs;
   while (Date.now() < deadline) {
     await sleep(pollMs);
-    if (await probe(entry.port)) return { ok: true, port: entry.port, started: true };
+    const answer = await probeWorkspace(name, entry.port);
+    if (answer.state === "other") return taken(answer.answeredAs);
+    if (answer.state !== "stopped") return { ok: true, port: entry.port, started: true };
   }
   return {
     ok: false,

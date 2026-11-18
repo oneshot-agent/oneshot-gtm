@@ -28,8 +28,12 @@ const fetchMock = vi.fn(async () => {
 });
 vi.stubGlobal("fetch", fetchMock);
 
-const { workspaceInfo, workspaceLaunch, ensureWorkspaceRunning, _setLaunchSpawn } =
+const { workspaceInfo, workspaceLaunch, ensureWorkspaceRunning, probeWorkspace, _setLaunchSpawn } =
   await import("../src/api/workspace.ts");
+
+/** A health answer: from a server that names its workspace, or (no name) from an older build. */
+const healthAs = (workspace?: string) =>
+  new Response(JSON.stringify({ ok: true, ...(workspace ? { workspace } : {}) })) as never;
 
 afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
@@ -62,6 +66,41 @@ describe("GET /api/workspace", () => {
     const alpha = out.workspaces.find((w) => w.name === "alpha")!;
     expect(alpha.port).toBe(3999);
     expect(alpha.running).toBe(false); // probe rejected above
+  });
+});
+
+describe("workspace identity probe", () => {
+  it("tells the asked-for workspace from an older build, another workspace and silence", async () => {
+    fetchMock.mockResolvedValueOnce(healthAs("alpha"));
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "verified" });
+    // A build from before health carried the name: up, identity unknown. Never "stopped".
+    fetchMock.mockResolvedValueOnce(healthAs());
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "unknown" });
+    fetchMock.mockResolvedValueOnce(new Response("<html>ok</html>") as never);
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "unknown" });
+    fetchMock.mockResolvedValueOnce(healthAs("beta"));
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "other", answeredAs: "beta" });
+    fetchMock.mockResolvedValueOnce(new Response("{}", { status: 503 }) as never);
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "stopped" });
+    expect(await probeWorkspace("alpha", 3999)).toEqual({ state: "stopped" }); // fetch rejects
+  });
+
+  it.each([
+    ["alpha", { running: true, verified: true }],
+    [undefined, { running: true, verified: false }],
+    ["beta", { running: false, verified: false }],
+  ])("the roster reports a port answering as %s", async (answeredAs, expected) => {
+    fetchMock.mockResolvedValueOnce(healthAs(answeredAs));
+    const res = await workspaceInfo(new Request("http://x/api/workspace"));
+    const out = (await res.json()) as {
+      workspaces: Array<{ name: string; port: number; running: boolean; verified: boolean }>;
+    };
+    expect(out.workspaces.find((w) => w.name === "alpha")).toMatchObject({
+      port: 3999,
+      ...expected,
+    });
+    // This server is the current workspace by definition.
+    expect(out.workspaces.find((w) => w.name === "default")).toMatchObject({ verified: true });
   });
 });
 
@@ -114,9 +153,50 @@ describe("POST /api/workspace/launch", () => {
     expect(out.status).toBe("already-running");
     expect(spawns).toHaveLength(0);
   });
+
+  it("refuses with 409, and spawns nothing, when another workspace answers on the port", async () => {
+    fetchMock.mockResolvedValueOnce(healthAs("beta"));
+    const spawn = vi.fn();
+    _setLaunchSpawn(spawn);
+
+    const res = await workspaceLaunch(req({ name: "alpha" }));
+    expect(res.status).toBe(409);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('workspace "beta" is answering');
+    expect(error).toContain("3999");
+    expect(spawn).not.toHaveBeenCalled();
+  });
 });
 
 describe("workspace readiness for queue moves", () => {
+  it("accepts the named workspace and an older build, refuses a different workspace", async () => {
+    const spawn = vi.fn();
+    _setLaunchSpawn(spawn);
+    fetchMock.mockResolvedValueOnce(healthAs("alpha"));
+    expect(await ensureWorkspaceRunning("alpha")).toEqual({ ok: true, port: 3999, started: false });
+    fetchMock.mockResolvedValueOnce(healthAs());
+    expect(await ensureWorkspaceRunning("alpha")).toEqual({ ok: true, port: 3999, started: false });
+
+    fetchMock.mockResolvedValueOnce(healthAs("beta"));
+    const refused = await ensureWorkspaceRunning("alpha");
+    expect(refused).toMatchObject({ ok: false, status: 409 });
+    expect((refused as { error: string }).error).toContain('workspace "beta" is answering');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("gives up at once when a different workspace takes the port after the spawn", async () => {
+    const spawn = vi.fn();
+    _setLaunchSpawn(spawn);
+    // Stopped at first; then another server wins the bind.
+    fetchMock.mockRejectedValueOnce(new Error("down"));
+    fetchMock.mockResolvedValueOnce(healthAs("beta"));
+    const sleep = vi.fn(async () => {});
+    const result = await ensureWorkspaceRunning("alpha", { sleep });
+    expect(result).toMatchObject({ ok: false, status: 409 });
+    expect(spawn).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
   it.each([true, false])(
     "waits through cold-boot cleanup; eventually healthy: %s",
     async (recovers) => {
