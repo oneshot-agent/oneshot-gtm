@@ -25,6 +25,7 @@ export interface PlatformError {
   kind: PlatformErrorKind;
   /** The provider's reason code when it gave one (`settlement_pending`), else a short label. */
   reason: string;
+  requestId?: string;
   paymentAttemptId?: string;
   quoteId?: string;
   stage?: string;
@@ -38,8 +39,14 @@ export class PlatformUnavailableError extends Error {
     readonly kind: PlatformErrorKind,
     readonly reason: string,
     readonly method: string,
+    readonly retryAt?: number,
+    readonly requestId?: string,
   ) {
-    super(`OneShot unavailable: ${pauseReason(kind)} (${reason}); ${method} not called`);
+    const detail =
+      reason === "service_auth" ? "tool unavailable—support required" : pauseReason(kind);
+    const retry = retryAt ? `; next attempt ${new Date(retryAt).toISOString()}` : "";
+    const ref = requestId ? ` (request ${requestId})` : "";
+    super(`OneShot unavailable: ${detail} (${reason}); ${method} not called${retry}${ref}`);
     this.name = "PlatformUnavailableError";
   }
 }
@@ -62,6 +69,9 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
   if (err instanceof PlatformUnavailableError) return { kind: err.kind, reason: err.reason };
   const e = err as {
     name?: unknown;
+    code?: unknown;
+    jobId?: unknown;
+    requestId?: unknown;
     message?: unknown;
     reason?: unknown;
     statusCode?: unknown;
@@ -90,6 +100,27 @@ export function classifyPlatformError(err: unknown): PlatformError | null {
     const network = str(e.expected?.network);
     if (network) ids.network = network;
     return { kind: WALLET_REASONS.test(reason) ? "wallet" : "payment", reason, ...ids };
+  }
+  const code = str(e.code);
+  if (code) {
+    const requestId = str(e.jobId) ?? str(e.requestId);
+    const ref = requestId ? { requestId } : {};
+    if (["service_auth", "service_unavailable", "rate_limited"].includes(code)) {
+      return { kind: "tool", reason: code, ...ref };
+    }
+    if (code === "insufficient_funds") return { kind: "wallet", reason: code, ...ref };
+    if (code === "payment_failed") return { kind: "payment", reason: code, ...ref };
+    // A typed job error is authoritative; misleading prose cannot turn a verdict into an outage.
+    if (
+      name === "JobError" ||
+      [
+        "invalid_input",
+        "enrichment_exhausted",
+        "target_unreachable",
+        "source_unsupported",
+      ].includes(code)
+    )
+      return null;
   }
   if (name === "InsufficientCreditsError" || WALLET_MESSAGE.test(lower)) {
     return { kind: "wallet", reason: "insufficient credits" };
@@ -132,11 +163,15 @@ export const PLATFORM_WINDOW = 10;
 export const PLATFORM_TRIP = 6;
 /** How long a pause lasts before one call probes. */
 export const PLATFORM_COOLDOWN_MS = 60_000;
+export const TOOL_AUTH_COOLDOWN_MS = 30 * 60_000;
+export const TOOL_MAX_COOLDOWN_MS = 15 * 60_000;
 
 interface Breaker {
   outcomes: boolean[];
   open: boolean;
   openedAt: number;
+  cooldownMs?: number;
+  requestId?: string;
   /** The one probe after a cooldown, while it is out: which call, and when it went. */
   probe: { id: number; at: number } | null;
   kind: PlatformErrorKind;
@@ -174,21 +209,35 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
       b.openedAt = 0;
       b.probe = null;
       b.outcomes = [];
+      b.cooldownMs = PLATFORM_COOLDOWN_MS;
+      b.requestId = undefined;
     }
     b.outcomes.push(false);
   } else {
     b.outcomes.push(true);
     b.kind = failed.kind;
     b.reason = failed.reason;
+    b.requestId = failed.requestId;
     if (b.open) {
       // The probe failed: wait another cooldown before the next one.
       if (decides(b, now, probeId)) {
+        b.cooldownMs =
+          failed.reason === "service_auth"
+            ? TOOL_AUTH_COOLDOWN_MS
+            : failed.kind === "tool"
+              ? Math.min((b.cooldownMs ?? PLATFORM_COOLDOWN_MS) * 2, TOOL_MAX_COOLDOWN_MS)
+              : PLATFORM_COOLDOWN_MS;
         b.openedAt = now;
         b.probe = null;
       }
-    } else if (b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP) {
+    } else if (
+      failed.reason === "service_auth" ||
+      b.outcomes.slice(-PLATFORM_WINDOW).filter(Boolean).length >= PLATFORM_TRIP
+    ) {
       b.open = true;
       b.openedAt = now;
+      b.cooldownMs =
+        failed.reason === "service_auth" ? TOOL_AUTH_COOLDOWN_MS : PLATFORM_COOLDOWN_MS;
       logEvent(
         "oneshot.platform_paused",
         { key, kind: failed.kind, reason: failed.reason, text: pauseReason(failed.kind) },
@@ -206,7 +255,7 @@ function record(key: string, failed: PlatformError | null, now: number, probeId 
 function pausedBreaker(key: string, now: number): Breaker | null {
   const b = breakers.get(key);
   if (!b?.open) return null;
-  if (now - b.openedAt < PLATFORM_COOLDOWN_MS) return b;
+  if (now - b.openedAt < (b.cooldownMs ?? PLATFORM_COOLDOWN_MS)) return b;
   // A probe that never answered (a hung call) frees the slot after a cooldown.
   if (b.probe && now - b.probe.at < PLATFORM_COOLDOWN_MS) return b;
   return null;
@@ -380,7 +429,15 @@ export function watchAgent<T extends object>(agent: T): T {
           const paused = pausedBreaker("platform", now) ?? pausedBreaker(key, now);
           if (paused) {
             noteScope({ kind: paused.kind, reason: paused.reason }, true);
-            return Promise.reject(new PlatformUnavailableError(paused.kind, paused.reason, prop));
+            return Promise.reject(
+              new PlatformUnavailableError(
+                paused.kind,
+                paused.reason,
+                prop,
+                paused.openedAt + (paused.cooldownMs ?? PLATFORM_COOLDOWN_MS),
+                paused.requestId,
+              ),
+            );
           }
           // Past a cooldown this call is the one probe; others wait for its answer.
           probes.platform = admitProbe("platform", now);

@@ -391,3 +391,95 @@ describe("paid cache", () => {
     ).toBe(true);
   });
 });
+
+const jobError = (code: string) =>
+  Object.assign(new Error("unhelpful provider message"), {
+    name: "JobError",
+    code,
+    jobId: "job-reference",
+  });
+
+describe("structured upstream failures", () => {
+  it("uses codes before wording and never negative-caches account failures", () => {
+    const error = Object.assign(jobError("service_auth"), { message: "insufficient credits" });
+    expect(classifyPlatformError(error)).toEqual({
+      kind: "tool",
+      reason: "service_auth",
+      requestId: "job-reference",
+    });
+    expect(isTransientToolError(error)).toBe(true);
+    expect(isNegativeCacheable(error)).toBe(false);
+    const miss = Object.assign(jobError("enrichment_exhausted"), {
+      message: "temporarily unavailable",
+    });
+    expect(classifyPlatformError(miss)).toBeNull();
+    expect(isTransientToolError(miss)).toBe(false);
+  });
+
+  it("pauses only the affected tool immediately for 30 minutes, then admits one recovery probe", async () => {
+    vi.useFakeTimers();
+    let recover = false;
+    let release: (() => void) | undefined;
+    const raw = {
+      personFind: vi.fn(async () => {
+        if (!recover) throw jobError("service_auth");
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return { results: [] };
+      }),
+      companyFind: vi.fn(async () => ({ results: [] })),
+    };
+    const agent = watchAgent(raw);
+    await agent.personFind().catch(() => {});
+    const paused = (await agent.personFind().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    expect(paused.requestId).toBe("job-reference");
+    expect(paused.retryAt).toBe(Date.now() + 30 * 60_000);
+    expect(paused.message).toContain("support required");
+    expect(raw.personFind).toHaveBeenCalledTimes(1);
+    await agent.companyFind();
+    expect(isPlatformPaused()).toBe(false);
+    vi.setSystemTime(Date.now() + 30 * 60_000 + 1);
+    recover = true;
+    const probe = agent.personFind();
+    await expect(agent.personFind()).rejects.toBeInstanceOf(PlatformUnavailableError);
+    expect(raw.personFind).toHaveBeenCalledTimes(2);
+    release?.();
+    await probe;
+    expect(events.some((e) => e.kind === "oneshot.platform_resumed")).toBe(true);
+  });
+
+  it("backs off failed transient probes to 15 minutes and resets on success", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    const raw = {
+      webRead: vi.fn(async () => {
+        if (fail) throw jobError("service_unavailable");
+        return {};
+      }),
+    };
+    const agent = watchAgent(raw);
+    for (let i = 0; i < 6; i++) await agent.webRead().catch(() => {});
+    let cooldown = 60_000;
+    for (let i = 0; i < 6; i++) {
+      vi.setSystemTime(Date.now() + cooldown + 1);
+      await agent.webRead().catch(() => {});
+      cooldown = Math.min(cooldown * 2, 15 * 60_000);
+      const paused = (await agent.webRead().catch((e: unknown) => e)) as InstanceType<
+        typeof PlatformUnavailableError
+      >;
+      expect(paused.retryAt).toBe(Date.now() + cooldown);
+    }
+    vi.setSystemTime(Date.now() + cooldown + 1);
+    fail = false;
+    await agent.webRead();
+    fail = true;
+    for (let i = 0; i < 6; i++) await agent.webRead().catch(() => {});
+    const paused = (await agent.webRead().catch((e: unknown) => e)) as InstanceType<
+      typeof PlatformUnavailableError
+    >;
+    expect(paused.retryAt).toBe(Date.now() + 60_000);
+  });
+});
