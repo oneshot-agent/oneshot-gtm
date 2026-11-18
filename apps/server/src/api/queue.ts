@@ -1227,12 +1227,19 @@ export async function approveQueueRoute(
   // (#983). A note the founder typed meanwhile is kept, the marker is not.
   const moving = activeQueueMoves.get(id);
   if (moving) {
-    const notes = ledger.getQueueRow(id)?.notes ?? null;
+    const approved = ledger.getQueueRow(id)!;
+    const notes = approved.notes ?? null;
     moving.rejected = false;
     moving.previous = {
       status: "approved",
       member: currentMember(req)?.email ?? null,
       notes: notes === moving.reserved ? moving.previous.notes : notes,
+      previousDecision: {
+        decision: approved.decision ?? null,
+        decided_at: approved.decided_at ?? null,
+        decided_by: approved.decided_by ?? null,
+        decision_reason: approved.decision_reason ?? null,
+      },
     };
   }
   // Recent posts are bought on approval, in the background: the response
@@ -1448,7 +1455,7 @@ const activeQueueMoves = new Map<
     reserved: string;
     previous: Pick<QueueRow, "status" | "notes"> & {
       member: string | null;
-      pendingDecision?: Pick<
+      previousDecision: Pick<
         QueueRow,
         "decision" | "decided_at" | "decided_by" | "decision_reason"
       >;
@@ -1521,16 +1528,12 @@ export async function moveQueueRowRoute(
       status: row.status,
       notes: row.notes,
       member: row.decided_by_member ?? null,
-      ...(row.status === "pending"
-        ? {
-            pendingDecision: {
-              decision: row.decision ?? null,
-              decided_at: row.decided_at ?? null,
-              decided_by: row.decided_by ?? null,
-              decision_reason: row.decision_reason ?? null,
-            },
-          }
-        : {}),
+      previousDecision: {
+        decision: row.decision ?? null,
+        decided_at: row.decided_at ?? null,
+        decided_by: row.decided_by ?? null,
+        decision_reason: row.decision_reason ?? null,
+      },
     },
   };
   const note = moveNote(row.notes, workspace, randomBytes(4).toString("hex"));

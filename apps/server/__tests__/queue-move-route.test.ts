@@ -266,6 +266,12 @@ describe("POST /api/queue/:id/move", () => {
         id: 746,
         reservedNotes: statusCalls[0]?.["notes"],
         member: null,
+        previousDecision: {
+          decision: null,
+          decided_at: null,
+          decided_by: null,
+          decision_reason: null,
+        },
         status: "approved",
         notes: "looks good",
         landed: true,

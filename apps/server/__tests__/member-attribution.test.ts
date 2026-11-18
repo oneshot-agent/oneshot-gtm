@@ -107,7 +107,10 @@ beforeEach(() => {
   getSharedDb().allowHost(host);
   saveConfig({ ...loadConfig(), productBrief: "Tools for planning work." });
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 it("approve and reject store the requester, ignoring a body-supplied member", async () => {
   const id = row();
@@ -201,7 +204,44 @@ it("failed pending moves restore the decision history, including undecided, bulk
   }
 });
 
-it("a failed overlapping move preserves the intervening approver's member", async () => {
+it.each(["approved", "rejected"] as const)(
+  "a failed move restores the full %s decision history",
+  async (status) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-18T10:00:00Z"));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "refused" }, { status: 409 })),
+    );
+    const id = row();
+    if (status === "approved") {
+      ledger.approveAllPending({ ids: [id], member: owner });
+    } else {
+      ledger.setQueueStatus({
+        id,
+        status,
+        decidedBy: "human",
+        member: owner,
+        decisionReason: "wrong_person",
+      });
+    }
+    const before = ledger.getQueueRow(id)!;
+    vi.setSystemTime(new Date("2026-11-18T11:00:00Z"));
+    expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
+      409,
+    );
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status,
+      decision: before.decision,
+      decided_at: before.decided_at,
+      decided_by: before.decided_by,
+      decided_by_member: before.decided_by_member,
+      decision_reason: before.decision_reason,
+    });
+  },
+);
+
+it("a failed overlapping move preserves the intervening approver's decision", async () => {
   const id = row();
   let release!: (response: Response) => void;
   const paused = new Promise<Response>((resolve) => {
@@ -223,20 +263,28 @@ it("a failed overlapping move preserves the intervening approver's member", asyn
   );
   const first = queue.moveQueueRowRoute(req({ workspace: "other" }), params(id));
   await waiting;
-  expect((await queue.approveQueueRoute(req({}, "/api/queue", owner), params(id))).status).toBe(
-    200,
-  );
+  expect(
+    (await queue.approveQueueRoute(req({ reason: "fit" }, "/api/queue", owner), params(id))).status,
+  ).toBe(200);
+  const approved = ledger.getQueueRow(id)!;
   expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(409);
   release(Response.json({ error: "refused" }, { status: 409 }));
   expect((await first).status).toBe(409);
-  expect(ledger.getQueueRow(id)).toMatchObject({ status: "approved", decided_by_member: owner });
+  expect(ledger.getQueueRow(id)).toMatchObject({
+    status: "approved",
+    decision: approved.decision,
+    decided_at: approved.decided_at,
+    decided_by: approved.decided_by,
+    decided_by_member: owner,
+    decision_reason: "fit",
+  });
 });
 it("send draft preserves another member's approval and draft editor", async () => {
   const id = row();
   ledger.setQueueStatus({ id, status: "approved", member: owner });
-  expect(
-    (await queue.regenerateDraftRoute(req({}, "/api/queue", owner), params(id))).status,
-  ).toBe(200);
+  expect((await queue.regenerateDraftRoute(req({}, "/api/queue", owner), params(id))).status).toBe(
+    200,
+  );
   expect(queue.toView(ledger.getQueueRow(id)!).lastDraft?.editedBy).toBe(owner);
   expect((await queue.sendDraftRoute(req({ confirmStale: true }), params(id))).status).toBe(200);
   expect(ledger.getQueueRow(id)).toMatchObject({

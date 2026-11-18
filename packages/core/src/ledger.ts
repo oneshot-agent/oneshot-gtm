@@ -2745,7 +2745,7 @@ export class Ledger {
     id: number;
     reservedNotes: string;
     member?: string | null;
-    pendingDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
+    previousDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
     status: QueueStatus;
     notes: string | null;
   }): boolean {

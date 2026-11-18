@@ -1978,20 +1978,24 @@ export class QueueStore {
     id: number;
     reservedNotes: string;
     member?: string | null;
-    /** Pending rows can retain an earlier decision; restore it with its member. */
-    pendingDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
+    /** Restore the captured decision with its member, including bulk and machine decisions. */
+    previousDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
     status: QueueStatus;
     notes: string | null;
   }): boolean {
     const now = new Date().toISOString();
     const decision =
       input.status === "approved" ? "approve" : input.status === "rejected" ? "reject" : null;
+    const previousDecision = input.previousDecision ?? {
+      decision,
+      decided_at: decision ? now : null,
+      decided_by: decision ? "human" : null,
+      decision_reason: null,
+    };
     const decisionSql =
-      input.status === "pending"
-        ? ", reviewed_at = NULL, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason"
-        : decision
-          ? ", reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = 'human', decision_reason = NULL"
-          : "";
+      input.status === "pending" || decision
+        ? `, reviewed_at = ${input.status === "pending" ? "NULL" : "$now"}, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason`
+        : "";
     const sentGuard =
       input.status === "pending" || input.status === "approved"
         ? " AND status != 'sent' AND sent_at IS NULL"
@@ -2006,16 +2010,15 @@ export class QueueStore {
         $id: input.id,
         $reserved: input.reservedNotes,
         $member: input.member ?? null,
-        ...(input.status === "pending"
+        ...(decisionSql.includes("$now") ? { $now: now } : {}),
+        ...(decisionSql
           ? {
-              $decision: input.pendingDecision?.decision ?? null,
-              $decidedAt: input.pendingDecision?.decided_at ?? null,
-              $decidedBy: input.pendingDecision?.decided_by ?? null,
-              $decisionReason: input.pendingDecision?.decision_reason ?? null,
+              $decision: previousDecision.decision,
+              $decidedAt: previousDecision.decided_at,
+              $decidedBy: previousDecision.decided_by,
+              $decisionReason: previousDecision.decision_reason ?? null,
             }
-          : decisionSql.includes("$now")
-            ? { $now: now, $decision: decision }
-            : {}),
+          : {}),
       });
     return r.changes === 1;
   }
