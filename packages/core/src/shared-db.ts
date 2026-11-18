@@ -140,6 +140,13 @@ export interface Member {
   removed_at: string | null;
 }
 
+export class LastOwnerError extends Error {
+  constructor() {
+    super("The last owner cannot be removed or demoted. Add another owner first.");
+    this.name = "LastOwnerError";
+  }
+}
+
 /** The stored form of a member email: trimmed and lowercased. Null when it cannot be one. */
 export function normalizeMemberEmail(input: string): string | null {
   const email = input.trim().toLowerCase();
@@ -1385,6 +1392,7 @@ export class SharedDb {
         );
         outcome = "restored";
       } else {
+        if (input.role !== "owner") this.assertNotLastOwner(existing);
         this.db.run("UPDATE members SET name = ?, role = ? WHERE id = ?", [
           name ?? existing.name,
           input.role,
@@ -1407,12 +1415,31 @@ export class SharedDb {
   removeMember(email: string): boolean {
     const normalized = normalizeMemberEmail(email);
     if (!normalized) return false;
-    return (
-      this.db.run("UPDATE members SET removed_at = ? WHERE email = ? AND removed_at IS NULL", [
-        new Date().toISOString(),
-        normalized,
-      ]).changes === 1
-    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.assertNotLastOwner(this.activeMember(normalized));
+      const removed =
+        this.db.run("UPDATE members SET removed_at = ? WHERE email = ? AND removed_at IS NULL", [
+          new Date().toISOString(),
+          normalized,
+        ]).changes === 1;
+      this.db.exec("COMMIT");
+      return removed;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** Called under the write lock so two workspace connections cannot lose the last owner. */
+  private assertNotLastOwner(member: Member | null): void {
+    if (member?.role !== "owner") return;
+    const other = this.db
+      .query<{ id: number }, [number]>(
+        "SELECT id FROM members WHERE role = 'owner' AND removed_at IS NULL AND id != ? LIMIT 1",
+      )
+      .get(member.id);
+    if (!other) throw new LastOwnerError();
   }
 
   /** Members in the order they were first added. Removed ones only on request. */

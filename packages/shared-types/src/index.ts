@@ -2464,6 +2464,18 @@ export interface CurrentMember {
   role: "owner" | "member";
 }
 
+/** Active install members and the hosts they can use, served by GET /api/members. */
+export interface MembersView {
+  members: Array<{
+    email: string;
+    name: string | null;
+    role: CurrentMember["role"];
+    addedAt: string;
+  }>;
+  allowedHosts: string[];
+  currentMember: CurrentMember;
+}
+
 /* ── Calendar meetings (issue #577) ──────────────────────────────────── */
 
 export type MeetingOutcomeView = "held" | "no_show" | "cancelled" | "rescheduled";
