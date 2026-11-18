@@ -18,9 +18,10 @@ import type { SectionProps } from "./types.ts";
  */
 export function CallsSection({
   calls,
+  phoneOnApprove = false,
   onDirtyChange,
-}: Pick<SectionProps, "onDirtyChange"> & { calls: CallsSettingsView }) {
-  const server = useMemo(() => callSectionValues(calls), [calls]);
+}: Pick<SectionProps, "onDirtyChange"> & { calls: CallsSettingsView; phoneOnApprove?: boolean }) {
+  const server = useMemo(() => callSectionValues(calls, phoneOnApprove), [calls, phoneOnApprove]);
   // `calls` is one object on the server: build it from the latest values
   // (the hook hands toRequest only the dirty keys).
   const latest = useRef(server);
@@ -98,6 +99,25 @@ export function CallsSection({
         checked={v.weekdays}
         onChange={(e) => s.set("weekdays", e.target.checked)}
       />
+      <div>
+        <Checkbox
+          checked={v.phoneOnApprove}
+          onChange={(e) => s.set("phoneOnApprove", e.target.checked)}
+          label="Look up a phone number for each row I approve"
+        />
+        <p className="m-0 mt-1 text-[12px] leading-5 text-ink-muted">
+          Each lookup is a paid call (see{" "}
+          <a
+            href="https://docs.oneshotagent.com/pricing"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
+          >
+            pricing
+          </a>
+          ) and a number is not guaranteed. Rows need a LinkedIn URL.
+        </p>
+      </div>
       <YourPhone />
     </SectionShell>
   );

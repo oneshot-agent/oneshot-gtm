@@ -252,7 +252,11 @@ function Sections({
         onDirtyChange={onDirtyChange}
       />
       <CalendarSection {...common} identities={status.identities ?? []} />
-      <CallsSection calls={calls} onDirtyChange={onDirtyChange} />
+      <CallsSection
+        calls={calls}
+        phoneOnApprove={cfg.phoneOnApprove === true}
+        onDirtyChange={onDirtyChange}
+      />
       <ReviewQueueSection {...common} />
       <MembersSection onDirtyChange={onDirtyChange} />
       <TelemetrySection {...common} />
