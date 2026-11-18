@@ -115,6 +115,22 @@ export async function adoptPendingLinkedInReplacements() {
         keepForMember();
         continue;
       }
+      // An import of the new connection has asked the provider for something that is not
+      // back yet, and a merge would drop the request. That ends, so the login stays open
+      // and a later pass merges. An import that cannot go on (its account was removed)
+      // is refused by the merge below instead.
+      if (
+        store.progress<{ pending?: unknown }>(`backfill:${newKey}`)?.pending &&
+        !store.account(newKey)?.removedAt
+      ) {
+        keepForMember();
+        store.saveProgress(progressKey, {
+          ...replacement,
+          error:
+            "The new connection's history import is waiting on LinkedIn. The accounts merge when it finishes.",
+        });
+        continue;
+      }
       store.replaceAccount(a.key, connected, linkedInMatches());
       if (replacement.pauseBackfill) {
         const job = store.progress<Record<string, unknown>>(`backfill:${a.key}`);
@@ -133,6 +149,7 @@ export async function adoptPendingLinkedInReplacements() {
         ...replacement,
         stage: "complete",
         newAccountId: connected.id,
+        error: undefined,
       });
     } catch (e) {
       keepForMember();

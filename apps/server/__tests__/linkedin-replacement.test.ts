@@ -159,3 +159,34 @@ it("retries an account whose login could not be checked, and still adopts the ot
   await adoptPendingLinkedInReplacements();
   expect(store.account("wallet:old")?.account.id).toBe("new");
 });
+it("waits for the new connection's unfinished provider work, then merges", async () => {
+  connectedByMia();
+  // A busy capture leaves the new connection with Mia as an account of its own.
+  const token = getReplyReviewStore().claim("capture:wallet:old")!;
+  await adoptPendingLinkedInReplacements();
+  getReplyReviewStore().release("capture:wallet:old", token);
+  // She imports its history; the provider has accepted a run and not finished it.
+  const job = { accountKey: "wallet:new", stage: "waiting", counts: {}, failures: [] };
+  store.saveProgress("backfill:wallet:new", {
+    ...job,
+    pending: { kind: "sync", idempotencyKey: "key", requestId: "request" },
+  });
+  await adoptPendingLinkedInReplacements();
+  expect(store.account("wallet:old")?.account.id).toBe("old");
+  expect(store.account("wallet:new")).toMatchObject({ ownerMember: "mia@example.com" });
+  expect(store.progress("replacement:wallet:old")).toMatchObject({
+    stage: "awaiting_login",
+    error: expect.stringContaining("history import"),
+  });
+  // The run finishes, and the pass after it merges the two.
+  store.saveProgress("backfill:wallet:new", { ...job, stage: "capture" });
+  await adoptPendingLinkedInReplacements();
+  expect(store.account("wallet:old")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "new" },
+  });
+  expect(store.account("wallet:new")).toBeNull();
+  const merged = store.progress<Record<string, unknown>>("replacement:wallet:old");
+  expect(merged).toMatchObject({ stage: "complete", newAccountId: "new" });
+  expect(merged?.error).toBeUndefined();
+});
