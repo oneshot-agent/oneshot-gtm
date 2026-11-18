@@ -1,4 +1,5 @@
 import { DomainSetupForm } from "./DomainSetupForm.tsx";
+import { GmailConnectHelp } from "./GmailConnectHelp.tsx";
 import { Explain } from "../primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
@@ -167,6 +168,7 @@ export function EmailTransportSection({
       saveLabel="Save pool changes"
       footerNote="cap, transport, removal and sender changes apply together on save"
     >
+      <GmailConnectHelp origin={window.location.origin} />
       {identities.length > 0 && (
         <div className="flex flex-col gap-2">
           <span className="ln-eyebrow">Sender identities</span>

@@ -7,15 +7,17 @@ import {
   registerGmailIdentity,
   saveGmailToken,
 } from "@oneshot-gtm/core";
-import { jsonResponse } from "../server.ts";
+import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { isAllowedHostOrigin } from "../members.ts";
 
 /**
  * Browser variant of `oneshot-gtm gmail auth`: /setup's "Connect Gmail"
  * button navigates to /start, Google consent redirects back to /callback on
- * this same local server, and the founder lands back on /setup with the
+ * this same server, and the member lands back on /setup with the
  * outcome in a query param. Opened on the host machine, the redirect URI is
  * a 127.0.0.1/localhost origin: valid for Desktop-type OAuth clients. A
- * member on an allowed host cannot complete it (docs/members.md).
+ * member on an allowed non-loopback host needs a Web client with this exact
+ * callback URI registered (docs/members.md).
  */
 
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -37,6 +39,17 @@ function clientCreds(): { clientId: string; clientSecret: string } | null {
   return clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
+function authOrigin(req: Request): string {
+  const url = new URL(req.url);
+  // The member gate has already authenticated the request. Tailscale
+  // preserves Host but terminates TLS before forwarding to this HTTP server.
+  // Never take a replacement host from forwarding headers or alter loopback.
+  if (isAllowedHostOrigin(url.origin) && req.headers.get("x-forwarded-proto") === "https") {
+    url.protocol = "https:";
+  }
+  return url.origin;
+}
+
 export function startGmailAuthRoute(req: Request): Response {
   const creds = clientCreds();
   if (!creds) {
@@ -48,7 +61,7 @@ export function startGmailAuthRoute(req: Request): Response {
   }
   prune();
   const url = new URL(req.url);
-  const redirectUri = `${url.origin}/api/gmail/auth/callback`;
+  const redirectUri = `${authOrigin(req)}/api/gmail/auth/callback`;
   const state = randomUUID();
   // `?purpose=calendar` (used by the /setup calendar picker's "Connect a
   // calendar-only mailbox" affordance): a mailbox connected purely to read
@@ -62,11 +75,34 @@ export function startGmailAuthRoute(req: Request): Response {
 
 export async function gmailAuthCallbackRoute(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  const origin = authOrigin(req);
   const backToSetup = (outcome: string): Response =>
-    Response.redirect(`${url.origin}/setup?gmailAuth=${encodeURIComponent(outcome)}`, 302);
+    Response.redirect(`${origin}/setup?gmailAuth=${encodeURIComponent(outcome)}`, 302);
+  const authError = (message: string): Response => {
+    if (
+      !isLoopbackOrigin(origin) &&
+      /redirect_uri_mismatch|redirect[^\n]*\b(?:rejected|mismatch|loopback)\b|loopback[^\n]*redirect/i.test(
+        message,
+      )
+    ) {
+      return backToSetup(
+        `error:Google rejected the Gmail redirect. Add ${origin}/api/gmail/auth/callback to a Google Cloud Web application OAuth client's Authorized redirect URIs, save that Web client's ID and secret in Setup → Credentials, then retry. A Desktop client cannot use this address.`,
+      );
+    }
+    return backToSetup(`error:${message.slice(0, 140)}`);
+  };
 
   const consentError = url.searchParams.get("error");
-  if (consentError) return backToSetup(`error:${consentError}`);
+  if (consentError) {
+    // Preserve loopback's existing error text. Remote invalid_request errors
+    // carry the Desktop client's loopback restriction in error_description.
+    if (isLoopbackOrigin(origin)) return backToSetup(`error:${consentError}`);
+    return authError(
+      consentError === "invalid_request"
+        ? `${consentError}: ${url.searchParams.get("error_description") ?? ""}`
+        : consentError,
+    );
+  }
 
   const state = url.searchParams.get("state") ?? "";
   const pending = pendingStates.get(state);
@@ -110,8 +146,6 @@ export async function gmailAuthCallbackRoute(req: Request): Promise<Response> {
     });
     return backToSetup(`ok:${emailAddress}`);
   } catch (err) {
-    return backToSetup(
-      `error:${((err as Error).message ?? "token exchange failed").slice(0, 140)}`,
-    );
+    return authError((err as Error).message ?? "token exchange failed");
   }
 }
