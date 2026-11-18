@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type {
   CallBrief,
@@ -45,6 +45,7 @@ import {
   beginCall,
   localTimeNow,
   outcomeTitle,
+  bridgedStep,
   stepOfLog,
   windowHint,
   type CallTimer,
@@ -65,6 +66,8 @@ export const briefKey = (row: Pick<CallListRow, "prospectId" | "playName">) => [
   row.playName,
 ];
 export const callKey = (id: number | null) => ["call", id];
+/** A start in flight for this prospect: shared, so a panel opened again meanwhile sees it. */
+const startKey = (prospectId: number) => ["call-start", prospectId];
 
 /**
  * Log one call and move on: posts the outcome, then opens the next row in
@@ -222,15 +225,21 @@ export function DialPanel({
   const connectedSec = useElapsed(useConnectedAt(call));
 
   const ring = useMutation({
-    mutationFn: () =>
-      api.startCall({
+    mutationKey: startKey(row.prospectId),
+    // The cache writes run here, not in onSuccess: they still happen when
+    // this panel was closed meanwhile, so the one opened next resumes it.
+    mutationFn: async () => {
+      const c = await api.startCall({
         prospectId: row.prospectId,
         ...(row.playName ? { playName: row.playName } : {}),
-      }),
+      });
+      qc.setQueryData(callKey(c.id), c);
+      void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
+      return c;
+    },
     // A new call gets a blank draft. A refused start keeps the draft, so it
     // can still be saved for the call before.
     onSuccess: (c) => {
-      qc.setQueryData(callKey(c.id), c);
       setStartedId(c.id);
       setRingPhone(row.phone);
       // The page's started call: the row's step now, and a new save id.
@@ -238,6 +247,10 @@ export function DialPanel({
       dispatch({ kind: "reset", holdUntil: defaultHoldUntil() });
     },
   });
+  const startingElsewhere = useIsMutating({ mutationKey: startKey(row.prospectId) }) > 0;
+  const starting = ring.isPending || startingElsewhere;
+  // The member says the call is over while its state cannot be read.
+  const [endedByMember, setEndedByMember] = useState<number | null>(null);
   const hangUp = useMutation({
     mutationFn: (id: number) => api.hangUpCall(id),
     onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
@@ -305,10 +318,6 @@ export function DialPanel({
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
   });
-  // The step its log names, as for a tel: call (Call pressed here, else the
-  // panel's opening snapshot); a bridged call reopened from another play's
-  // row names none and lets the server judge its step.
-  const sameRowCall = !call || (call.playName ?? null) === (row.playName ?? null);
   const bridgedOpts = call
     ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
     : null;
@@ -317,7 +326,7 @@ export function DialPanel({
     bridgedOpts
       ? {
           ...bridgedOpts,
-          ...(sameRowCall ? stepOfLog(started, opened) : {}),
+          ...(call ? bridgedStep(call, row.playName, started, opened) : {}),
           clientKey: saveKey,
           commitments: commitmentsToSend(call?.suggestion ?? null, commitments, masked),
         }
@@ -329,10 +338,14 @@ export function DialPanel({
           clientKey: saveKey,
         },
   );
+  // Until the history says whether a bridged call is waiting here, a save
+  // would log a separate tel: call next to it.
+  const checking = callsMe.data?.bridgeReady === true && history.data === undefined;
   const holdSave = saveHeld(call, {
-    pollFailed: live.error != null,
-    starting: ring.isPending,
+    starting,
     discarding: discard.isPending && discard.variables === call?.id,
+    checking,
+    endedByMember: call != null && endedByMember === call.id,
   });
   const submit = () => {
     if (request && !holdSave && !save.isPending) save.mutate({ req: request, timer: startedAt });
@@ -390,7 +403,7 @@ export function DialPanel({
               onStart={startTel}
               onRefresh={onRefresh}
               onRing={() => ring.mutate()}
-              ringing={ring.isPending}
+              ringing={starting}
               className="h-8 px-3 text-[13px]"
             />
           )}
@@ -429,6 +442,7 @@ export function DialPanel({
             recording={startRecording.isPending}
             onDeclineConsent={() => discard.mutate(call.id)}
             declineDisabled={discard.isPending}
+            onEndedByMember={() => setEndedByMember(call.id)}
           />
         </section>
       )}
@@ -519,11 +533,15 @@ export function DialPanel({
         )}
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[11px] text-ink-faint">
-            {ring.isPending
+            {starting
               ? "starting the call…"
-              : holdSave
-                ? "save once the call ends"
-                : "1–0 pick · ↵ save · ⌘↵ from the note"}
+              : checking
+                ? history.error
+                  ? "couldn't check for a call to log against; retry under calls"
+                  : "checking for a call to log against…"
+                : holdSave
+                  ? "save once the call ends"
+                  : "1–0 pick · ↵ save · ⌘↵ from the note"}
           </span>
           <Button
             size="sm"
@@ -788,6 +806,7 @@ export function BridgeCallView({
   recording,
   onDeclineConsent,
   declineDisabled,
+  onEndedByMember,
 }: {
   call: CallRecordView;
   /** The prospect's first name, as the page shows it (masked in privacy mode). */
@@ -807,6 +826,8 @@ export function BridgeCallView({
   /** "always" mode: delete the recording, the prospect refused it. */
   onDeclineConsent: () => void;
   declineDisabled: boolean;
+  /** The call's state cannot be read: the member says it is over, so Save may go. */
+  onEndedByMember?: () => void;
 }) {
   const live = isLive(call);
   const s = call.suggestion;
@@ -841,11 +862,30 @@ export function BridgeCallView({
         )}
       </div>
       {pollError && (
-        <div className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
           couldn't read the call · {pollError.message}
+          {live && onEndedByMember && (
+            <Button variant="ghost" size="sm" onClick={onEndedByMember}>
+              I've hung up — let me save
+            </Button>
+          )}
         </div>
       )}
-      {fromAnswer && <ConsentLine label="Say this first, the call is recorded" />}
+      {fromAnswer && (
+        <ConsentLine label="Say this first, the call is recorded">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="mt-2"
+            disabled={declineDisabled}
+            onClick={onDeclineConsent}
+            title="Hangs up and deletes the recording and transcript"
+            {...readOnly}
+          >
+            They didn't agree — hang up and delete it
+          </Button>
+        </ConsentLine>
+      )}
       {call.status === "connected" && record === "ask" && call.transcriptStatus === "none" && (
         <ConsentLine label="Ask first; nothing is recorded until you press Record">
           <Button

@@ -24,24 +24,49 @@ export function isLive(call: Pick<CallRecordView, "status"> | null | undefined):
 }
 
 /**
- * Save (button and Enter) waits while the call still rings or is connected,
- * unless reading it keeps failing, and while Call is starting a new one: the
- * draft may be about to belong to the new call.
+ * Save (button and Enter) waits while the call still rings or is connected
+ * (a failed read proves nothing; the member says it is over with
+ * `endedByMember`), while Call is starting a new one or the panel is still
+ * looking for one to log against, and while this call's recording is being
+ * deleted: the draft may still hold its transcript.
  */
 export function saveHeld(
   call: Pick<CallRecordView, "status"> | null | undefined,
-  opts: { pollFailed: boolean; starting: boolean; discarding?: boolean },
+  opts: { starting: boolean; discarding?: boolean; checking?: boolean; endedByMember?: boolean },
 ): boolean {
-  // A delete of this call's recording in flight: the draft may still hold its transcript.
-  return (isLive(call) && !opts.pollFailed) || opts.starting || opts.discarding === true;
+  return (
+    (isLive(call) && opts.endedByMember !== true) ||
+    opts.starting ||
+    opts.discarding === true ||
+    opts.checking === true
+  );
 }
 
-/** The next read of this call: fast while live, slower for the transcript, then none. */
+/** How long after a call ends the panel waits for its suggestion before it stops asking. */
+const SUGGESTION_WAIT_MS = 30 * 60_000;
+
+/**
+ * The next read of this call: fast while live, slower for the transcript and
+ * for a suggestion still being written from a ready one, then none.
+ */
 export function bridgePollMs(
-  call: Pick<CallRecordView, "status" | "transcriptStatus"> | undefined,
+  call:
+    | Pick<
+        CallRecordView,
+        "status" | "transcriptStatus" | "transcript" | "suggestion" | "startedAt" | "durationSec"
+      >
+    | undefined,
+  now: number = Date.now(),
 ): number | false {
   if (!call || isLive(call)) return LIVE_POLL_MS;
-  return call.transcriptStatus === "pending" ? TRANSCRIPT_POLL_MS : false;
+  if (call.transcriptStatus === "pending") return TRANSCRIPT_POLL_MS;
+  const ended = Date.parse(call.startedAt) + (call.durationSec ?? 0) * 1000;
+  const writing =
+    call.transcriptStatus === "ready" &&
+    call.suggestion == null &&
+    (call.transcript?.length ?? 0) > 0 &&
+    now - ended < SUGGESTION_WAIT_MS;
+  return writing ? TRANSCRIPT_POLL_MS : false;
 }
 
 /** "Dana" from "Dana Reyes"; "them" when there is no name. */

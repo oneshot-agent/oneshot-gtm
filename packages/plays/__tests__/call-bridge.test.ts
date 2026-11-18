@@ -1337,6 +1337,28 @@ describe("declined recordings that are slow or failing to delete", () => {
   });
 });
 
+describe("two members verifying one number at once", () => {
+  it("holds the number for the first before Twilio is asked", async () => {
+    getSharedDb().addMember({ email: "mia@example.com", role: "member" });
+    try {
+      let second: unknown = null;
+      const bridge = fakeBridge({
+        isVerified: vi.fn(async () => {
+          second = await verifyMemberPhone("mia@example.com", MEMBER, {
+            bridge: fakeBridge(),
+          }).catch((e: unknown) => e);
+          return false;
+        }),
+      });
+      expect((await verifyMemberPhone(null, MEMBER, { bridge })).status).toBe("verifying");
+      expect(second).toMatchObject({ status: 409 });
+      expect(callsMe("mia@example.com", { bridge }).phone.status).toBe("none");
+    } finally {
+      getSharedDb().removeMember("mia@example.com");
+    }
+  });
+});
+
 describe("a failed phone needs a fresh Verify", () => {
   it("stays failed even once Twilio lists the number", async () => {
     const bridge = fakeBridge();

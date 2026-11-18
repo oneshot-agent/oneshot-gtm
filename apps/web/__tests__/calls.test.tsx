@@ -244,7 +244,11 @@ describe("Calls page", () => {
 
   it("puts a Call button that rings your phone in the panel when the bridge is set", () => {
     const html = page(data({ dialMode: "bridge" }), 1);
-    expect(html).toMatch(/<button[^>]*title="Rings your phone, then theirs"[^>]*>.*Call<\/button>/);
+    const button =
+      /<button([^>]*)title="Rings your phone, then theirs"([^>]*)>.*?Call<\/button>/.exec(html);
+    expect(button).not.toBeNull();
+    // Enabled: inside the window, and not a demo.
+    expect(`${button![1]}${button![2]}`).not.toContain('disabled=""');
     expect(html).not.toContain("Ring my phone");
     expect(html).not.toContain("tel:");
   });

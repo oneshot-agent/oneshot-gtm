@@ -315,6 +315,22 @@ export interface CallTimer {
 }
 
 /**
+ * The step a bridged call's log names: none for a call placed from the call
+ * list (whatever is due by now); the row's (`stepOfLog`) when the call is
+ * this row's play; nothing for another play's, so the server judges it by
+ * the call's own play.
+ */
+export function bridgedStep(
+  call: { playName: string | null },
+  rowPlay: string | null,
+  timer: Pick<CallTimer, "currentStep" | "enrolledAt"> | null | undefined,
+  opened: Pick<CallListRow, "currentStep" | "enrolledAt">,
+): { currentStep?: number | null; enrolledAt?: string | null } {
+  if (call.playName == null) return { currentStep: null };
+  return call.playName === rowPlay ? stepOfLog(timer, opened) : {};
+}
+
+/**
  * The step a log names: the one the row was on when Call was pressed, else
  * the one it was on when the panel opened (a refresh may have moved it since).
  */

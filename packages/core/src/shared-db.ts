@@ -1607,6 +1607,42 @@ export class SharedDb {
     return this.memberPhone(input.member)!;
   }
 
+  /**
+   * Hold `phone` for `member` as being verified, unless another active
+   * member (or the unlisted local owner, '') holds it. Checked and written
+   * under one write lock, so two workspaces never both claim one number
+   * while the provider is asked. False when someone else holds it.
+   */
+  reserveMemberPhone(member: string, phone: string): boolean {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const held = this.db
+        .query<{ one: number }, [string, string]>(
+          `SELECT 1 AS one FROM member_phones
+            WHERE phone = ? AND member <> ? AND status <> 'failed'
+              AND (member = '' OR member IN (SELECT email FROM members WHERE removed_at IS NULL))
+            LIMIT 1`,
+        )
+        .get(phone, member);
+      if (held) {
+        this.db.exec("ROLLBACK");
+        return false;
+      }
+      this.db.run(
+        `INSERT INTO member_phones(member, phone, status, validation_code, verified_at, error, updated_at)
+         VALUES(?, ?, 'verifying', NULL, NULL, NULL, ?)
+         ON CONFLICT(member) DO UPDATE SET phone = excluded.phone, status = 'verifying',
+           validation_code = NULL, verified_at = NULL, error = NULL, updated_at = excluded.updated_at`,
+        [member, phone, new Date().toISOString()],
+      );
+      this.db.exec("COMMIT");
+      return true;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   /** The members (keys) whose phone is `phone`, verified or being verified. */
   memberPhoneHolders(phone: string): string[] {
     return this.db

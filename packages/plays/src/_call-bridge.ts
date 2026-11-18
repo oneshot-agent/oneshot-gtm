@@ -165,11 +165,12 @@ export async function verifyMemberPhone(
   if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
   const shared = getSharedDb();
   const member = memberPhoneKey(email);
-  // A caller ID verified for one member must never be claimable by another without a code.
-  if (heldByAnother(member, phone))
-    throw new CallBridgeRequestError("that number is another member's phone", 409);
   const own = shared.memberPhone(member);
   if (own?.phone === phone && own.status === "verified") return memberPhoneView(email);
+  // A caller ID verified for one member must never be claimable by another
+  // without a code: reserved before the provider is asked.
+  if (!shared.reserveMemberPhone(member, phone))
+    throw new CallBridgeRequestError("that number is another member's phone", 409);
   try {
     const listed = await bridge.isVerified(phone);
     // This member's own code was typed: the challenge they started is done.

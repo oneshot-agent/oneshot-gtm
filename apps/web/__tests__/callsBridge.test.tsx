@@ -39,7 +39,7 @@ import {
   TRANSCRIPT_POLL_MS,
   transcriptTurns,
 } from "../src/lib/bridgeCall.ts";
-import { dialReducer, logCallRequest, type DialState } from "../src/lib/dialler.ts";
+import { bridgedStep, dialReducer, logCallRequest, type DialState } from "../src/lib/dialler.ts";
 import {
   phoneInputError,
   pollVerification,
@@ -252,8 +252,40 @@ describe("bridged call logic", () => {
 
   it("holds Save while this call's recording is being deleted", () => {
     const ended = call({ status: "ended" });
-    expect(saveHeld(ended, { pollFailed: false, starting: false, discarding: true })).toBe(true);
-    expect(saveHeld(ended, { pollFailed: false, starting: false, discarding: false })).toBe(false);
+    expect(saveHeld(ended, { starting: false, discarding: true })).toBe(true);
+    expect(saveHeld(ended, { starting: false, discarding: false })).toBe(false);
+    // Still looking for a call to log against.
+    expect(saveHeld(undefined, { starting: false, checking: true })).toBe(true);
+  });
+
+  it("keeps Save held on a live call whose read fails, until the member says it is over", () => {
+    const live = call({ status: "connected" });
+    expect(saveHeld(live, { starting: false })).toBe(true);
+    expect(saveHeld(live, { starting: false, endedByMember: true })).toBe(false);
+  });
+
+  it("polls a ready transcript until its suggestion arrives, for a while", () => {
+    const ready = call({
+      status: "ended",
+      transcriptStatus: "ready",
+      transcript,
+      durationSec: 60,
+      startedAt: "2026-11-18T16:00:00Z",
+    });
+    const at = Date.parse("2026-11-18T16:05:00Z");
+    expect(bridgePollMs(ready, at)).toBe(TRANSCRIPT_POLL_MS);
+    expect(bridgePollMs({ ...ready, suggestion }, at)).toBe(false);
+    expect(bridgePollMs({ ...ready, transcript: [] }, at)).toBe(false);
+    expect(bridgePollMs(ready, at + 60 * 60_000)).toBe(false);
+  });
+
+  it("logs a call placed from the call list against no step, and another play's against none named", () => {
+    const opened = { currentStep: 2, enrolledAt: "e1" };
+    expect(bridgedStep({ playName: null }, "renewals", null, opened)).toEqual({
+      currentStep: null,
+    });
+    expect(bridgedStep({ playName: "renewals" }, "renewals", null, opened)).toEqual(opened);
+    expect(bridgedStep({ playName: "renewals" }, "other", null, opened)).toEqual({});
   });
 
   it("keeps the resumed call while a newer one shows up, and stops resuming after a tel: call", () => {
@@ -281,9 +313,8 @@ describe("bridged call logic", () => {
   });
 
   it("holds Save while the call is live or Call is starting one", () => {
-    const idle = { pollFailed: false, starting: false };
+    const idle = { starting: false };
     expect(saveHeld(call({ status: "connected" }), idle)).toBe(true);
-    expect(saveHeld(call({ status: "connected" }), { ...idle, pollFailed: true })).toBe(false);
     expect(saveHeld(call({ status: "ended" }), idle)).toBe(false);
     expect(saveHeld(call({ status: "ended" }), { ...idle, starting: true })).toBe(true);
     expect(saveHeld(undefined, { ...idle, starting: true })).toBe(true);
@@ -637,6 +668,13 @@ describe("the dial panel in bridge mode", () => {
     expect(recordingDeletable(call({ transcriptStatus: "ready", discard: "pending" }))).toBe(false);
     expect(recordingDeletable(call({ transcriptStatus: "none" }))).toBe(false);
     expect(recordingDeletable(call({ transcriptStatus: "failed" }))).toBe(true);
+  });
+
+  it("offers to hang up and delete while a call recorded from the answer is live", () => {
+    const html = panelWith(
+      call({ status: "connected", transcriptStatus: "pending", recordedFrom: "answer" }),
+    );
+    expect(html).toContain("They didn&#x27;t agree — hang up and delete it");
   });
 
   it("says a deletion still finishing was requested, not done", () => {
