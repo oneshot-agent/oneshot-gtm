@@ -70,6 +70,11 @@ it("gives a member only the accounts they connected, with their threads and mess
   expect(store.messages("ana-account", "ana-account-chat", BEN)).toEqual([]);
   expect(store.allMessages("ana-account", BEN)).toEqual([]);
   expect(store.messages("ben-account", "ben-account-chat", BEN)).toHaveLength(1);
+  expect(store.threadForConversation("ana-account", "ana-account-chat", BEN)).toBeNull();
+  expect(store.threadForConversation("ben-account", "ben-account-chat", BEN)?.key).toBe(
+    "linkedin:ben-account:ben-account-chat",
+  );
+  expect(store.threadForConversation("ana-account", "ana-account-chat")).not.toBeNull();
   expect(store.visibleTo("ana-account", BEN)).toBe(false);
   expect(store.visibleTo("ben-account", BEN)).toBe(true);
 });
@@ -99,7 +104,13 @@ it("keeps the member who connected an account through later saves", () => {
   expect(store.account("ben-account")?.ownerMember).toBe("ben@example.com");
   store.saveAccount({ ...store.account("ben-account")!, ownerMember: "ana@example.com" });
   expect(store.account("ben-account")?.ownerMember).toBe("ben@example.com");
-  // An account nobody is recorded for takes the first member named.
+});
+
+it("leaves an account saved with no member with the install's owner when a member saves it later", () => {
+  // ben signs in to the account that was connected before members existed.
   store.saveAccount({ ...store.account("old-account")!, ownerMember: "ben@example.com" });
-  expect(store.visibleTo("old-account", BEN)).toBe(true);
+  expect(store.account("old-account")?.ownerMember).toBeUndefined();
+  expect(store.visibleTo("old-account", BEN)).toBe(false);
+  expect(store.visibleTo("old-account", ANA)).toBe(true);
+  expect(store.messages("old-account", "old-account-chat", BEN)).toEqual([]);
 });

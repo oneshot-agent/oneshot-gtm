@@ -63,8 +63,9 @@ export async function adoptLinkedInConnections(): Promise<void> {
               key: old?.key ?? `${intent.wallet}:${account.id}`,
               wallet: intent.wallet,
               workspace: intent.workspace,
-              // A new account belongs to the member who connected it; a known one keeps its owner.
-              ownerMember: old?.ownerMember || intent.ownerMember || undefined,
+              // A new account belongs to the member who connected it. A known one keeps its
+              // owner: one with no member recorded stays the install owner's.
+              ownerMember: (old ? old.ownerMember : intent.ownerMember) || undefined,
               account,
               sync: old?.sync ?? null,
               checkedAt: old?.checkedAt ?? null,

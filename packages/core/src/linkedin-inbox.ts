@@ -272,9 +272,10 @@ export class LinkedInInboxStore {
   }
   saveAccount(a: LinkedInAccountRecord) {
     const saved = this.account(a.key);
-    // The member who connected an account stays its owner: a later save never drops or replaces them.
-    const ownerMember = saved?.ownerMember || a.ownerMember;
-    if (ownerMember) a = { ...a, ownerMember };
+    // Whoever a record was first saved for stays its owner: a later save never
+    // drops or replaces them. A record saved with no member is the install
+    // owner's, so a member who connects that account afterwards does not claim it.
+    if (saved) a = { ...a, ownerMember: saved.ownerMember || undefined };
     const removedAt = saved?.removedAt ?? a.removedAt;
     if (removedAt)
       a = { ...a, removedAt, account: { ...a.account, status: "revoked", allowed_actions: [] } };
@@ -365,7 +366,12 @@ export class LinkedInInboxStore {
     const t: LinkedInThreadRecord | null = r ? JSON.parse(r.data) : null;
     return t && (!viewer || this.visibleTo(t.accountKey, viewer)) ? t : null;
   }
-  threadForConversation(accountKey: string, conversationId: string): LinkedInThreadRecord | null {
+  threadForConversation(
+    accountKey: string,
+    conversationId: string,
+    viewer?: LinkedInViewer,
+  ): LinkedInThreadRecord | null {
+    if (viewer && !this.visibleTo(accountKey, viewer)) return null;
     const row = this.db
       .query<{ data: string }, [string, string]>(
         "SELECT data FROM conversations WHERE account_key=? AND json_extract(data,'$.conversation.id')=?",
@@ -377,7 +383,7 @@ export class LinkedInInboxStore {
         "SELECT thread_key FROM conversation_aliases WHERE account_key=? AND conversation_id=?",
       )
       .get(accountKey, conversationId);
-    return alias ? this.thread(alias.thread_key) : null;
+    return alias ? this.thread(alias.thread_key, viewer) : null;
   }
   saveConversation(
     accountKey: string,

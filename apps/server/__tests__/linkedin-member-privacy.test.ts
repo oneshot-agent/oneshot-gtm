@@ -273,4 +273,32 @@ describe("background jobs", () => {
       false,
     );
   });
+
+  it("keeps an account connected before members existed with the owner when a member signs in to it", async () => {
+    seedMembers();
+    const known = ["olive", "mia", "old"].map((id) => store.account(`wallet:${id}`)!.account);
+    // The same LinkedIn account, as the provider returns it after Mia's sign-in.
+    const again = { ...store.account("wallet:old")!.account, allowed_actions: ["read"] };
+    sdk.mockImplementation(async (_workspace, op) => {
+      if (op.kind === "connect") return { intent_id: "intent-old", url: "https://example.com/in" };
+      if (op.kind === "connection") return { status: "completed", account: again };
+      if (op.kind === "accounts")
+        return { wallet: "wallet", accounts: known.map((a) => (a.id === "old" ? again : a)) };
+      if (op.kind === "status") return { sync_state: "complete", coverage: { complete: true } };
+      if (op.kind === "conversations") return { conversations: [], has_more: false };
+      if (op.kind === "messages") return { messages: [], has_more: false };
+      throw new Error(`Unexpected operation ${op.kind}`);
+    });
+    expect((await repliesLinkedInRoute(post(as(MIA), { action: "connect" }))).status).toBe(200);
+    await refreshLinkedInInbox(true);
+
+    // The sign-in was adopted onto the existing record, which stays the owner's.
+    expect(store.account("wallet:old")?.account.allowed_actions).toEqual(["read"]);
+    expect(store.account("wallet:old")?.ownerMember).toBeUndefined();
+    const mia = await list(as(MIA));
+    expect(mia.threads.map((t) => t.key)).toEqual([miaThread]);
+    expect(mia.accounts.find((a) => a.key === "wallet:old")).toMatchObject({ mine: false });
+    expect(JSON.stringify(mia)).not.toContain("A private note on the old account");
+    expect((await list(as(OWNER))).threads.map((t) => t.key)).toContain(oldThread);
+  });
 });
