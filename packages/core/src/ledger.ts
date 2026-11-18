@@ -153,7 +153,10 @@ import {
   callAllowedIds as callsCallAllowedIds,
   clearProspectPhone as callsClearProspectPhone,
   callPhone as callsCallPhone,
+  claimBridge as callsClaimBridge,
   failStaleTranscripts as callsFailStaleTranscripts,
+  finishRecordingDiscard as callsFinishRecordingDiscard,
+  markRecordingDiscard as callsMarkRecordingDiscard,
   getBridgedCall as callsGetBridgedCall,
   listBridgedCallsToAdvance as callsListBridgedCallsToAdvance,
   updateBridgedCall as callsUpdateBridgedCall,
@@ -1933,6 +1936,21 @@ export class Ledger {
     limit: number,
   ): ReturnType<typeof callsListBridgedCallsToAdvance> {
     return callsListBridgedCallsToAdvance(this.db, sinceIso, limit);
+  }
+
+  /** @see ledger-calls.ts#claimBridge */
+  claimBridge(id: number, atIso: string): boolean {
+    return callsClaimBridge(this.db, id, atIso);
+  }
+
+  /** @see ledger-calls.ts#markRecordingDiscard */
+  markRecordingDiscard(id: number): void {
+    callsMarkRecordingDiscard(this.db, id);
+  }
+
+  /** @see ledger-calls.ts#finishRecordingDiscard */
+  finishRecordingDiscard(id: number): void {
+    callsFinishRecordingDiscard(this.db, id);
   }
 
   /** @see ledger-calls.ts#failStaleTranscripts */

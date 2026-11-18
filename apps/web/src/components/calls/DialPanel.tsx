@@ -8,7 +8,7 @@ import type {
   CurrentMember,
   LogCallRequest,
 } from "@oneshot-gtm/shared-types";
-import { Loader2, Phone, PhoneOff, RotateCw } from "lucide-react";
+import { Loader2, Phone, PhoneOff, RotateCw, X } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
@@ -20,7 +20,9 @@ import {
   CONSENT_LINE,
   firstName,
   isLive,
+  keptCommitments,
   resumableCall,
+  saveHeld,
   speakerLabel,
   suggestedPick,
   transcriptTurns,
@@ -169,7 +171,7 @@ export function DialPanel({
   const bridged = dialMode === "bridge";
   const [startedId, setStartedId] = useState<number | null>(null);
   const [ringPhone, setRingPhone] = useState<string | null>(null);
-  const resumed = bridged && startedId == null ? resumableCall(history.data?.calls) : null;
+  const resumed = bridged && startedId == null ? resumableCall(history.data?.calls, me.data) : null;
   const callId = startedId ?? resumed?.id ?? null;
   const live = useQuery({
     queryKey: callKey(callId),
@@ -187,10 +189,13 @@ export function DialPanel({
         prospectId: row.prospectId,
         ...(row.playName ? { playName: row.playName } : {}),
       }),
+    // A new call gets a blank draft. A refused start keeps the draft, so it
+    // can still be saved for the call before.
     onSuccess: (c) => {
       qc.setQueryData(callKey(c.id), c);
       setStartedId(c.id);
       setRingPhone(row.phone);
+      dispatch({ kind: "reset", holdUntil: defaultHoldUntil() });
     },
   });
   const hangUp = useMutation({
@@ -205,6 +210,20 @@ export function DialPanel({
   }, [call?.status, qc, row.prospectId]);
   const suggestedFor = useRef<number | null>(null);
   const suggestion = suggestedPick(call?.suggestion ?? null);
+  // The suggested promises the member removed before saving, for this call only.
+  const [removed, setRemoved] = useState<{ callId: number; indices: number[] } | null>(null);
+  const commitments = keptCommitments(
+    call?.suggestion ?? null,
+    removed && removed.callId === call?.id ? removed.indices : [],
+  );
+  const hasCommitments = (call?.suggestion?.commitments.length ?? 0) > 0;
+  const removeCommitment = (index: number) => {
+    if (!call) return;
+    setRemoved((r) => ({
+      callId: call.id,
+      indices: [...(r && r.callId === call.id ? r.indices : []), index],
+    }));
+  };
   const suggestionCallId = call?.suggestion ? call.id : null;
   useEffect(() => {
     if (suggestionCallId == null || suggestedFor.current === suggestionCallId) return;
@@ -228,26 +247,36 @@ export function DialPanel({
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
   });
+  const bridgedOpts = call
+    ? { durationSec: call.durationSec, playName: row.playName, phone: ringPhone, callId: call.id }
+    : null;
   const request = logCallRequest(
     state,
-    bridged && call
-      ? {
-          durationSec: call.durationSec,
-          playName: row.playName,
-          phone: ringPhone,
-          callId: call.id,
-        }
+    bridged && bridgedOpts
+      ? { ...bridgedOpts, commitments: hasCommitments ? commitments.map((c) => c.text) : null }
       : {
           durationSec: startedAt != null ? elapsed : null,
           playName: row.playName,
           phone: dialledNumber(startedAt, dialledPhone, row.phone),
         },
   );
-  // A call still ringing or connected is logged once it ends (a read that
-  // keeps failing doesn't hold Save).
-  const holdSave = callLive && !live.error;
+  const holdSave = saveHeld(call, { pollFailed: live.error != null, starting: ring.isPending });
   const submit = () => {
     if (request && !holdSave && !save.isPending) save.mutate({ req: request, timer: startedAt });
+  };
+  // The prospect refused recording: log the outcome without anything the
+  // transcript wrote (the suggested note, the promises); the server deletes
+  // the recording and the transcript.
+  const declineRequest =
+    bridged && bridgedOpts
+      ? logCallRequest(
+          { ...state, note: noteIsSuggested(state.note, suggestion) ? "" : state.note },
+          { ...bridgedOpts, consentDeclined: true },
+        )
+      : null;
+  const declineConsent = () => {
+    if (declineRequest && !holdSave && !save.isPending)
+      save.mutate({ req: declineRequest, timer: startedAt });
   };
 
   // Digits pick an outcome, Enter saves. The latest submit, without re-binding.
@@ -267,8 +296,7 @@ export function DialPanel({
 
   const localTime = localTimeNow(row.local, now);
   const flags = brief.data?.flags ?? [];
-  const noteSuggested =
-    suggestion != null && suggestion.note !== "" && state.note === suggestion.note;
+  const noteSuggested = noteIsSuggested(state.note, suggestion);
   const needsPhone =
     !bridged &&
     callsMe.data?.bridgeReady === true &&
@@ -336,6 +364,10 @@ export function DialPanel({
             onHangUp={() => hangUp.mutate(call.id)}
             pollError={live.error}
             masked={masked}
+            commitments={commitments}
+            onRemoveCommitment={removeCommitment}
+            onDeclineConsent={declineConsent}
+            declineDisabled={!declineRequest || holdSave || save.isPending}
           />
         </section>
       )}
@@ -426,7 +458,11 @@ export function DialPanel({
         )}
         <div className="mt-3 flex items-center justify-between gap-3">
           <span className="font-mono text-[11px] text-ink-faint">
-            {holdSave ? "save once the call ends" : "1–0 pick · ↵ save · ⌘↵ from the note"}
+            {ring.isPending
+              ? "starting the call…"
+              : holdSave
+                ? "save once the call ends"
+                : "1–0 pick · ↵ save · ⌘↵ from the note"}
           </span>
           <Button
             size="sm"
@@ -658,6 +694,10 @@ export function BridgeCallView({
   onHangUp,
   pollError,
   masked,
+  commitments,
+  onRemoveCommitment,
+  onDeclineConsent,
+  declineDisabled,
 }: {
   call: CallRecordView;
   /** The prospect's first name, as the page shows it (masked in privacy mode). */
@@ -668,9 +708,17 @@ export function BridgeCallView({
   onHangUp: () => void;
   pollError: Error | null;
   masked: boolean;
+  /** The suggested promises still kept; Save sends these. */
+  commitments: { text: string; index: number }[];
+  onRemoveCommitment: (index: number) => void;
+  /** Log the outcome and delete the recording: the prospect refused it. */
+  onDeclineConsent: () => void;
+  /** No outcome picked yet, or a save is running. */
+  declineDisabled: boolean;
 }) {
   const live = isLive(call);
   const s = call.suggestion;
+  const recorded = record || call.transcriptStatus !== "none";
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -678,7 +726,7 @@ export function BridgeCallView({
           {live && call.status !== "connected" && (
             <Loader2 size={12} className="animate-spin text-ink-muted" />
           )}
-          {bridgeStatusLine(call.status, first)}
+          {bridgeStatusLine(call.status, first, call.statusReason)}
           {call.status === "connected" && (
             <span className="font-mono text-[13px] text-ink-cream" aria-label="call time">
               {formatDuration(connectedSec)}
@@ -724,10 +772,25 @@ export function BridgeCallView({
       {!live && s && (
         <div className="text-[12.5px] text-ink-cream-2">
           <span className="text-ink-spend-2">Suggested:</span> {outcomeTitle(s.outcome)}
-          {!masked && s.commitments.length > 0 && (
-            <div className="mt-1">
-              <span className="text-ink-muted">You promised: </span>
-              {s.commitments.join("; ")}
+          {!masked && commitments.length > 0 && (
+            <div className="mt-1.5">
+              <span className="text-ink-muted">You promised:</span>
+              <ul className="mt-1 flex flex-col gap-1">
+                {commitments.map((c) => (
+                  <li key={c.index} className="flex items-start gap-1.5">
+                    <span className="flex-1">{c.text}</span>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveCommitment(c.index)}
+                      className="mt-0.5 text-ink-faint hover:text-ink-cream"
+                      aria-label={`Remove: ${c.text}`}
+                      title="Not a promise: leave it out"
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -736,8 +799,31 @@ export function BridgeCallView({
         call.transcriptStatus === "ready" &&
         call.transcript &&
         (masked ? <PrivacyHidden /> : <TranscriptView transcript={call.transcript} />)}
+      {call.status === "ended" && recorded && (
+        <div>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={declineDisabled}
+            onClick={onDeclineConsent}
+            title={
+              declineDisabled
+                ? "Pick the outcome first"
+                : "Log the outcome and delete the recording and transcript"
+            }
+            {...readOnly}
+          >
+            They didn't agree to recording — delete it
+          </Button>
+        </div>
+      )}
     </div>
   );
+}
+
+/** The note is still the one the transcript suggested (untouched, not empty). */
+function noteIsSuggested(note: string, suggestion: { note: string } | null): boolean {
+  return suggestion != null && suggestion.note !== "" && note === suggestion.note;
 }
 
 /** Both sides of the call, You and Them, one paragraph per turn. */

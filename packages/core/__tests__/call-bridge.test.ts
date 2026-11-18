@@ -11,8 +11,11 @@ import {
   CallBridgeError,
   TRANSCRIPTION_SERVICE_NAME,
   TwilioBridge,
-  bridgeTwiml,
+  HOLD_SECONDS,
+  answeredByMachine,
   callBridgeFromEnv,
+  dialTwiml,
+  holdTwiml,
   mapBridgeStatus,
   resolveTranscriptionService,
   transcriptLines,
@@ -70,38 +73,31 @@ describe("keys", () => {
 });
 
 describe("TwiML", () => {
-  it("says who is called, dials from the member's number, and records both channels", () => {
+  it("holds the member's leg after saying who is called, dialling nobody", () => {
+    expect(holdTwiml("Dana at Acme")).toBe(
+      `<Response><Say>Calling Dana at Acme</Say><Pause length="${HOLD_SECONDS}"/></Response>`,
+    );
+    expect(holdTwiml(null)).toBe(`<Response><Pause length="${HOLD_SECONDS}"/></Response>`);
+    expect(holdTwiml("x")).not.toContain("<Dial");
+  });
+
+  it("dials from the member's number and records both channels", () => {
     expect(
-      bridgeTwiml({
-        memberPhone: "+15550001111",
-        prospectPhone: "+15126531187",
-        sayName: "Dana at Acme",
-        record: true,
-      }),
+      dialTwiml({ memberPhone: "+15550001111", prospectPhone: "+15126531187", record: true }),
     ).toBe(
-      '<Response><Say>Calling Dana at Acme</Say><Dial callerId="+15550001111" answerOnBridge="true" record="record-from-answer-dual"><Number>+15126531187</Number></Dial></Response>',
+      '<Response><Dial callerId="+15550001111" answerOnBridge="true" record="record-from-answer-dual"><Number>+15126531187</Number></Dial></Response>',
     );
   });
 
   it("escapes every value and leaves recording out when off", () => {
-    const xml = bridgeTwiml({
-      memberPhone: '+1"><Hangup/>',
-      prospectPhone: "+1<2>",
-      sayName: `Dana "D" O'Neil at R&D <Labs>`,
-      record: false,
-    });
-    expect(xml).toContain(
+    expect(holdTwiml(`Dana "D" O'Neil at R&D <Labs>`)).toContain(
       "<Say>Calling Dana &quot;D&quot; O&apos;Neil at R&amp;D &lt;Labs&gt;</Say>",
     );
+    const xml = dialTwiml({ memberPhone: '+1"><Hangup/>', prospectPhone: "+1<2>", record: false });
     expect(xml).toContain('callerId="+1&quot;&gt;&lt;Hangup/&gt;"');
     expect(xml).toContain("<Number>+1&lt;2&gt;</Number>");
     expect(xml).not.toContain("record=");
     expect(xml).not.toContain("<Hangup/>");
-    expect(
-      bridgeTwiml({ memberPhone: "+1", prospectPhone: "+2", sayName: null, record: false }),
-    ).toBe(
-      '<Response><Dial callerId="+1" answerOnBridge="true"><Number>+2</Number></Dial></Response>',
-    );
     expect(xmlEscape("a&b")).toBe("a&amp;b");
   });
 });
@@ -133,47 +129,82 @@ describe("status mapping", () => {
         child("in-progress", { start_time: "Wed, 18 Nov 2026 15:00:00 +0000" }),
         now,
       ),
-    ).toEqual({ status: "connected", durationSec: 30, answered: true });
+    ).toEqual({ status: "connected", durationSec: 30, answered: true, answeredBy: null });
     expect(
       mapBridgeStatus(parent("completed", "95"), child("completed", { duration: "80" }), now),
-    ).toEqual({ status: "ended", durationSec: 80, answered: true });
+    ).toEqual({ status: "ended", durationSec: 80, answered: true, answeredBy: null });
     expect(mapBridgeStatus(parent("completed", "20"), child("no-answer"), now)).toEqual({
       status: "ended",
       durationSec: null,
       answered: false,
+      answeredBy: null,
     });
+    expect(
+      mapBridgeStatus({ ...parent("in-progress"), answered_by: "machine_start" }, null, now)
+        .answeredBy,
+    ).toBe("machine_start");
     expect(mapBridgeStatus(parent("canceled"), null, now).status).toBe("ended");
     expect(mapBridgeStatus(parent("no-answer"), null, now).status).toBe("failed");
     expect(mapBridgeStatus(parent("busy"), null, now).status).toBe("failed");
     expect(mapBridgeStatus(parent("failed"), null, now).status).toBe("failed");
   });
+
+  it("counts a voicemail or a fax as a machine, a person or an undecided detection as not", () => {
+    for (const m of ["machine_start", "machine_end_beep", "machine", "fax"])
+      expect(answeredByMachine(m)).toBe(true);
+    for (const h of ["human", "unknown", null]) expect(answeredByMachine(h)).toBe(false);
+  });
 });
 
 describe("TwilioBridge", () => {
-  it("starts a call with To and From the member's phone and the TwiML inline, on Basic auth", async () => {
+  it("starts the member's leg with machine detection and the hold, then dials on connect", async () => {
     const { fetch, sent } = fakeFetch({
       [`POST ${ACCOUNT}/Calls.json`]: () => ({
         status: 201,
         body: { sid: "CA1", status: "queued" },
       }),
+      [`POST ${ACCOUNT}/Calls/CA1.json`]: () => ({ body: { sid: "CA1", status: "in-progress" } }),
     });
     const bridge = new TwilioBridge(KEYS, { fetch });
-    expect(
-      await bridge.start({
-        memberPhone: "+15550001111",
-        prospectPhone: "+15126531187",
-        sayName: "Dana & co",
-        record: true,
-      }),
-    ).toEqual({ callSid: "CA1" });
+    expect(await bridge.start({ memberPhone: "+15550001111", sayName: "Dana & co" })).toEqual({
+      callSid: "CA1",
+    });
     expect(sent[0]!.form).toEqual({
       To: "+15550001111",
       From: "+15550001111",
-      Twiml:
-        '<Response><Say>Calling Dana &amp; co</Say><Dial callerId="+15550001111" answerOnBridge="true" record="record-from-answer-dual"><Number>+15126531187</Number></Dial></Response>',
+      MachineDetection: "Enable",
+      Twiml: `<Response><Say>Calling Dana &amp; co</Say><Pause length="${HOLD_SECONDS}"/></Response>`,
     });
     expect(sent[0]!.auth).toBe(`Basic ${Buffer.from("SK456:s3cret").toString("base64")}`);
+    await bridge.connect("CA1", {
+      memberPhone: "+15550001111",
+      prospectPhone: "+15126531187",
+      record: true,
+    });
+    expect(sent[1]!.form).toEqual({
+      Twiml:
+        '<Response><Dial callerId="+15550001111" answerOnBridge="true" record="record-from-answer-dual"><Number>+15126531187</Number></Dial></Response>',
+    });
     expect(JSON.stringify(sent)).not.toMatch(/Url|StatusCallback/);
+  });
+
+  it("puts one deadline on the request and its body; a write that times out is uncertain", async () => {
+    const hanging = (async (_url: string, init?: RequestInit) => {
+      const signal = init!.signal!;
+      // Headers arrive at once, the body never does: the deadline must cover the read.
+      const body = new ReadableStream({
+        start(controller) {
+          signal.addEventListener("abort", () => controller.error(signal.reason));
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch;
+    const bridge = new TwilioBridge(KEYS, { fetch: hanging, timeoutMs: 20 });
+    const write = await bridge.start({ memberPhone: "+1555", sayName: null }).catch((e) => e);
+    expect(write).toMatchObject({ uncertain: true, status: 0 });
+    expect(write.message).toMatch(/may or may not/);
+    const read = await bridge.status("CA1").catch((e) => e);
+    expect(read).toMatchObject({ uncertain: false, status: 0 });
   });
 
   it("reads the parent and its child for the status", async () => {
@@ -189,6 +220,7 @@ describe("TwilioBridge", () => {
       status: "ended",
       durationSec: 61,
       answered: true,
+      answeredBy: null,
     });
     expect(sent.map((s) => s.url)).toEqual([
       `${ACCOUNT}/Calls/CA1.json`,
@@ -230,6 +262,35 @@ describe("TwilioBridge", () => {
     expect(sent[0]!.form).toMatchObject({ PhoneNumber: "+15550001111" });
     expect(await bridge.isVerified("+15550001111")).toBe(true);
     expect(await bridge.isVerified("+15550002222")).toBe(false);
+  });
+
+  it("removes a caller ID by its SID, and nothing when the number is not one", async () => {
+    const { fetch, sent } = fakeFetch({
+      [`GET ${ACCOUNT}/OutgoingCallerIds.json?PhoneNumber=%2B15550001111`]: () => ({
+        body: { outgoing_caller_ids: [{ sid: "PN1", phone_number: "+15550001111" }] },
+      }),
+      [`GET ${ACCOUNT}/OutgoingCallerIds.json?PhoneNumber=%2B15550002222`]: () => ({
+        body: { outgoing_caller_ids: [] },
+      }),
+      [`DELETE ${ACCOUNT}/OutgoingCallerIds/PN1.json`]: () => ({ status: 204, body: null }),
+    });
+    const bridge = new TwilioBridge(KEYS, { fetch });
+    await bridge.removeCallerId("+15550001111");
+    await bridge.removeCallerId("+15550002222");
+    expect(sent.filter((s) => s.method === "DELETE").map((s) => s.url)).toEqual([
+      `${ACCOUNT}/OutgoingCallerIds/PN1.json`,
+    ]);
+  });
+
+  it("deletes a recording and a transcript, a missing one being fine", async () => {
+    const { fetch, sent } = fakeFetch({
+      [`DELETE ${ACCOUNT}/Recordings/RE1.json`]: () => ({ status: 204, body: null }),
+      [`DELETE ${INTEL}/Transcripts/GT1`]: () => ({ status: 404, body: { message: "gone" } }),
+    });
+    const bridge = new TwilioBridge(KEYS, { fetch });
+    await bridge.deleteRecording("RE1");
+    await bridge.deleteTranscript("GT1");
+    expect(sent.map((s) => s.method)).toEqual(["DELETE", "DELETE"]);
   });
 
   it("throws the provider's message and code", async () => {
@@ -299,6 +360,7 @@ describe("TwilioBridge", () => {
 
   it("transcribes the recording with channel 1 as the member and 2 as the prospect", async () => {
     const { fetch, sent } = fakeFetch({
+      [`GET ${INTEL}/Transcripts?SourceSid=RE1`]: () => ({ body: { transcripts: [] } }),
       [`POST ${INTEL}/Transcripts`]: () => ({
         status: 201,
         body: { sid: "GT1", status: "queued" },
@@ -310,14 +372,56 @@ describe("TwilioBridge", () => {
         serviceSid: "GA1",
       }),
     ).toEqual({ transcriptSid: "GT1" });
-    expect(sent[0]!.form["ServiceSid"]).toBe("GA1");
-    expect(JSON.parse(sent[0]!.form["Channel"]!)).toEqual({
+    const create = sent.find((s) => s.method === "POST")!;
+    expect(create.form["ServiceSid"]).toBe("GA1");
+    expect(JSON.parse(create.form["Channel"]!)).toEqual({
       media_properties: { source_sid: "RE1" },
       participants: [
         { channel_participant: 1, role: "Agent" },
         { channel_participant: 2, role: "Customer" },
       ],
     });
+  });
+
+  it("reuses the recording's transcript instead of making a second one", async () => {
+    const existing = fakeFetch({
+      [`GET ${INTEL}/Transcripts?SourceSid=RE1`]: () => ({
+        body: { transcripts: [{ sid: "GT7" }] },
+      }),
+    });
+    expect(
+      await new TwilioBridge(KEYS, { fetch: existing.fetch }).transcribe({
+        recordingSid: "RE1",
+        serviceSid: "GA1",
+      }),
+    ).toEqual({ transcriptSid: "GT7" });
+    expect(existing.sent.filter((s) => s.method === "POST")).toEqual([]);
+
+    // The create failed (or timed out) after Twilio made it: the list finds it.
+    let lists = 0;
+    const raced = fakeFetch({
+      [`GET ${INTEL}/Transcripts?SourceSid=RE1`]: () => ({
+        body: { transcripts: ++lists === 1 ? [] : [{ sid: "GT8" }] },
+      }),
+      [`POST ${INTEL}/Transcripts`]: () => ({ status: 500, body: { message: "oops" } }),
+    });
+    expect(
+      await new TwilioBridge(KEYS, { fetch: raced.fetch }).transcribe({
+        recordingSid: "RE1",
+        serviceSid: "GA1",
+      }),
+    ).toEqual({ transcriptSid: "GT8" });
+
+    const refused = fakeFetch({
+      [`GET ${INTEL}/Transcripts?SourceSid=RE1`]: () => ({ body: { transcripts: [] } }),
+      [`POST ${INTEL}/Transcripts`]: () => ({ status: 400, body: { message: "too short" } }),
+    });
+    await expect(
+      new TwilioBridge(KEYS, { fetch: refused.fetch }).transcribe({
+        recordingSid: "RE1",
+        serviceSid: "GA1",
+      }),
+    ).rejects.toMatchObject({ message: "Twilio: too short" });
   });
 
   it("polls the transcript, then reads its sentences across pages with speaker labels", async () => {
@@ -402,14 +506,37 @@ describe("member phones and the install's service", () => {
   });
 
   it("keeps the transcription service install-wide: configured, else kept, else ensured once", async () => {
+    getSharedDb().setInstallSetting("calls.transcriptionServiceSid", "GAlegacy");
     const ensureService = vi.fn(async () => "GA9");
-    const bridge = { ensureService } as unknown as TwilioBridge;
+    const bridge = { accountSid: "AC1", ensureService } as unknown as TwilioBridge;
     expect(await resolveTranscriptionService(bridge, "GAconfig")).toBe("GAconfig");
     expect(ensureService).not.toHaveBeenCalled();
+    // A value kept without its account is not trusted.
     expect(await resolveTranscriptionService(bridge, null)).toBe("GA9");
     expect(await resolveTranscriptionService(bridge, null)).toBe("GA9");
     expect(ensureService).toHaveBeenCalledTimes(1);
-    expect(getSharedDb().installSetting("calls.transcriptionServiceSid")).toBe("GA9");
+    expect(JSON.parse(getSharedDb().installSetting("calls.transcriptionServiceSid")!)).toEqual({
+      accountSid: "AC1",
+      sid: "GA9",
+    });
+    // Keys for another account get that account's service, which replaces the kept one.
+    const other = {
+      accountSid: "AC2",
+      ensureService: vi.fn(async () => "GA2"),
+    } as unknown as TwilioBridge;
+    expect(await resolveTranscriptionService(other, null)).toBe("GA2");
+    expect(JSON.parse(getSharedDb().installSetting("calls.transcriptionServiceSid")!)).toEqual({
+      accountSid: "AC2",
+      sid: "GA2",
+    });
+  });
+
+  it("lists who holds a phone, past failed attempts", () => {
+    const db = getSharedDb();
+    db.setMemberPhone({ member: "", phone: "+15550009999", status: "verified" });
+    db.setMemberPhone({ member: "mia@example.com", phone: "+15550009999", status: "failed" });
+    expect(db.memberPhoneHolders("+15550009999")).toEqual([""]);
+    expect(db.memberPhoneHolders("+15550000000")).toEqual([]);
   });
 });
 
@@ -429,7 +556,16 @@ describe("migration v28", () => {
     const id = first.upsertProspect({ name: "Dana", email: "d@a.test" });
     first.close();
     const raw = new Database(dbPath);
-    for (const col of ["member", "status", "transcript_sid"])
+    for (const col of [
+      "member",
+      "status",
+      "transcript_sid",
+      "status_reason",
+      "member_phone",
+      "bridged_at",
+      "commitments_json",
+      "discard_recording",
+    ])
       raw.exec(`ALTER TABLE calls DROP COLUMN ${col}`);
     raw
       .prepare(
@@ -446,7 +582,18 @@ describe("migration v28", () => {
         (c) => c.name,
       );
       check.close();
-      expect(cols).toEqual(expect.arrayContaining(["member", "status", "transcript_sid"]));
+      expect(cols).toEqual(
+        expect.arrayContaining([
+          "member",
+          "status",
+          "transcript_sid",
+          "status_reason",
+          "member_phone",
+          "bridged_at",
+          "commitments_json",
+          "discard_recording",
+        ]),
+      );
       expect(ledger.listCallsForProspect(id)).toEqual([
         expect.objectContaining({ outcome: "no_answer", member: null, provider: "tel" }),
       ]);
@@ -465,6 +612,9 @@ describe("migration v28", () => {
         status: "ringing_founder",
         transcriptStatus: "pending",
       });
+      // Exactly one claim wins the hold.
+      expect(ledger.claimBridge(bridged, "2026-11-18T10:00:05Z")).toBe(true);
+      expect(ledger.claimBridge(bridged, "2026-11-18T10:00:06Z")).toBe(false);
       ledger.updateBridgedCall(bridged, { status: "ended", durationSec: 42, transcriptSid: "GT1" });
       expect(ledger.getBridgedCall(bridged)).toMatchObject({
         callSid: "CA1",
@@ -474,5 +624,73 @@ describe("migration v28", () => {
     } finally {
       ledger.close();
     }
+  });
+});
+
+describe("bridged call rows", () => {
+  let ledger: Ledger;
+  beforeEach(() => {
+    ledger = new Ledger(":memory:");
+  });
+  afterEach(() => ledger.close());
+
+  const bridged = (prospectId: number) =>
+    ledger.insertCall({
+      prospectId,
+      startedAt: "2026-11-18T10:00:00Z",
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+  const toAdvance = () =>
+    ledger.listBridgedCallsToAdvance("2026-11-17T00:00:00Z", 10).map((c) => c.view.id);
+
+  it("does not pick an empty ready transcript up again", () => {
+    const id = bridged(ledger.upsertProspect({ name: "Dana", email: "d@a.test" }));
+    ledger.updateBridgedCall(id, { transcript: [], transcriptStatus: "ready" });
+    expect(toAdvance()).toEqual([]);
+    ledger.updateBridgedCall(id, {
+      transcript: [{ speaker: "prospect", text: "Hi", startSec: 0 }],
+    });
+    expect(toAdvance()).toEqual([id]);
+  });
+
+  it("keeps a declined recording out: transcript writes are dropped until it is deleted", () => {
+    const id = bridged(ledger.upsertProspect({ name: "Dana", email: "d@a.test" }));
+    ledger.updateBridgedCall(id, {
+      recordingSid: "RE1",
+      transcript: [{ speaker: "prospect", text: "Hi", startSec: 0 }],
+      transcriptStatus: "ready",
+    });
+    ledger.markRecordingDiscard(id);
+    expect(ledger.getCall(id)).toMatchObject({ transcriptStatus: "none", transcript: null });
+    ledger.updateBridgedCall(id, {
+      status: "failed",
+      transcript: [{ speaker: "prospect", text: "late", startSec: 0 }],
+      transcriptStatus: "ready",
+    });
+    expect(ledger.getCall(id)).toMatchObject({
+      status: "failed",
+      transcriptStatus: "none",
+      transcript: null,
+    });
+    expect(ledger.getBridgedCall(id)).toMatchObject({ discardPending: true, recordingSid: "RE1" });
+    expect(toAdvance()).toEqual([id]);
+    ledger.finishRecordingDiscard(id);
+    expect(ledger.getBridgedCall(id)).toMatchObject({ discardPending: false, recordingSid: null });
+    expect(toAdvance()).toEqual([]);
+  });
+
+  it("stores the promises the member confirmed, keeping them when a later log sends none", () => {
+    const prospectId = ledger.upsertProspect({ name: "Dana", email: "d@a.test" });
+    const id = bridged(prospectId);
+    ledger.setCallOutcome({ id, prospectId, outcome: "interested", commitments: ["send terms"] });
+    expect(ledger.getCall(id)?.commitments).toEqual(["send terms"]);
+    ledger.setCallOutcome({ id, prospectId, outcome: "meeting_booked" });
+    expect(ledger.getCall(id)?.commitments).toEqual(["send terms"]);
+    ledger.setCallOutcome({ id, prospectId, outcome: "meeting_booked", commitments: [] });
+    expect(ledger.getCall(id)?.commitments).toEqual([]);
+    expect(ledger.getCall(bridged(prospectId))).not.toHaveProperty("commitments");
   });
 });

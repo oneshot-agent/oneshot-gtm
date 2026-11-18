@@ -158,7 +158,9 @@ describe("buildFollowUpEmail — PRIOR CALLS", () => {
         startedAt: "2026-11-17T10:00:00Z",
         outcome: "interested",
         note: "Wants a pilot for two teams.",
-        suggestion: { outcome: "interested", note: "", commitments: ["send terms Thursday"] },
+        commitments: ["send terms Thursday"],
+        // The model's own promises were never confirmed: they stay out.
+        suggestion: { outcome: "interested", note: "", commitments: ["invented promise"] },
       },
       { startedAt: "2026-11-16T10:00:00Z", outcome: null, note: null, suggestion: null },
     ];
@@ -173,6 +175,7 @@ describe("buildFollowUpEmail — PRIOR CALLS", () => {
     expect(user).toContain("- 2026-11-17: Interested");
     expect(user).toContain("Note: Wants a pilot for two teams.");
     expect(user).toContain("Promised: send terms Thursday");
+    expect(user).not.toContain("invented promise");
     expect(user).not.toContain("2026-11-16");
   });
 

@@ -142,7 +142,9 @@ export type DialAction =
   | { kind: "note"; note: string }
   | { kind: "hold"; holdUntil: string }
   /** The transcript's suggestion: fills only a panel the member hasn't touched. */
-  | { kind: "suggest"; outcome: CallOutcome; note: string };
+  | { kind: "suggest"; outcome: CallOutcome; note: string }
+  /** A new call started: a blank draft for it. */
+  | { kind: "reset"; holdUntil: string };
 
 export function dialReducer(state: DialState, action: DialAction): DialState {
   if (action.kind === "pick") return { ...state, outcome: action.outcome };
@@ -150,6 +152,7 @@ export function dialReducer(state: DialState, action: DialAction): DialState {
     return state.outcome == null && !state.note.trim()
       ? { ...state, outcome: action.outcome, note: action.note }
       : state;
+  if (action.kind === "reset") return { outcome: null, note: "", holdUntil: action.holdUntil };
   if (action.kind === "note") return { ...state, note: action.note };
   return { ...state, holdUntil: action.holdUntil };
 }
@@ -223,6 +226,10 @@ export function logCallRequest(
     phone?: string | null;
     /** The bridged call this logs against. */
     callId?: number | null;
+    /** A bridged call: the suggested promises kept; null when there were none to keep. */
+    commitments?: string[] | null;
+    /** A bridged call whose recording the prospect refused: the server deletes it. */
+    consentDeclined?: boolean;
   },
 ): LogCallRequest | null {
   if (!state.outcome) return null;
@@ -234,6 +241,8 @@ export function logCallRequest(
     ...(opts.durationSec != null ? { durationSec: Math.round(opts.durationSec) } : {}),
     ...(opts.playName ? { playName: opts.playName } : {}),
     ...(opts.phone ? { phone: opts.phone } : {}),
+    ...(opts.commitments ? { commitments: opts.commitments } : {}),
+    ...(opts.consentDeclined ? { consentDeclined: true as const } : {}),
     ...(state.outcome === "not_now" && state.holdUntil ? { holdUntil: state.holdUntil } : {}),
   };
 }

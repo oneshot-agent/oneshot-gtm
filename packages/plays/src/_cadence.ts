@@ -3905,7 +3905,7 @@ const callLine = (text: string, max: number) => text.replace(/\s+/g, " ").trim()
 /**
  * The calls the founder logged with this prospect (any play), newest first,
  * for a follow-up's history: when, the outcome, the founder's note and what
- * was promised on the call (the confirmed call's suggestion). A call with no
+ * was promised on the call (only what the member confirmed). A call with no
  * outcome logged is not confirmed, and one that reached someone else says
  * nothing about this person. Null when none is left.
  */
@@ -3922,7 +3922,7 @@ export function buildPriorCallsBlock(prospectId: number): string | null {
     const title = CALL_OUTCOMES.find((o) => o.outcome === c.outcome)?.title ?? c.outcome;
     lines.push(`- ${c.startedAt.slice(0, 10)}: ${title}`);
     if (c.note?.trim()) lines.push(`  Note: ${callLine(c.note, 400)}`);
-    const promised = c.suggestion?.commitments?.filter((x) => x.trim()) ?? [];
+    const promised = c.commitments?.filter((x) => x.trim()) ?? [];
     if (promised.length > 0)
       lines.push(`  Promised: ${promised.map((x) => callLine(x, 200)).join("; ")}`);
   }

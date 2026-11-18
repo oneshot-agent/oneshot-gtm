@@ -18,6 +18,10 @@ const SERVICE_SETTING = "calls.transcriptionServiceSid";
 
 /** Most sentence pages read for one transcript (1,000 sentences a page). */
 const MAX_SENTENCE_PAGES = 10;
+/** One deadline per request, the body read included. */
+const REQUEST_TIMEOUT_MS = 15_000;
+/** How long the member's answered leg waits for a poll to dial the prospect before it hangs up. */
+export const HOLD_SECONDS = 40;
 
 export interface TwilioKeys {
   accountSid: string;
@@ -41,6 +45,8 @@ export class CallBridgeError extends Error {
     readonly status: number,
     /** The provider's error code, when it gave one (Twilio's 5-digit codes). */
     readonly code: number | null = null,
+    /** A write that timed out: the provider may or may not have done it. */
+    readonly uncertain = false,
   ) {
     super(message);
     this.name = "CallBridgeError";
@@ -56,6 +62,13 @@ export interface BridgeCallState {
   durationSec: number | null;
   /** True once the prospect's leg answered. */
   answered: boolean;
+  /** Who picked up the member's leg (`human`, `machine_start`, `fax`, `unknown`); null while detecting. */
+  answeredBy: string | null;
+}
+
+/** Answering-machine detection says the member's own phone did not pick up: a voicemail or a fax. */
+export function answeredByMachine(answeredBy: string | null): boolean {
+  return answeredBy != null && (answeredBy.startsWith("machine") || answeredBy === "fax");
 }
 
 export interface BridgeRecording {
@@ -75,30 +88,34 @@ export interface BridgeTranscript {
 
 /** What the routes and the sweep need from a call provider. */
 export interface CallBridge {
-  /** Ask the provider to verify `phone` as a caller ID: it rings the phone and the member types `validationCode`. */
+  /** The provider account the keys act on. */
+  readonly accountSid: string;
   verifyCallerId(phone: string): Promise<{ validationCode: string }>;
-  /** True once `phone` is a verified caller ID on the account. */
   isVerified(phone: string): Promise<boolean>;
-  /** Ring `memberPhone`, then dial `prospectPhone` from it. Returns the call's SID. */
-  start(input: {
-    memberPhone: string;
-    prospectPhone: string;
-    /** Said to the member when they pick up ("Calling {sayName}"); null for none. */
-    sayName: string | null;
-    record: boolean;
-  }): Promise<{ callSid: string }>;
+  /** Remove `phone` as a caller ID, so using it again needs a fresh code. */
+  removeCallerId(phone: string): Promise<void>;
+  /** Ring the member, detect who answers and hold (`holdTwiml`); nobody else is dialled yet. */
+  start(input: { memberPhone: string; sayName: string | null }): Promise<{ callSid: string }>;
+  /** Dial the prospect on a held call (`dialTwiml`). */
+  connect(
+    callSid: string,
+    input: { memberPhone: string; prospectPhone: string; record: boolean },
+  ): Promise<void>;
   status(callSid: string): Promise<BridgeCallState>;
   hangUp(callSid: string): Promise<void>;
-  /** The call's recording, or null while there is none. */
   recording(callSid: string): Promise<BridgeRecording | null>;
+  deleteRecording(recordingSid: string): Promise<void>;
   /** The install's transcription service SID, created when the account has none. */
   ensureService(): Promise<string>;
-  /** Start transcribing a recording. Returns the transcript's SID. */
+  /** Start transcribing a recording, or find the transcript an earlier request made. */
   transcribe(input: {
     recordingSid: string;
     serviceSid: string;
   }): Promise<{ transcriptSid: string }>;
   transcript(transcriptSid: string): Promise<BridgeTranscript>;
+  /** Every transcript made from a recording. */
+  transcriptsFor(recordingSid: string): Promise<string[]>;
+  deleteTranscript(transcriptSid: string): Promise<void>;
 }
 
 /** XML text and attribute escaping, for every value put into TwiML. */
@@ -112,26 +129,26 @@ export function xmlEscape(value: string): string {
 }
 
 /**
- * The call's instructions, sent inline (`Twiml`), so the provider never
- * fetches anything from this server: say who is being called, then dial
- * them with the member's number as the caller ID. `answerOnBridge` keeps the
- * member hearing ringing until the prospect answers. Recorded from the
- * answer on two channels when `record`.
+ * The member's leg while it is judged: the provider runs answering-machine
+ * detection before this starts, then the member hears who is being called
+ * and holds until a poll dials the prospect (`dialTwiml`). Nobody polling
+ * means the hold runs out and the call ends with no one dialled.
  */
-export function bridgeTwiml(input: {
+export function holdTwiml(sayName: string | null): string {
+  const say = sayName?.replace(/\s+/g, " ").trim();
+  return `<Response>${say ? `<Say>Calling ${xmlEscape(say)}</Say>` : ""}<Pause length="${HOLD_SECONDS}"/></Response>`;
+}
+
+/** Dial the prospect with the member's number as the caller ID, recorded on two channels when `record`. */
+export function dialTwiml(input: {
   memberPhone: string;
   prospectPhone: string;
-  sayName: string | null;
   record: boolean;
 }): string {
-  const say = input.sayName?.replace(/\s+/g, " ").trim();
   return [
-    "<Response>",
-    say ? `<Say>Calling ${xmlEscape(say)}</Say>` : "",
-    `<Dial callerId="${xmlEscape(input.memberPhone)}" answerOnBridge="true"`,
+    `<Response><Dial callerId="${xmlEscape(input.memberPhone)}" answerOnBridge="true"`,
     input.record ? ` record="record-from-answer-dual"` : "",
-    `><Number>${xmlEscape(input.prospectPhone)}</Number></Dial>`,
-    "</Response>",
+    `><Number>${xmlEscape(input.prospectPhone)}</Number></Dial></Response>`,
   ].join("");
 }
 
@@ -140,6 +157,7 @@ interface TwilioCall {
   status: string;
   duration?: string | number | null;
   start_time?: string | null;
+  answered_by?: string | null;
 }
 
 const RINGING = new Set(["queued", "initiated", "ringing"]);
@@ -162,6 +180,7 @@ export function mapBridgeStatus(
 ): BridgeCallState {
   const answered =
     child != null && (child.status === "in-progress" || child.status === "completed");
+  const answeredBy = parent.answered_by || null;
   const childDuration = (): number | null => {
     if (!child) return null;
     if (child.status === "in-progress") {
@@ -172,17 +191,18 @@ export function mapBridgeStatus(
     }
     return seconds(child.duration);
   };
-  if (RINGING.has(parent.status)) return { status: "ringing_founder", durationSec: null, answered };
+  if (RINGING.has(parent.status))
+    return { status: "ringing_founder", durationSec: null, answered, answeredBy };
   if (parent.status === "in-progress") {
     if (!child || RINGING.has(child.status))
-      return { status: "ringing_prospect", durationSec: null, answered };
+      return { status: "ringing_prospect", durationSec: null, answered, answeredBy };
     if (child.status === "in-progress")
-      return { status: "connected", durationSec: childDuration(), answered };
-    return { status: "ended", durationSec: childDuration(), answered };
+      return { status: "connected", durationSec: childDuration(), answered, answeredBy };
+    return { status: "ended", durationSec: childDuration(), answered, answeredBy };
   }
   if (parent.status === "completed" || parent.status === "canceled")
-    return { status: "ended", durationSec: childDuration(), answered };
-  return { status: "failed", durationSec: childDuration(), answered };
+    return { status: "ended", durationSec: childDuration(), answered, answeredBy };
+  return { status: "failed", durationSec: childDuration(), answered, answeredBy };
 }
 
 /**
@@ -216,13 +236,17 @@ export function transcriptLines(
 /** Twilio over REST, with `fetch` injectable for tests. */
 export class TwilioBridge implements CallBridge {
   private readonly fetchImpl: () => typeof fetch;
+  private readonly timeoutMs: number;
+  readonly accountSid: string;
 
   constructor(
     private readonly keys: TwilioKeys,
-    opts: { fetch?: typeof fetch } = {},
+    opts: { fetch?: typeof fetch; timeoutMs?: number } = {},
   ) {
     // Read at call time, so a test's stubbed global fetch is the one used.
     this.fetchImpl = () => opts.fetch ?? globalThis.fetch;
+    this.timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.accountSid = keys.accountSid;
   }
 
   private account(path: string): string {
@@ -230,16 +254,18 @@ export class TwilioBridge implements CallBridge {
   }
 
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     url: string,
     form?: Record<string, string>,
     opts: { allow404?: boolean } = {},
   ): Promise<T | null> {
     const auth = Buffer.from(`${this.keys.apiKeySid}:${this.keys.apiKeySecret}`).toString("base64");
     let res: Response;
+    let text: string;
     try {
       res = await this.fetchImpl()(url, {
         method,
+        signal: AbortSignal.timeout(this.timeoutMs),
         headers: {
           authorization: `Basic ${auth}`,
           accept: "application/json",
@@ -247,14 +273,22 @@ export class TwilioBridge implements CallBridge {
         },
         ...(form ? { body: new URLSearchParams(form).toString() } : {}),
       });
+      text = await res.text();
     } catch (err) {
+      const name = (err as Error).name;
+      if ((name === "TimeoutError" || name === "AbortError") && method !== "GET")
+        throw new CallBridgeError(
+          "Twilio did not answer in time, so it may or may not have done it",
+          0,
+          null,
+          true,
+        );
       throw new CallBridgeError(
         `Twilio could not be reached: ${(err as Error).message ?? "network error"}`,
         0,
       );
     }
     if (res.status === 404 && opts.allow404) return null;
-    const text = await res.text();
     let body: unknown = null;
     try {
       body = text ? JSON.parse(text) : null;
@@ -285,28 +319,52 @@ export class TwilioBridge implements CallBridge {
     return { validationCode: String(code) };
   }
 
-  async isVerified(phone: string): Promise<boolean> {
-    const body = await this.request<{ outgoing_caller_ids?: Array<{ phone_number?: unknown }> }>(
-      "GET",
-      this.account(`OutgoingCallerIds.json?PhoneNumber=${encodeURIComponent(phone)}`),
-    );
-    return (body?.outgoing_caller_ids ?? []).some((c) => c.phone_number === phone);
+  private async callerIds(phone: string): Promise<string[]> {
+    const body = await this.request<{
+      outgoing_caller_ids?: Array<{ sid?: unknown; phone_number?: unknown }>;
+    }>("GET", this.account(`OutgoingCallerIds.json?PhoneNumber=${encodeURIComponent(phone)}`));
+    return (body?.outgoing_caller_ids ?? [])
+      .filter((c) => c.phone_number === phone && typeof c.sid === "string")
+      .map((c) => c.sid as string);
   }
 
+  async isVerified(phone: string): Promise<boolean> {
+    return (await this.callerIds(phone)).length > 0;
+  }
+
+  async removeCallerId(phone: string): Promise<void> {
+    for (const sid of await this.callerIds(phone))
+      await this.request(
+        "DELETE",
+        this.account(`OutgoingCallerIds/${encodeURIComponent(sid)}.json`),
+        undefined,
+        { allow404: true },
+      );
+  }
+
+  /** `MachineDetection=Enable` is synchronous: the hold starts only once the provider knows who answered. */
   async start(input: {
     memberPhone: string;
-    prospectPhone: string;
     sayName: string | null;
-    record: boolean;
   }): Promise<{ callSid: string }> {
     const body = await this.request<{ sid?: unknown }>("POST", this.account("Calls.json"), {
       To: input.memberPhone,
       From: input.memberPhone,
-      Twiml: bridgeTwiml(input),
+      MachineDetection: "Enable",
+      Twiml: holdTwiml(input.sayName),
     });
     if (typeof body?.sid !== "string")
       throw new CallBridgeError("Twilio did not return a call", 502);
     return { callSid: body.sid };
+  }
+
+  async connect(
+    callSid: string,
+    input: { memberPhone: string; prospectPhone: string; record: boolean },
+  ): Promise<void> {
+    await this.request("POST", this.account(`Calls/${encodeURIComponent(callSid)}.json`), {
+      Twiml: dialTwiml(input),
+    });
   }
 
   private async call(callSid: string): Promise<TwilioCall> {
@@ -356,6 +414,15 @@ export class TwilioBridge implements CallBridge {
     };
   }
 
+  async deleteRecording(recordingSid: string): Promise<void> {
+    await this.request(
+      "DELETE",
+      this.account(`Recordings/${encodeURIComponent(recordingSid)}.json`),
+      undefined,
+      { allow404: true },
+    );
+  }
+
   async ensureService(): Promise<string> {
     const lookup = () =>
       this.request<{ sid?: unknown }>(
@@ -382,10 +449,23 @@ export class TwilioBridge implements CallBridge {
     throw new CallBridgeError("Twilio did not return a transcription service", 502);
   }
 
+  async transcriptsFor(recordingSid: string): Promise<string[]> {
+    const body = await this.request<{ transcripts?: Array<{ sid?: unknown }> }>(
+      "GET",
+      `${INTELLIGENCE}/Transcripts?SourceSid=${encodeURIComponent(recordingSid)}`,
+    );
+    return (body?.transcripts ?? [])
+      .map((t) => t.sid)
+      .filter((sid): sid is string => typeof sid === "string");
+  }
+
+  /** Looked up first and again after a failed create: one transcript per recording, even after a timeout. */
   async transcribe(input: {
     recordingSid: string;
     serviceSid: string;
   }): Promise<{ transcriptSid: string }> {
+    const existing = (await this.transcriptsFor(input.recordingSid))[0];
+    if (existing) return { transcriptSid: existing };
     const channel = {
       media_properties: { source_sid: input.recordingSid },
       participants: [
@@ -393,13 +473,29 @@ export class TwilioBridge implements CallBridge {
         { channel_participant: 2, role: "Customer" },
       ],
     };
-    const body = await this.request<{ sid?: unknown }>("POST", `${INTELLIGENCE}/Transcripts`, {
-      ServiceSid: input.serviceSid,
-      Channel: JSON.stringify(channel),
-    });
+    let body: { sid?: unknown } | null;
+    try {
+      body = await this.request<{ sid?: unknown }>("POST", `${INTELLIGENCE}/Transcripts`, {
+        ServiceSid: input.serviceSid,
+        Channel: JSON.stringify(channel),
+      });
+    } catch (err) {
+      const made = (await this.transcriptsFor(input.recordingSid))[0];
+      if (made) return { transcriptSid: made };
+      throw err;
+    }
     if (typeof body?.sid !== "string")
       throw new CallBridgeError("Twilio did not return a transcript", 502);
     return { transcriptSid: body.sid };
+  }
+
+  async deleteTranscript(transcriptSid: string): Promise<void> {
+    await this.request(
+      "DELETE",
+      `${INTELLIGENCE}/Transcripts/${encodeURIComponent(transcriptSid)}`,
+      undefined,
+      { allow404: true },
+    );
   }
 
   async transcript(transcriptSid: string): Promise<BridgeTranscript> {
@@ -430,16 +526,16 @@ export class TwilioBridge implements CallBridge {
 /** The bridge for this workspace's keys, or null when they are not all set. */
 export function callBridgeFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-  opts: { fetch?: typeof fetch } = {},
+  opts: { fetch?: typeof fetch; timeoutMs?: number } = {},
 ): CallBridge | null {
   const keys = twilioKeysFromEnv(env);
   return keys ? new TwilioBridge(keys, opts) : null;
 }
 
 /**
- * The transcription service to use: the workspace's configured one, else the
- * install's (kept in the shared database, as the provider account is
- * install-wide), else found or created on the account and kept.
+ * The configured service, else the install's kept one, else one found or
+ * created on the account. The kept SID names its account: keys for another
+ * account get that account's service, which then replaces it.
  */
 export async function resolveTranscriptionService(
   bridge: CallBridge,
@@ -447,9 +543,14 @@ export async function resolveTranscriptionService(
 ): Promise<string> {
   if (configured) return configured;
   const shared = getSharedDb();
-  const kept = shared.installSetting(SERVICE_SETTING);
-  if (kept) return kept;
+  let kept: { accountSid?: unknown; sid?: unknown } | null = null;
+  try {
+    kept = JSON.parse(shared.installSetting(SERVICE_SETTING) ?? "null");
+  } catch {
+    kept = null;
+  }
+  if (kept?.accountSid === bridge.accountSid && typeof kept.sid === "string") return kept.sid;
   const sid = await bridge.ensureService();
-  shared.setInstallSetting(SERVICE_SETTING, sid);
+  shared.setInstallSetting(SERVICE_SETTING, JSON.stringify({ accountSid: bridge.accountSid, sid }));
   return sid;
 }

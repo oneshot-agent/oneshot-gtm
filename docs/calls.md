@@ -64,13 +64,13 @@ Without it, Call opens a `tel:` link. With it, Call rings your own phone; when y
    TWILIO_API_KEY_SECRET=…
    ```
 
-2. Each member verifies their own phone in **Setup → Calls → Your phone**: type the mobile, press Verify, and type the 6-digit code on the screen when Twilio rings you. Your phone is yours across every workspace on the install; nobody else's Call rings it.
+2. Each member verifies their own phone in **Setup → Calls → Your phone**: type the mobile, press Verify, and type the 6-digit code on the screen when Twilio rings you. Your phone is yours across every workspace on the install; nobody else's Call rings it, and another member cannot add it. Removing it also removes it from Twilio, so using it again needs a new code.
 
 No webhook, tunnel or Twilio number is needed: the server asks Twilio for everything and polls. The transcription service is created on the first transcript and shared by every workspace.
 
-**While and after the call:** the dial panel shows ringing you, ringing them, connected, then ended. After hangup the recording is transcribed (usually within a few minutes) and your configured model proposes an outcome, a note and any promises made. Nothing is logged until you confirm it. If you close the tab, the server finishes the transcript on its own; one still missing after 6 hours is marked failed. Once confirmed, the note and promises go into the next follow-up email, so it picks up from the call.
+**While and after the call:** the dial panel shows ringing you, ringing them, connected, then ended. The prospect is dialled only once Twilio hears a person answer your phone and the open dial panel picks that up. If your phone goes to voicemail, the call is hung up and nobody else is dialled. If no dial panel or sweep reads the call within about 40 seconds of you answering, it hangs up without dialling anyone. After hangup the recording is transcribed (usually within a few minutes) and your configured model proposes an outcome, a note and any promises made. Nothing is logged until you confirm it. If you close the tab, the server finishes the transcript on its own; one still missing after 6 hours is marked failed. Once you confirm the call, your note and the promises you kept go into the next follow-up email, so it picks up from the call.
 
-**Cost per call (Twilio US list prices, October 2026):** two call legs at $0.014/min each, recording at $0.0025/min, transcription at $0.024/min: about $0.27 for a 5-minute call, plus one model completion for the suggestion.
+**Cost per call (Twilio US list prices, October 2026):** two call legs at $0.014/min each, answering-machine detection on your leg at $0.0075 a call, recording at $0.0025/min, transcription at $0.024/min: about $0.28 for a 5-minute call, plus one model completion for the suggestion.
 
 | Setting                          | Default       | What it does                                                                   |
 | -------------------------------- | ------------- | ------------------------------------------------------------------------------ |
@@ -80,7 +80,7 @@ No webhook, tunnel or Twilio number is needed: the server asks Twilio for everyt
 
 ## Recording consent
 
-Some states and countries require everyone on a call to agree to it being recorded. Getting that consent is the caller's responsibility: say so at the start ("I record my calls so I can take notes, is that OK?"), and hang up or stop if they say no. Set `record` off to place bridged calls without recording them.
+Some states and countries require everyone on a call to agree to it being recorded. Where they do, you, the caller, get that consent at the start of the call ("I record my calls so I can take notes, is that OK?"). Recording starts when the prospect answers. If they say no, end the call and press **They didn't agree to recording — delete it**: the recording and its transcript are deleted from Twilio and nothing of them is kept. To call without recording at all, set `record` off before you dial.
 
 ## Your responsibility
 

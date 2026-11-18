@@ -1558,6 +1558,16 @@ export class SharedDb {
     return this.memberPhone(input.member)!;
   }
 
+  /** The members (keys) whose phone is `phone`, verified or being verified. */
+  memberPhoneHolders(phone: string): string[] {
+    return this.db
+      .query<{ member: string }, [string]>(
+        "SELECT member FROM member_phones WHERE phone = ? AND status <> 'failed'",
+      )
+      .all(phone)
+      .map((r) => r.member);
+  }
+
   /** Forget a member's phone. False when none was set. */
   deleteMemberPhone(member: string): boolean {
     return this.db.run("DELETE FROM member_phones WHERE member = ?", [member]).changes === 1;

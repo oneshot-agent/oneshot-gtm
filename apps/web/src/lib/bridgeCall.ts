@@ -23,6 +23,18 @@ export function isLive(call: Pick<CallRecordView, "status"> | null | undefined):
   return s === "ringing_founder" || s === "ringing_prospect" || s === "connected";
 }
 
+/**
+ * Save (button and Enter) waits while the call still rings or is connected,
+ * unless reading it keeps failing, and while Call is starting a new one: the
+ * draft may be about to belong to the new call.
+ */
+export function saveHeld(
+  call: Pick<CallRecordView, "status"> | null | undefined,
+  opts: { pollFailed: boolean; starting: boolean },
+): boolean {
+  return (isLive(call) && !opts.pollFailed) || opts.starting;
+}
+
 /** The next read of this call: fast while live, slower for the transcript, then none. */
 export function bridgePollMs(
   call: Pick<CallRecordView, "status" | "transcriptStatus"> | undefined,
@@ -36,8 +48,19 @@ export function firstName(name: string | null | undefined): string {
   return name?.trim().split(/\s+/)[0] || "them";
 }
 
-/** The one line the panel shows for where the call is. */
-export function bridgeStatusLine(status: BridgeStatus | undefined, first: string): string {
+/** The one line the panel shows for where the call is, with the server's reason once it stops. */
+export function bridgeStatusLine(
+  status: BridgeStatus | undefined,
+  first: string,
+  reason?: string | null,
+): string {
+  const base = baseStatusLine(status, first);
+  return (status === "ended" || status === "failed") && reason?.trim()
+    ? `${base}: ${reason.trim()}`
+    : base;
+}
+
+function baseStatusLine(status: BridgeStatus | undefined, first: string): string {
   switch (status) {
     case "ringing_prospect":
       return `Calling ${first}…`;
@@ -79,32 +102,55 @@ export function transcriptTurns(
  * seen by a member.
  */
 export function callerLabel(member: string | null, me: CurrentMember | null | undefined): string {
-  if (me && (me.email ?? null) === member) return "you";
+  if (isOwnCall(member, me)) return "you";
   if (member == null) return "the owner";
   return member;
+}
+
+/**
+ * Whether the signed-in member placed this call: `member: null` is the
+ * install's unlisted local owner (whose /api/me email is null), anyone else
+ * matches by email. Unknown before /api/me answers.
+ */
+export function isOwnCall(member: string | null, me: CurrentMember | null | undefined): boolean {
+  return me != null && (me.email ?? null) === member;
 }
 
 /** A bridged call left unlogged this long ago is still picked up when the panel opens. */
 const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The bridged call the panel picks up when it opens: the newest one not yet
- * logged, from the last few hours. That keeps Hang up and the transcript
- * after a reload, or after the member opened someone else mid-call.
+ * The bridged call the panel picks up when it opens: the newest one this
+ * member placed and hasn't logged, from the last few hours. That keeps Hang
+ * up and the transcript after a reload, or after they opened someone else
+ * mid-call. Another member's call is never picked up (nor any before
+ * /api/me answers).
  */
 export function resumableCall(
   calls: CallRecordView[] | undefined,
+  me: CurrentMember | null | undefined,
   now: number = Date.now(),
 ): CallRecordView | null {
   const open = (calls ?? []).filter(
     (c) =>
       c.provider === "twilio" &&
+      isOwnCall(c.member ?? null, me) &&
       c.outcome == null &&
       c.status !== "failed" &&
       now - Date.parse(c.startedAt) < RESUME_WINDOW_MS,
   );
   open.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
   return open[0] ?? null;
+}
+
+/** The suggested promises the member kept: all of them but the ones they removed (by position). */
+export function keptCommitments(
+  suggestion: CallRecordView["suggestion"],
+  removed: readonly number[],
+): { text: string; index: number }[] {
+  return (suggestion?.commitments ?? [])
+    .map((text, index) => ({ text: text.trim(), index }))
+    .filter((c) => c.text && !removed.includes(c.index));
 }
 
 /** What the suggestion puts in the panel: its outcome and note, untouched until the member changes them. */

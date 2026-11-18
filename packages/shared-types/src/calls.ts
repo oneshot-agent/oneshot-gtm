@@ -98,6 +98,10 @@ export interface CallRecordView {
   provider: "tel" | "twilio";
   /** Phase 2: the bridged call's live state. */
   status?: "ringing_founder" | "ringing_prospect" | "connected" | "ended" | "failed";
+  /** Why a bridged call failed or ended early, in plain words ("it went to your voicemail"). */
+  statusReason?: string;
+  /** The promises the member confirmed when logging it (`LogCallRequest.commitments`). */
+  commitments?: string[];
   transcriptStatus: "none" | "pending" | "ready" | "failed";
   transcript: { speaker: "founder" | "prospect"; text: string; startSec: number }[] | null;
   /** Phase 2: the model's proposal from the transcript; the founder confirms it. */
@@ -120,6 +124,10 @@ export interface LogCallRequest {
   holdUntil?: string;
   /** The number the founder dialled (a new call): a wrong_number lands on it, not on a number stored since. */
   phone?: string;
+  /** A bridged call: the suggested promises the member kept when saving. */
+  commitments?: string[];
+  /** A bridged call: the prospect refused recording; the server deletes the recording and transcript. */
+  consentDeclined?: true;
 }
 
 /**

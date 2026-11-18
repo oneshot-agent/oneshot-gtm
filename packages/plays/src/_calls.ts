@@ -487,7 +487,15 @@ function applyCallOutcome(
   let dialled: string | null;
   if (req.callId != null) {
     if (
-      !ledger.setCallOutcome({ id: req.callId, prospectId, outcome, note, durationSec, playName })
+      !ledger.setCallOutcome({
+        id: req.callId,
+        prospectId,
+        outcome,
+        note,
+        durationSec,
+        playName,
+        ...(req.commitments ? { commitments: req.commitments } : {}),
+      })
     )
       throw new CallLogError("call not found", 404);
     callId = req.callId;
@@ -505,6 +513,7 @@ function applyCallOutcome(
       phone: dialled,
       provider: "tel",
       member,
+      commitments: req.commitments ?? null,
     });
   }
   const nowIso = now.toISOString();

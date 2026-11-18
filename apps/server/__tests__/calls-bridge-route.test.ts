@@ -93,7 +93,7 @@ describe("bridged-call routes", () => {
         req("/x", { ...nobody, method: "POST", body: { phone: MEMBER } }),
       ),
       await routes.checkPhoneRoute(req("/x", { ...nobody, method: "POST" })),
-      routes.removePhoneRoute(req("/x", { ...nobody, method: "DELETE" })),
+      await routes.removePhoneRoute(req("/x", { ...nobody, method: "DELETE" })),
       await routes.startCallRoute(
         req("/x", { ...nobody, method: "POST", body: { prospectId: 1 } }),
       ),
@@ -179,36 +179,52 @@ describe("bridged-call routes", () => {
       transcriptStatus: "pending",
     });
     const create = sent.find((s) => s.method === "POST" && s.url === `${ACCOUNT}/Calls.json`)!;
+    // The member's leg alone, with machine detection: nobody else is dialled yet.
     expect(create.form).toEqual({
       To: MEMBER,
       From: MEMBER,
-      Twiml: `<Response><Say>Calling Dana at R&amp;D &lt;Labs&gt;</Say><Dial callerId="${MEMBER}" answerOnBridge="true" record="record-from-answer-dual"><Number>${PROSPECT}</Number></Dial></Response>`,
+      MachineDetection: "Enable",
+      Twiml: `<Response><Say>Calling Dana at R&amp;D &lt;Labs&gt;</Say><Pause length="40"/></Response>`,
     });
 
-    // The dial panel's poll reads both legs.
+    // The dial panel's poll: a person answered, so the held call dials the prospect.
     answers[`GET ${ACCOUNT}/Calls/CA1.json`] = () => ({
-      body: { sid: "CA1", status: "in-progress" },
+      body: { sid: "CA1", status: "in-progress", answered_by: "human" },
     });
-    answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({
-      body: { calls: [{ sid: "CA2", status: "ringing" }] },
+    answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({ body: { calls: [] } });
+    answers[`POST ${ACCOUNT}/Calls/CA1.json`] = () => ({
+      body: { sid: "CA1", status: "in-progress" },
     });
     const polled = await routes.getCallRoute(req(`/api/calls/${call.id}`), { id: String(call.id) });
     expect(await polled.json()).toMatchObject({ id: call.id, status: "ringing_prospect" });
-
-    answers[`POST ${ACCOUNT}/Calls/CA1.json`] = () => ({
-      body: { sid: "CA1", status: "completed" },
+    const updates = () =>
+      sent.filter((s) => s.url === `${ACCOUNT}/Calls/CA1.json` && s.method === "POST");
+    expect(updates().map((u) => u.form)).toEqual([
+      {
+        Twiml: `<Response><Dial callerId="${MEMBER}" answerOnBridge="true" record="record-from-answer-dual"><Number>${PROSPECT}</Number></Dial></Response>`,
+      },
+    ]);
+    answers[`GET ${ACCOUNT}/Calls.json?ParentCallSid=CA1`] = () => ({
+      body: { calls: [{ sid: "CA2", status: "ringing" }] },
     });
+    await routes.getCallRoute(req(`/api/calls/${call.id}`), { id: String(call.id) });
+    expect(updates()).toHaveLength(1);
+
     const hung = await routes.hangUpCallRoute(req("/x", { method: "POST" }), {
       id: String(call.id),
     });
     expect(hung.status).toBe(200);
-    expect(
-      sent.find((s) => s.url === `${ACCOUNT}/Calls/CA1.json` && s.method === "POST")?.form,
-    ).toEqual({ Status: "completed" });
+    expect(updates().at(-1)?.form).toEqual({ Status: "completed" });
 
+    // Removing the phone removes it from Twilio too.
+    answers[`DELETE ${ACCOUNT}/OutgoingCallerIds/PN1.json`] = () => ({ status: 204, body: null });
     expect(
       await (await routes.removePhoneRoute(req("/x", { method: "DELETE" }))).json(),
     ).toMatchObject({ status: "none", phone: null });
+    expect(sent.at(-1)).toMatchObject({
+      method: "DELETE",
+      url: `${ACCOUNT}/OutgoingCallerIds/PN1.json`,
+    });
     expect((await list()).dialMode).toBe("tel");
   });
 
@@ -235,6 +251,53 @@ describe("bridged-call routes", () => {
       (await routes.startCallRoute(req("/x", { method: "POST", body: { prospectId: "x" } })))
         .status,
     ).toBe(400);
+  });
+
+  it("log a bridged call's confirmed promises, and delete its recording when consent was declined", async () => {
+    keys();
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
+    const callId = ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "ended",
+      transcriptStatus: "pending",
+    });
+    ledger.claimBridge(callId, new Date().toISOString());
+    ledger.updateBridgedCall(callId, { recordingSid: "RE1" });
+    const log = (body: Record<string, unknown>) =>
+      routes.logCallRoute(req("/x", { method: "POST", body: { outcome: "interested", ...body } }), {
+        id: String(id),
+      });
+    expect((await log({ callId, commitments: "send terms" })).status).toBe(400);
+    expect((await log({ callId, commitments: ["x".repeat(301)] })).status).toBe(400);
+    expect((await log({ consentDeclined: true })).status).toBe(400);
+    expect((await log({ callId, consentDeclined: "yes" })).status).toBe(400);
+    const kept = await (await log({ callId, commitments: [" send terms ", ""] })).json();
+    expect(kept.call.commitments).toEqual(["send terms"]);
+
+    answers[`GET ${ACCOUNT}/Calls/CA1.json`] = () => ({
+      body: { sid: "CA1", status: "completed" },
+    });
+    answers["GET https://intelligence.twilio.com/v2/Transcripts?SourceSid=RE1"] = () => ({
+      body: { transcripts: [{ sid: "GT1" }] },
+    });
+    answers["DELETE https://intelligence.twilio.com/v2/Transcripts/GT1"] = () => ({
+      status: 204,
+      body: null,
+    });
+    answers[`DELETE ${ACCOUNT}/Recordings/RE1.json`] = () => ({ status: 204, body: null });
+    const declined = await log({ outcome: "not_interested", callId, consentDeclined: true });
+    expect((await declined.json()).call).toMatchObject({
+      outcome: "not_interested",
+      transcriptStatus: "none",
+      transcript: null,
+    });
+    expect(sent.filter((s) => s.method === "DELETE").map((s) => s.url)).toEqual([
+      "https://intelligence.twilio.com/v2/Transcripts/GT1",
+      `${ACCOUNT}/Recordings/RE1.json`,
+    ]);
   });
 
   it("log a tel: call with the member who logged it", async () => {

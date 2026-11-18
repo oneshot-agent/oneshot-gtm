@@ -628,12 +628,19 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     // unlisted local owner (and for calls logged before this). `status` is a
     // bridged call's last-read state (shared-types CallRecordView.status);
     // `transcript_sid` the provider's transcript, once one was asked for.
+    // `bridged_at` is set once, by the one poll that dials the prospect.
+    // `discard_recording`: 1 = the prospect declined recording, delete it; 2 = deleted.
     version: 28,
     name: "calls-bridge",
     up: (db) => {
       addColumnIfMissing(db, "calls", "member", "TEXT");
       addColumnIfMissing(db, "calls", "status", "TEXT");
       addColumnIfMissing(db, "calls", "transcript_sid", "TEXT");
+      addColumnIfMissing(db, "calls", "status_reason", "TEXT");
+      addColumnIfMissing(db, "calls", "member_phone", "TEXT");
+      addColumnIfMissing(db, "calls", "bridged_at", "TEXT");
+      addColumnIfMissing(db, "calls", "commitments_json", "TEXT");
+      addColumnIfMissing(db, "calls", "discard_recording", "INTEGER NOT NULL DEFAULT 0");
     },
   },
 ];

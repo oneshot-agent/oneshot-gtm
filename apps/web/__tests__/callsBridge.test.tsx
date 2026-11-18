@@ -27,7 +27,9 @@ import {
   firstName,
   isLive,
   LIVE_POLL_MS,
+  keptCommitments,
   resumableCall,
+  saveHeld,
   suggestedPick,
   TRANSCRIPT_POLL_MS,
   transcriptTurns,
@@ -159,8 +161,10 @@ const data = (over: Partial<CallListResponse> = {}): CallListResponse => ({
 });
 const page = (d: CallListResponse, selected = 1) =>
   render(<CallsView data={d} selected={selected} onOpen={() => {}} />);
-/** The panel with an unlogged bridged call in the history, as a reload finds it. */
+const signedIn = { email: "jo@example.com", name: "Jo", role: "member" as const };
+/** The panel with this member's unlogged bridged call in the history, as a reload finds it. */
 const panelWith = (c: CallRecordView, calls: CallsMeResponse = me()) => {
+  client.setQueryData(["me"], signedIn);
   client.setQueryData(callsMeKey, calls);
   client.setQueryData(["prospect-calls", 1], { calls: [c] });
   client.setQueryData(callKey(c.id), c);
@@ -190,6 +194,10 @@ describe("bridged call logic", () => {
     expect(bridgeStatusLine("connected", "Dana")).toBe("Connected");
     expect(bridgeStatusLine("ended", "Dana")).toBe("Ended");
     expect(bridgeStatusLine(undefined, "Dana")).toBe("Ringing your phone…");
+    expect(
+      bridgeStatusLine("failed", "Dana", "it went to your voicemail, so nobody was dialled"),
+    ).toBe("The call didn't go through: it went to your voicemail, so nobody was dialled");
+    expect(bridgeStatusLine("connected", "Dana", "ignored while live")).toBe("Connected");
   });
 
   it("joins a side's sentences into one turn and drops empty ones", () => {
@@ -214,12 +222,56 @@ describe("bridged call logic", () => {
     const now = NOW.getTime();
     const older = call({ id: 5, startedAt: "2026-11-18T15:00:00Z" });
     const newest = call({ id: 6, startedAt: "2026-11-18T16:00:00Z" });
-    expect(resumableCall([older, newest], now)?.id).toBe(6);
-    expect(resumableCall([call({ outcome: "no_answer" })], now)).toBeNull();
-    expect(resumableCall([call({ provider: "tel" })], now)).toBeNull();
-    expect(resumableCall([call({ status: "failed" })], now)).toBeNull();
-    expect(resumableCall([call({ startedAt: "2026-11-18T08:00:00Z" })], now)).toBeNull();
-    expect(resumableCall(undefined, now)).toBeNull();
+    expect(resumableCall([older, newest], signedIn, now)?.id).toBe(6);
+    expect(resumableCall([call({ outcome: "no_answer" })], signedIn, now)).toBeNull();
+    expect(resumableCall([call({ provider: "tel" })], signedIn, now)).toBeNull();
+    expect(resumableCall([call({ status: "failed" })], signedIn, now)).toBeNull();
+    expect(resumableCall([call({ startedAt: "2026-11-18T08:00:00Z" })], signedIn, now)).toBeNull();
+    expect(resumableCall(undefined, signedIn, now)).toBeNull();
+  });
+
+  it("never picks up another member's call, nor any before /api/me answers", () => {
+    const now = NOW.getTime();
+    const sams = call({ id: 5, member: "sam@example.com", startedAt: "2026-11-18T16:01:00Z" });
+    const jos = call({ id: 6 });
+    expect(resumableCall([sams, jos], signedIn, now)?.id).toBe(6);
+    expect(resumableCall([sams], signedIn, now)).toBeNull();
+    expect(resumableCall([jos], undefined, now)).toBeNull();
+    // `member: null` is the unlisted local owner: theirs on their own install only.
+    const owner = { email: null, name: null, role: "owner" as const };
+    const ownersCall = call({ member: null });
+    expect(resumableCall([ownersCall], owner, now)?.id).toBe(7);
+    expect(resumableCall([ownersCall], signedIn, now)).toBeNull();
+    expect(resumableCall([jos], owner, now)).toBeNull();
+  });
+
+  it("holds Save while the call is live or Call is starting one", () => {
+    const idle = { pollFailed: false, starting: false };
+    expect(saveHeld(call({ status: "connected" }), idle)).toBe(true);
+    expect(saveHeld(call({ status: "connected" }), { ...idle, pollFailed: true })).toBe(false);
+    expect(saveHeld(call({ status: "ended" }), idle)).toBe(false);
+    expect(saveHeld(call({ status: "ended" }), { ...idle, starting: true })).toBe(true);
+    expect(saveHeld(undefined, { ...idle, starting: true })).toBe(true);
+    expect(saveHeld(undefined, idle)).toBe(false);
+  });
+
+  it("a new call starts from a blank draft", () => {
+    const draft: DialState = { outcome: "voicemail", note: "left one", holdUntil: "2026-12-01" };
+    expect(dialReducer(draft, { kind: "reset", holdUntil: "2026-11-25" })).toEqual({
+      outcome: null,
+      note: "",
+      holdUntil: "2026-11-25",
+    });
+  });
+
+  it("keeps the promises the member didn't remove", () => {
+    const s = { ...suggestion, commitments: ["Send the terms", " ", "Call back Friday"] };
+    expect(keptCommitments(s, [])).toEqual([
+      { text: "Send the terms", index: 0 },
+      { text: "Call back Friday", index: 2 },
+    ]);
+    expect(keptCommitments(s, [0])).toEqual([{ text: "Call back Friday", index: 2 }]);
+    expect(keptCommitments(null, [])).toEqual([]);
   });
 
   it("fills the suggestion only into a panel the member hasn't touched", () => {
@@ -234,11 +286,31 @@ describe("bridged call logic", () => {
     expect(suggestedPick(null)).toBeNull();
   });
 
-  it("logs against the bridged call with its id", () => {
+  it("logs against the bridged call with its id, the kept promises, and a refused recording", () => {
     const state: DialState = { outcome: "interested", note: "", holdUntil: "2026-11-25" };
     expect(
       logCallRequest(state, { callId: 7, durationSec: 184, playName: "post-funding" }),
     ).toEqual({ outcome: "interested", callId: 7, durationSec: 184, playName: "post-funding" });
+    expect(logCallRequest(state, { callId: 7, commitments: ["Send the terms"] })).toEqual({
+      outcome: "interested",
+      callId: 7,
+      commitments: ["Send the terms"],
+    });
+    // All removed: an empty list still goes, so the server keeps none.
+    expect(logCallRequest(state, { callId: 7, commitments: [] })).toEqual({
+      outcome: "interested",
+      callId: 7,
+      commitments: [],
+    });
+    expect(logCallRequest(state, { callId: 7, commitments: null })).toEqual({
+      outcome: "interested",
+      callId: 7,
+    });
+    expect(logCallRequest(state, { callId: 7, consentDeclined: true })).toEqual({
+      outcome: "interested",
+      callId: 7,
+      consentDeclined: true,
+    });
   });
 });
 
@@ -469,6 +541,25 @@ describe("the dial panel in bridge mode", () => {
     expect(html).toContain("I have two minutes.");
     expect(html).toContain("Suggested:</span> Interested");
     expect(html).toContain("Send the pilot terms Thursday");
+  });
+
+  it("lists the promises with a remove button each, and offers to delete a refused recording", () => {
+    const html = panelWith(
+      call({ status: "ended", transcriptStatus: "ready", transcript, suggestion }),
+    );
+    expect(html).toContain('aria-label="Remove: Send the pilot terms Thursday"');
+    expect(html).toContain("They didn&#x27;t agree to recording — delete it");
+    // Live, or not recorded: no such button.
+    expect(panelWith(call({ status: "connected" }))).not.toContain("agree to recording");
+    expect(panelWith(call({ id: 8, status: "ended" }), me({ record: false }))).not.toContain(
+      "agree to recording",
+    );
+  });
+
+  it("never picks up another member's call in the panel", () => {
+    const html = panelWith(call({ member: "sam@example.com", status: "connected" }));
+    expect(html).not.toContain("Hang up");
+    expect(html).toContain('title="Rings your phone, then theirs"');
   });
 
   it("privacy mode hides the transcript and what the suggestion says", () => {

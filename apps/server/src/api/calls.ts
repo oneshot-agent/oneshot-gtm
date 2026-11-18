@@ -12,6 +12,7 @@ import {
   callBriefFor,
   callsMe,
   checkMemberPhone,
+  discardBridgedRecording,
   hangUpBridgedCall,
   listCalls,
   memberCanBridge,
@@ -21,12 +22,15 @@ import {
   startBridgedCall,
   verifyMemberPhone,
 } from "@oneshot-gtm/plays";
-import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
+import { isCallOutcome, type CallRecordView, type LogCallRequest } from "@oneshot-gtm/shared-types";
 import { currentMember } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
 /** Longest note kept on a call. */
 const MAX_NOTE_CHARS = 4000;
+/** Most promises kept on a call, and the longest one. */
+const MAX_COMMITMENTS = 10;
+const MAX_COMMITMENT_CHARS = 300;
 /** Longest dialled number read: a number with its extension fits. */
 const MAX_PHONE_CHARS = 64;
 
@@ -129,6 +133,27 @@ export async function logCallRoute(
     (typeof phone !== "string" || phone.length > MAX_PHONE_CHARS)
   )
     return jsonResponse({ error: "phone must be the number dialled" }, 400, req);
+  const commitments = body["commitments"];
+  if (
+    commitments !== undefined &&
+    commitments !== null &&
+    (!Array.isArray(commitments) ||
+      commitments.length > MAX_COMMITMENTS ||
+      commitments.some((c) => typeof c !== "string" || c.length > MAX_COMMITMENT_CHARS))
+  )
+    return jsonResponse(
+      { error: `commitments must be up to ${MAX_COMMITMENTS} short lines of text` },
+      400,
+      req,
+    );
+  const consentDeclined = body["consentDeclined"];
+  if (consentDeclined !== undefined && consentDeclined !== null && consentDeclined !== true)
+    return jsonResponse({ error: "consentDeclined must be true" }, 400, req);
+  if (
+    consentDeclined === true &&
+    (callId == null || !getLedger().getBridgedCall(prospectIdOf(callId)!))
+  )
+    return jsonResponse({ error: "only a bridged call has a recording to delete" }, 400, req);
   const request: LogCallRequest = {
     outcome: body["outcome"],
     ...(typeof note === "string" ? { note } : {}),
@@ -137,13 +162,27 @@ export async function logCallRoute(
     ...(typeof playName === "string" && playName ? { playName } : {}),
     ...(typeof holdUntil === "string" ? { holdUntil } : {}),
     ...(typeof phone === "string" && phone.trim() ? { phone } : {}),
+    ...(Array.isArray(commitments)
+      ? { commitments: (commitments as string[]).map((c) => c.trim()).filter(Boolean) }
+      : {}),
   };
   try {
     const member = currentMember(req)?.email ?? null;
-    return jsonResponse({ call: recordCall(prospectId, request, new Date(), member) }, 200, req);
+    const call = recordCall(prospectId, request, new Date(), member);
+    if (consentDeclined !== true) return jsonResponse({ call }, 200, req);
+    return jsonResponse({ call: await discardRecordingQuietly(call.id) }, 200, req);
   } catch (err) {
     if (err instanceof CallLogError) return jsonResponse({ error: err.message }, err.status, req);
     return jsonResponse({ error: (err as Error).message ?? "logging the call failed" }, 500, req);
+  }
+}
+
+/** The outcome is logged; a failed delete is left to the sweep, which retries it. */
+async function discardRecordingQuietly(callId: number): Promise<CallRecordView> {
+  try {
+    return await discardBridgedRecording(callId);
+  } catch {
+    return getLedger().getCall(callId)!;
   }
 }
 
@@ -200,10 +239,14 @@ export async function checkPhoneRoute(req: Request): Promise<Response> {
   }
 }
 
-export function removePhoneRoute(req: Request): Response {
+export async function removePhoneRoute(req: Request): Promise<Response> {
   const member = memberOf(req);
   if (member instanceof Response) return member;
-  return jsonResponse(removeMemberPhone(member.email), 200, req);
+  try {
+    return jsonResponse(await removeMemberPhone(member.email), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "removing the phone failed");
+  }
 }
 
 export async function startCallRoute(req: Request): Promise<Response> {
