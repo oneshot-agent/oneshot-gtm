@@ -31,7 +31,14 @@ function replyLabel(intent: string, review: boolean): string {
 export function buildProspectTimeline(input: {
   row: Pick<
     QueueRow,
-    "play_name" | "found_at" | "decided_at" | "decided_by" | "decision" | "notes" | "sent_at"
+    | "play_name"
+    | "found_at"
+    | "decided_at"
+    | "decided_by"
+    | "decided_by_member"
+    | "decision"
+    | "notes"
+    | "sent_at"
   >;
   sequenceEvents: ReadonlyArray<SequenceEventRecord>;
   replies: ReadonlyArray<InboxReplyRecord>;
@@ -54,7 +61,11 @@ export function buildProspectTimeline(input: {
     events.push({
       at: sqliteToIso(row.decided_at),
       kind: "decided",
-      label: describeDecision({ decision: row.decision, decidedBy: row.decided_by }),
+      label: describeDecision({
+        decision: row.decision,
+        decidedBy: row.decided_by,
+        decidedByMember: row.decided_by_member,
+      }),
       detail: row.notes,
       playName: row.play_name,
     });

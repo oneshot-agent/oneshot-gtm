@@ -13,7 +13,8 @@ import type {
   LinkedInFriendView,
 } from "@oneshot-gtm/shared-types";
 import { callLinkedIn } from "../linkedin-client.ts";
-import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { isAllowedOrigin } from "../members.ts";
+import { jsonResponse } from "../server.ts";
 
 /**
  * The warm LinkedIn connect for people who replied to an email (#791). Three
@@ -50,7 +51,7 @@ export function linkedInFriendRoute(req: Request, params: Record<string, string>
 
 function writeGuard(req: Request): Response | null {
   if (demoMode()) return jsonResponse({ error: "Read-only demo" }, 403, req);
-  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) {
+  if (!isAllowedOrigin(req.headers.get("origin") ?? "")) {
     return jsonResponse({ error: "forbidden origin" }, 403, req);
   }
   if (!(req.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {

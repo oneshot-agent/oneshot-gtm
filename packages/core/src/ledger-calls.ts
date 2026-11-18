@@ -1,5 +1,5 @@
 /**
- * The dialler's records (migration v25): one `calls` row per call the founder
+ * The dialler's records (migration v27): one `calls` row per call the founder
  * made or logged, the `channel_events` touch it leaves, and the brief written
  * for someone outside a cadence (`call_briefs`). What an outcome does to a
  * cadence lives in plays (`recordCall`, _calls.ts), which needs the sequence;

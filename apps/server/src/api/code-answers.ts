@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import {
   demoMode,
   getLedger,
@@ -34,8 +35,6 @@ const READ_ONLY = { error: "The demo is read-only." };
 const NO_REPO = { error: "Connect a source repo on /setup first." };
 /** The store's own limit on an approved answer. */
 const MAX_ANSWER_CHARS = 1200;
-/** Who decided, as the ledger records it for the founder's own decisions. */
-const DECIDED_BY = "human";
 
 /**
  * Derives this process has started and not finished. The store's lease
@@ -170,7 +169,7 @@ export async function approveCodeAnswerRoute(
     req,
     approveCodeAnswer(params["id"] ?? "", {
       text: text ?? null,
-      by: DECIDED_BY,
+      by: currentMember(req)?.email ?? null,
       ledger: getLedger(),
     }),
   );
@@ -181,7 +180,10 @@ export function dismissCodeAnswerRoute(req: Request, params: Record<string, stri
   if (demoMode()) return jsonResponse(READ_ONLY, 403, req);
   return decision(
     req,
-    dismissCodeAnswer(params["id"] ?? "", { by: DECIDED_BY, ledger: getLedger() }),
+    dismissCodeAnswer(params["id"] ?? "", {
+      by: currentMember(req)?.email ?? null,
+      ledger: getLedger(),
+    }),
   );
 }
 

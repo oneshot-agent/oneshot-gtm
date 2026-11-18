@@ -262,7 +262,7 @@ export function offerOutdated(
   cfg: AppConfig = loadConfig(),
 ): boolean {
   if (!offer) return false;
-  if (offer.editedBy === "founder") return false;
+  if (typeof offer.editedBy === "string" && !!offer.editedBy?.trim()) return false;
   if (typeof offer.weakApprovedAt === "string" && offer.weakApprovedAt.trim()) return false;
   return !offerConfigIsCurrent(offer, cfg);
 }
@@ -591,7 +591,7 @@ export async function deriveSequenceOffer(input: {
  * the founder reads the close before it goes.
  */
 function closeOfferUsable(offer: ProspectOffer, cfg: { offerExclusions?: unknown }): boolean {
-  if (offer.editedBy === "founder") return true;
+  if (typeof offer.editedBy === "string" && !!offer.editedBy?.trim()) return true;
   return (
     offer.relevance === "relevant" && !offerHoldsSend(offer) && offerExclusionsCurrent(offer, cfg)
   );

@@ -165,7 +165,7 @@ it("does not open a new login before provider cleanup succeeds", async () => {
 it("routes removal through the explicit action and keeps history readable", async () => {
   const request = new Request("http://localhost/api/replies/linkedin", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", host: "localhost" },
     body: JSON.stringify({ action: "remove", accountKey: "wallet:old" }),
   });
   const result = await repliesLinkedInRoute(request);
@@ -179,7 +179,7 @@ it("distinguishes a missing account from an unknown action without calling the p
     const response = await repliesLinkedInRoute(
       new Request("http://localhost/api/replies/linkedin", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", host: "localhost" },
         body: JSON.stringify({ action, accountKey: "missing" }),
       }),
     );
@@ -201,7 +201,7 @@ it("adds a permission by reconnecting the same account in its owner workspace, w
   const response = await repliesLinkedInRoute(
     new Request("http://localhost/api/replies/linkedin", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", host: "localhost" },
       body: JSON.stringify({ action: "upgrade", accountKey: "wallet:old" }),
     }),
   );

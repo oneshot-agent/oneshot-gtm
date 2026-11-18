@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import { getLedger, loadConfig, safeParseJsonRecord, type QueueRow } from "@oneshot-gtm/core";
 import { CLICK_RESEARCH_WAIT_MS, offerResearchRow } from "@oneshot-gtm/find";
 import {
@@ -112,7 +113,7 @@ export async function queueOfferRoute(
     offer = picked.offer;
     candidates = picked.candidates;
   } else {
-    const written = await founderOffer(body, input);
+    const written = await founderOffer(body, input, currentMember(req)?.email ?? null);
     if (isOfferEditError(written)) {
       return jsonResponse({ error: written.error }, written.status, req);
     }

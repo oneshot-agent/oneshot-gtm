@@ -101,6 +101,13 @@ import {
   commandWorkspaceRemove,
   commandWorkspaceUse,
 } from "./commands/workspace.ts";
+import {
+  commandMembersAdd,
+  commandMembersAllowHost,
+  commandMembersDisallowHost,
+  commandMembersList,
+  commandMembersRemove,
+} from "./commands/members.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
@@ -314,6 +321,44 @@ workspace
   .command("remove <name>")
   .description("Forget a workspace (files are left in place)")
   .action(runOrFail(commandWorkspaceRemove));
+
+// Members: who may use this install from another machine. The lists are in the
+// shared database, so they hold for every workspace, whichever one a command runs against.
+const members = program
+  .command("members")
+  .description(
+    "People who may use this install from their own machines, and the hosts the dashboards answer on. Run on the host",
+  );
+members
+  .command("add <email>")
+  .description(
+    "Add a member by the email they sign in with (their Tailscale login); adding a removed member brings them back",
+  )
+  .option("--owner", "make them an owner instead of a member")
+  .option("--name <name>", "the name the dashboard shows for them")
+  .action(
+    runOrFail((email: string, opts: { owner?: boolean; name?: string }) =>
+      commandMembersAdd(email, opts),
+    ),
+  );
+members
+  .command("remove <email>")
+  .description("Remove a member; their next request is refused")
+  .action(runOrFail((email: string) => commandMembersRemove(email)));
+members
+  .command("list")
+  .description("Show the members and the allowed hosts")
+  .action(runOrFail(() => commandMembersList()));
+members
+  .command("allow-host <host>")
+  .description(
+    "Let the dashboards answer on a hostname besides loopback, such as this machine's tailnet name",
+  )
+  .action(runOrFail((host: string) => commandMembersAllowHost(host)));
+members
+  .command("disallow-host <host>")
+  .description("Stop the dashboards answering on a hostname")
+  .action(runOrFail((host: string) => commandMembersDisallowHost(host)));
 
 const config = program.command("config").description("Configure providers and profile");
 config.command("llm").description("Pick LLM provider and model").action(runOrFail(configLlm));

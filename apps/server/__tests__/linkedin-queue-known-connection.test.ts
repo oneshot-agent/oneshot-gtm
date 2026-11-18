@@ -136,7 +136,7 @@ describe("send-draft for a known connection", () => {
       status: "sent",
       metadata: { via: "profile-read", inviteStatus: "already_connected", accountId: "acct-1" },
     });
-    expect(statusCalls).toEqual([{ id: 1, status: "sent", decidedBy: "human" }]);
+    expect(statusCalls).toEqual([{ id: 1, status: "sent", decidedBy: "human", member: null }]);
     // The row keeps the connection as what shipped, stored as unattended: no
     // text went out, so it is never a reviewed send.
     expect(drafts.at(-1)).toMatchObject({
@@ -187,11 +187,16 @@ describe("send-draft for a known connection", () => {
 
   it("the invite guard still refuses: the reason goes on the draft and the row back to pending", async () => {
     profileRead("FIRST_DEGREE");
+    row.last_draft_json = JSON.stringify({
+      ...JSON.parse(connectionDraft),
+      editedBy: "editor@example.com",
+    });
     row.payload_json = JSON.stringify({ name: "SWE-agent", linkedinUrl: PROFILE });
     const res = await sendDraftRoute(post(), { id: "1" });
     expect(res.status).toBe(409);
     expect(recorded).toEqual([]);
     expect((drafts[0]!["draft"] as { flags: string[] }).flags[0]).toMatch(/^not-a-person:/);
+    expect(drafts[0]!["draft"]).toMatchObject({ editedBy: "editor@example.com" });
     expect(statusCalls).toEqual([{ id: 1, status: "pending", decidedBy: "human" }]);
   });
 });

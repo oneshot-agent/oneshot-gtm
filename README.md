@@ -88,7 +88,7 @@ Finders poll while the dashboard runs. `ui --install-service` keeps it running a
 
 ## Workspaces
 
-One workspace is one product: one voice, one ICP, one ledger, one sender pool. A second product gets a second workspace.
+One workspace is one product: one voice, one ICP, one ledger, one sender pool. A second product gets a second workspace. Open the workspace switcher in the dashboard and choose **New workspace**, enter a name, and it opens when ready. Finish its profile and keys in Setup. The CLI route is also available:
 
 ```bash
 bun run cli -- workspace create acme
@@ -111,7 +111,7 @@ Workspaces share one database of people, paid lookups and contact history, so tw
 
 - **State.** `~/.oneshot-gtm/ledger.sqlite` is the source of truth for the CLI and the dashboard. `ONESHOT_GTM_HOME` moves it. [Data storage](./docs/data-storage.md) lists every file and how to back it up.
 - **Secrets.** `~/.oneshot-gtm/.env`, mode 600.
-- **Server.** Single user, bound to `127.0.0.1`. The only routes meant for other systems are two [webhooks](./docs/webhooks.md).
+- **Server.** Bound to `127.0.0.1`. Other people reach it only as [members](./docs/members.md), through `tailscale serve`. The only routes meant for other systems are two [webhooks](./docs/webhooks.md).
 - **Data.** Lookups resolve through OneShot's [data vendors](https://docs.oneshotagent.com/vendors).
 - **Stack.** Bun, TypeScript, Vitest, oxlint and oxfmt, Vite, React, TanStack, Tailwind. Plain `async`/`await` throughout.
 
@@ -158,7 +158,7 @@ It sends one event per command: the command name, flag names, outcome, duration,
 
 ## Status and scope
 
-[STATUS.md](./STATUS.md) says what is verified against the live API and what is thin. [ROADMAP.md](./ROADMAP.md) says what is not built and what never will be: it will not run an SDR for you, manage your DNS, hold your customer data, lock you to one LLM or go multi-user.
+[STATUS.md](./STATUS.md) says what is verified against the live API and what is thin. [ROADMAP.md](./ROADMAP.md) says what is not built and what never will be: it will not run an SDR for you, manage your DNS, hold your customer data, lock you to one LLM or host your database. Several people can share your own install as [members](./docs/members.md).
 
 ## License
 

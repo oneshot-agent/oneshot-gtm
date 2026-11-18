@@ -558,6 +558,27 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     },
   },
   {
+    version: 25,
+    name: "member-attribution",
+    up: (db) => {
+      addColumnIfMissing(db, "target_queue", "decided_by_member", "TEXT");
+      addColumnIfMissing(db, "inbox_drafts", "edited_by", "TEXT");
+      db.exec(`CREATE TABLE IF NOT EXISTS config_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        member TEXT,
+        section TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      )`);
+    },
+  },
+  {
+    version: 26,
+    name: "queue-send-member",
+    up: (db) => {
+      addColumnIfMissing(db, "target_queue", "sent_by_member", "TEXT");
+    },
+  },
+  {
     // The dialler (ledger-calls.ts): one row per call the founder made or
     // logged. `provider` is 'tel' (a tel: link, nothing recorded) or 'twilio'
     // (a bridged call: its SIDs, then the transcript and the model's
@@ -566,7 +587,7 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
     // means one. `phone` is the number dialled, kept after a wrong-number
     // clears the prospect's. A brief written for someone outside a cadence is
     // cached per prospect in `call_briefs`, so reopening them pays nothing.
-    version: 25,
+    version: 27,
     name: "calls",
     up: (db) => {
       db.exec(`

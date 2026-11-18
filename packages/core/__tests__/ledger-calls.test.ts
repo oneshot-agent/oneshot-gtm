@@ -82,7 +82,7 @@ describe("callReplyIntent", () => {
   });
 });
 
-describe("migration v25", () => {
+describe("migration v27", () => {
   let dbPath: string;
   beforeEach(() => {
     dbPath = join(tmpdir(), `oneshot-gtm-test-calls-${Date.now()}-${Math.random()}.sqlite`);
@@ -91,10 +91,10 @@ describe("migration v25", () => {
     for (const s of ["", "-wal", "-shm"]) rmSync(`${dbPath}${s}`, { force: true });
   });
 
-  it("adds the calls and call_briefs tables to a v24 ledger", () => {
+  it("adds the calls and call_briefs tables to a v26 ledger", () => {
     new Ledger(dbPath).close();
     const raw = new Database(dbPath);
-    raw.exec("DROP TABLE calls; DROP TABLE call_briefs; PRAGMA user_version = 24");
+    raw.exec("DROP TABLE calls; DROP TABLE call_briefs; PRAGMA user_version = 26");
     raw.close();
     new Ledger(dbPath).close();
     const db = new Database(dbPath);

@@ -107,6 +107,13 @@ export interface LinkedInAccountView {
   /** The grant includes connection requests. False on a connection made before they were asked for. */
   canInvite?: boolean;
   permissionUpgradeError?: string;
+  /** The member who connected the account, by email. Null when none is recorded: it is the install owner's. */
+  ownerMember?: string | null;
+  /**
+   * False on an account another member connected: its name and status are
+   * shown, without import detail, errors or actions. Absent means true.
+   */
+  mine?: boolean;
   backfill?: {
     stage: string;
     error?: string;

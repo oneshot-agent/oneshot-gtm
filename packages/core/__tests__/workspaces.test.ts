@@ -48,6 +48,11 @@ describe("registry", () => {
     expect(resolveWorkspaceHome("beta")).toBe(b.home);
   });
 
+  it("skips reserved ports that no registered workspace holds", () => {
+    expect(createWorkspace("alpha", { reservedPorts: [3031, 3033] }).port).toBe(3032);
+    expect(createWorkspace("beta", { reservedPorts: [3031] }).port).toBe(3033);
+  });
+
   it("rejects bad names, duplicates and the reserved default", () => {
     expect(() => createWorkspace("Bad Name")).toThrow(WorkspaceError);
     createWorkspace("alpha");

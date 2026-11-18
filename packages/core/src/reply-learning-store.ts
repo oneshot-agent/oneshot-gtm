@@ -303,6 +303,26 @@ export class ReplyLearningStore {
     return row ? { ...JSON.parse(row.data), seq: row.seq } : null;
   }
   /**
+   * Where a confirmed send was written, whichever workspace recorded it: the
+   * conversation, the channel and the text. A reader uses it to tell whose
+   * LinkedIn account a learned rule's example came from. Null when the send
+   * is not on record.
+   */
+  sendOrigin(id: string): Pick<LearningObservation, "threadKey" | "channel" | "body"> | null {
+    const row = this.db
+      .query<{ data: string }, [string]>("SELECT data FROM reply_learning_observations WHERE id=?")
+      .get(id);
+    if (!row) return null;
+    const o = JSON.parse(row.data) as Partial<LearningObservation>;
+    if (typeof o.threadKey !== "string" || typeof o.body !== "string") return null;
+    // Sends recorded before email was learned from carry no channel: they are LinkedIn's.
+    return {
+      threadKey: o.threadKey,
+      channel: o.channel === "email" ? "email" : "linkedin",
+      body: o.body,
+    };
+  }
+  /**
    * The v1 preference rows this workspace learned before approval existed,
    * with their evidence, for the job's one-time import into review.
    */

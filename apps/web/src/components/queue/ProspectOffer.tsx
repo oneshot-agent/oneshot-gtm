@@ -29,7 +29,7 @@ export interface OfferView {
   return: string;
   /** Reasons it pays back: the letter's angles. */
   angles: string[];
-  editedBy?: "founder";
+  editedBy?: string;
   /** The anchor the offer rests on and the fact behind it. */
   fit?: string;
   /** The relevance judge's label; `weak` ones only make up the five. */
@@ -56,7 +56,9 @@ function readOffer(o: unknown): OfferView | null {
     level: r["level"] === "role" ? "role" : "researched",
     return: typeof r["return"] === "string" ? r["return"] : "",
     angles: strings(r["angles"]),
-    ...(r["editedBy"] === "founder" ? { editedBy: "founder" as const } : {}),
+    ...(typeof r["editedBy"] === "string" && r["editedBy"].trim()
+      ? { editedBy: r["editedBy"] }
+      : {}),
     ...(typeof r["fit"] === "string" && r["fit"].trim() ? { fit: r["fit"] } : {}),
     ...(r["relevance"] === "relevant" ||
     r["relevance"] === "weak" ||
@@ -287,7 +289,11 @@ export function offerMetaTokens(offer: OfferView | null, candidates: OfferView[]
         ? "weak fit, approved"
         : "weak fit"
       : null,
-    offer?.editedBy === "founder" ? "yours" : offer?.level === "role" ? "from role only" : null,
+    typeof offer?.editedBy === "string" && !!offer?.editedBy?.trim()
+      ? "yours"
+      : offer?.level === "role"
+        ? "from role only"
+        : null,
   ].filter((t): t is string => t !== null);
 }
 
@@ -342,7 +348,7 @@ export function OfferBlock({
   const switchingTo = pendingBody && "select" in pendingBody ? pendingBody.select : null;
   // A founder's own offer is not in the ranked set: there is no next one to rotate to.
   const next =
-    candidates.length > 1 && offer?.editedBy !== "founder"
+    candidates.length > 1 && !(typeof offer?.editedBy === "string" && !!offer?.editedBy?.trim())
       ? nextOfferIndex(offer, candidates)
       : null;
   const apply = (body: OfferChange): void => change.run(body, () => setEditing(false));

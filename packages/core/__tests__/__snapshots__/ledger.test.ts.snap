@@ -564,6 +564,17 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "table",
     },
     {
+      "name": "config_changes",
+      "sql": "CREATE TABLE config_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        member TEXT,
+        section TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      )",
+      "tbl_name": "config_changes",
+      "type": "table",
+    },
+    {
       "name": "deal_outcomes",
       "sql": "CREATE TABLE deal_outcomes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -702,7 +713,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         identity_id      TEXT,
         body             TEXT NOT NULL,
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-      , steer TEXT, status TEXT)",
+      , steer TEXT, status TEXT, edited_by TEXT)",
       "tbl_name": "inbox_drafts",
       "type": "table",
     },
@@ -1191,7 +1202,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         notes TEXT,
         prospect_id INTEGER,
         last_draft_json TEXT,
-        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email', decision_reason TEXT,
+        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT, channel TEXT NOT NULL DEFAULT 'email', decision_reason TEXT, decided_by_member TEXT, sent_by_member TEXT,
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "target_queue",

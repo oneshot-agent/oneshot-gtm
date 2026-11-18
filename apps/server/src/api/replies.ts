@@ -21,6 +21,7 @@ import {
   replyWorkspaces,
   trackSend,
   type OutboundSend,
+  type LinkedInViewer,
   productBriefText,
 } from "@oneshot-gtm/core";
 import {
@@ -39,7 +40,9 @@ import {
   type InboxSendReplyRequest,
   type ReplyLearningStatus,
 } from "@oneshot-gtm/shared-types";
-import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { currentMember, isAllowedOrigin, linkedInViewer } from "../members.ts";
+import { jsonResponse } from "../server.ts";
+import { evidenceFor, notStored } from "../learning-evidence.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import {
   startLinkedInBackfill,
@@ -52,13 +55,26 @@ import { sendReplyRoute, archiveInboxConversationRoute } from "./inbox.ts";
 import { mailboxStateRoute } from "./mailboxes.ts";
 import { captureReplyAsk, draftAnswerMatches } from "./code-answers.ts";
 
-function thread(key: unknown): ReplyThread {
+/** A LinkedIn thread or account that another member connected: answered 403. */
+class ForbiddenError extends Error {}
+
+/**
+ * The conversation a route acts on, for the member making the request. A
+ * LinkedIn thread on an account another member connected is refused, before
+ * its saved copy (messages and drafts) is returned to any caller.
+ */
+function thread(key: unknown, viewer: LinkedInViewer): ReplyThread {
   if (typeof key !== "string") throw new Error("Conversation key is required");
   const t = getReplyReviewStore().get(key);
-  if (!t || (t.workspace && t.workspace !== currentWorkspaceName()))
+  if (!t) throw new Error("Conversation not found in this workspace");
+  if (t.channel === "linkedin" && !getLinkedInInboxStore().visibleTo(t.accountKey ?? "", viewer))
+    throw new ForbiddenError(
+      "This conversation is on a LinkedIn account another member connected.",
+    );
+  if (t.workspace && t.workspace !== currentWorkspaceName())
     throw new Error("Conversation not found in this workspace");
   if (t.channel === "linkedin") {
-    const owner = getLinkedInInboxStore().thread(key)?.owner;
+    const owner = getLinkedInInboxStore().thread(key, viewer)?.owner;
     if (owner?.workspace && owner.workspace !== currentWorkspaceName())
       throw new Error("Conversation has moved to another workspace");
     if ((owner?.prospectId ?? null) !== t.prospectId)
@@ -72,7 +88,7 @@ function internalRequest(req: Request, body: unknown) {
 }
 async function payload(req: Request): Promise<Record<string, unknown>> {
   if (demoMode()) throw new Error("Read-only demo");
-  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) throw new Error("Forbidden origin");
+  if (!isAllowedOrigin(req.headers.get("origin") ?? "")) throw new Error("Forbidden origin");
   if (!req.headers.get("content-type")?.includes("application/json"))
     throw new Error("JSON is required");
   const b: unknown = await req.json();
@@ -87,7 +103,7 @@ function failure(req: Request, e: unknown) {
       code: (e as { code?: string }).code,
       statusCode: (e as { statusCode?: number }).statusCode,
     },
-    (e as Error).message === "Forbidden origin"
+    (e as Error).message === "Forbidden origin" || e instanceof ForbiddenError
       ? 403
       : /changed|new reply|pending|being sent/.test((e as Error).message)
         ? 409
@@ -110,7 +126,8 @@ export async function repliesRoute(req: Request) {
 export async function replyStateRoute(req: Request) {
   try {
     const b = await payload(req);
-    let t = thread(b.key);
+    const viewer = linkedInViewer(req);
+    let t = thread(b.key, viewer);
     if (
       !["archive", "restore", "snooze", "unsnooze"].includes(String(b.action)) ||
       !Array.isArray(b.observedReplyIds) ||
@@ -119,7 +136,7 @@ export async function replyStateRoute(req: Request) {
       throw new Error("Invalid conversation state request");
     // Re-read durable inbound state before hiding; never trust the browser's snapshot alone.
     await collectReplies(req);
-    t = thread(b.key);
+    t = thread(b.key, viewer);
     const action = b.action as ReplyStateRequest["action"];
     if (
       (action === "archive" || action === "snooze") &&
@@ -296,7 +313,7 @@ function draftPayload(value: unknown): ReplyDraftSet {
 export async function replyDraftSaveRoute(req: Request) {
   try {
     const b = await payload(req);
-    const t = thread(b.key);
+    const t = thread(b.key, linkedInViewer(req));
     const d = draftPayload(b.drafts);
     // The composer shows the answer a draft points at for review: only the
     // one this conversation asked, for the question the draft carries.
@@ -319,7 +336,7 @@ export async function replyGenerateRoute(req: Request) {
   let key = "";
   try {
     const b = await payload(req);
-    const t = thread(b.key);
+    const t = thread(b.key, linkedInViewer(req));
     key = `generate:${t.key}`;
     if (!t.canGenerate)
       throw new Error(t.unavailableReason ?? "This message cannot be drafted automatically");
@@ -365,7 +382,7 @@ export async function replyGenerateRoute(req: Request) {
 export async function replyImproveRoute(req: Request) {
   try {
     const b = await payload(req);
-    const t = thread(b.key);
+    const t = thread(b.key, linkedInViewer(req));
     if (
       !REPLY_VARIANTS.includes(b.variant as never) ||
       typeof b.text !== "string" ||
@@ -420,9 +437,13 @@ function knownFailure(e: unknown) {
       [400, 401, 403, 404, 422, 429].includes(error.statusCode))
   );
 }
-async function sendLinkedIn(t: ReplyThread, send: ReplySendState): Promise<ReplySendState> {
+async function sendLinkedIn(
+  t: ReplyThread,
+  send: ReplySendState,
+  viewer: LinkedInViewer,
+): Promise<ReplySendState> {
   const store = getReplyReviewStore();
-  const a = getLinkedInInboxStore().account(t.accountKey!);
+  const a = getLinkedInInboxStore().account(t.accountKey!, viewer);
   if (!a) throw new Error("LinkedIn account not found");
   try {
     const result = send.requestId
@@ -456,7 +477,7 @@ async function sendLinkedIn(t: ReplyThread, send: ReplySendState): Promise<Reply
     // OneShot names the original request, read instead. Nothing is resent.
     const original = linkedInDuplicateRequestId(e);
     if (original && original !== send.requestId)
-      return sendLinkedIn(t, { ...send, requestId: original });
+      return sendLinkedIn(t, { ...send, requestId: original }, viewer);
     const err = e as Error & { requestId?: string; jobId?: string };
     const next: ReplySendState = {
       ...send,
@@ -506,7 +527,8 @@ export async function replySendRoute(req: Request) {
   try {
     if (isDraining()) throw new Error("Server restarting — retry in a moment");
     const b = await payload(req);
-    const t = thread(b.key);
+    const viewer = linkedInViewer(req);
+    const t = thread(b.key, viewer);
     const review = getReplyReviewStore();
     if (b.check === true) {
       if (!t.send) throw new Error("No send to check");
@@ -514,7 +536,7 @@ export async function replySendRoute(req: Request) {
         const token = review.claim(`send:${t.key}`, 60_000);
         if (!token) return jsonResponse(t.send, 200, req);
         try {
-          return jsonResponse(await sendLinkedIn(t, t.send), 200, req);
+          return jsonResponse(await sendLinkedIn(t, t.send, viewer), 200, req);
         } finally {
           review.release(`send:${t.key}`, token);
         }
@@ -542,8 +564,8 @@ export async function replySendRoute(req: Request) {
     if (!t.canSend || !t.drafts) throw new Error("This conversation is not ready to send");
     if (t.channel === "linkedin") {
       const store = getLinkedInInboxStore();
-      const account = store.account(t.accountKey!);
-      const current = store.thread(t.key);
+      const account = store.account(t.accountKey!, viewer);
+      const current = store.thread(t.key, viewer);
       if (
         account?.previousAccountIds?.length &&
         (current?.sourceAccountId !== account.account.id ||
@@ -571,7 +593,7 @@ export async function replySendRoute(req: Request) {
       Number(b.revision),
     );
     if (t.channel === "linkedin")
-      return jsonResponse(await trackSend(() => sendLinkedIn(t, send)), 200, req);
+      return jsonResponse(await trackSend(() => sendLinkedIn(t, send, viewer)), 200, req);
     const r = t.email!;
     const request: InboxSendReplyRequest = {
       to: r.fromEmail,
@@ -612,8 +634,17 @@ export async function repliesLinkedInRoute(req: Request) {
   try {
     const b = await payload(req);
     const workspace = currentWorkspaceName();
+    const viewer = linkedInViewer(req);
+    // Only the member who connected an account acts through it.
+    if (
+      typeof b.accountKey === "string" &&
+      !getLinkedInInboxStore().visibleTo(b.accountKey, viewer)
+    )
+      throw new ForbiddenError("This LinkedIn account was connected by another member.");
     const a =
-      typeof b.accountKey === "string" ? getLinkedInInboxStore().account(b.accountKey) : null;
+      typeof b.accountKey === "string"
+        ? getLinkedInInboxStore().account(b.accountKey, viewer)
+        : null;
     if (
       [
         "remove",
@@ -638,7 +669,13 @@ export async function repliesLinkedInRoute(req: Request) {
       await refreshLinkedInInbox(true);
       return jsonResponse({ ok: true }, 200, req);
     }
-    if (b.action === "connect") return jsonResponse(await connectLinkedIn(workspace), 200, req);
+    // The account that comes out of this sign-in belongs to the member who started it.
+    if (b.action === "connect")
+      return jsonResponse(
+        await connectLinkedIn(workspace, currentMember(req)?.email ?? null),
+        200,
+        req,
+      );
     if ((b.action === "reconnect" || b.action === "upgrade") && a) {
       // A refusal recorded when permissions were asked for with a second
       // connection says nothing about a reconnect of this account: drop it.
@@ -687,7 +724,8 @@ export async function repliesLinkedInRoute(req: Request) {
 export async function replyAssignRoute(req: Request) {
   try {
     const b = await payload(req);
-    const t = thread(b.key);
+    const viewer = linkedInViewer(req);
+    const t = thread(b.key, viewer);
     if (t.send && ["pending", "uncertain"].includes(t.send.status))
       throw new Error("A reply is still being sent. Wait before changing assignment.");
     if (
@@ -707,7 +745,7 @@ export async function replyAssignRoute(req: Request) {
     }
     const store = getLinkedInInboxStore();
     store.assign(t.key, { workspace: b.workspace, prospectId: b.prospectId as number });
-    store.deliver(store.thread(t.key)!, linkedInMatches());
+    store.deliver(store.thread(t.key, viewer)!, linkedInMatches());
     return jsonResponse({ ok: true }, 200, req);
   } catch (e) {
     return failure(req, e);
@@ -768,6 +806,7 @@ export async function replyLearningRoute(req: Request) {
         ledger.learning.setGuidanceEnabled(b.preferenceId, b.enabled);
       else learning.setEnabled(workspace, b.enabled);
     }
+    const viewer = linkedInViewer(req);
     const status: ReplyLearningStatus = {
       ...learning.status(workspace),
       version: ledger.learning.guidanceVersion(),
@@ -779,7 +818,9 @@ export async function replyLearningRoute(req: Request) {
           instruction: g.instruction,
           source: g.source,
           enabled: g.status === "enabled",
-          evidence: (g.evidence.samples ?? []).map((s, i) => ({
+          // The rule is shared; a LinkedIn reply it was learned from is shown
+          // only to the member who connected that account.
+          evidence: (evidenceFor(viewer, g.evidence).samples ?? []).map((s, i) => ({
             id: `${g.id}:${i}`,
             threadKey: "",
             name: s.name ?? "",
@@ -792,7 +833,7 @@ export async function replyLearningRoute(req: Request) {
         })),
       pendingProposals: ledger.learning.list({ kind: "preference", status: "pending" }).length,
     };
-    return jsonResponse(status, 200, req);
+    return notStored(jsonResponse(status, 200, req));
   } catch (e) {
     return failure(req, e);
   }

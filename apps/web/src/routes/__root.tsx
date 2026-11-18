@@ -2,6 +2,7 @@ import { replyNeedsAttention } from "../lib/replies.ts";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createRootRouteWithContext, Link, useRouterState } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
+import type { CurrentMember } from "@oneshot-gtm/shared-types";
 import {
   Activity,
   BarChart3,
@@ -37,7 +38,7 @@ import { cn } from "../lib/cn.ts";
 import { useDocumentTitle } from "../lib/documentTitle.ts";
 import { applyWorkspaceFavicon } from "../lib/favicon.ts";
 import { pendingSplit } from "../lib/queue-helpers.ts";
-import { PrivacyProvider } from "../lib/privacy.tsx";
+import { PrivacyProvider, useMask } from "../lib/privacy.tsx";
 
 interface RootContext {
   queryClient: QueryClient;
@@ -175,6 +176,10 @@ function RootLayout() {
     refetchInterval: 60_000,
   });
   const workspace = workspaceQuery.data?.current ?? null;
+
+  // Who is signed in. The demo is a snapshot with no members in it.
+  const meQuery = useQuery({ queryKey: ["me"], queryFn: api.me, enabled: !IS_DEMO });
+  const me = meQuery.data ?? null;
 
   // Several workspaces run at once, each its own server on its own port. Name
   // the tab and tint its icon, or they are indistinguishable in the tab strip.
@@ -337,10 +342,25 @@ function RootLayout() {
             >
               Menu · {workspace?.name ?? "oneshot"}
             </button>
+            {/* Below md the line that names the member is hidden, so name them here. */}
+            {me?.email ? (
+              <SignedInAs
+                me={me}
+                className="min-w-0 flex-1 truncate px-3 text-right text-[11.5px] text-ink-cream md:hidden"
+              >
+                <span className="sr-only">signed in as </span>
+              </SignedInAs>
+            ) : null}
             <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
               workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
               {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
               local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+              {me?.email ? (
+                <>
+                  {" "}
+                  · signed in as <SignedInAs me={me} className="text-ink-cream" />
+                </>
+              ) : null}
             </div>
             <div className="flex items-center gap-3">
               <PrivacyToggle />
@@ -398,6 +418,30 @@ function RootLayout() {
         </div>
       </Frame>
     </PrivacyProvider>
+  );
+}
+
+/**
+ * The signed-in member's name, or their email when they have none, with the
+ * email and role in the tooltip. A component of its own because it has to
+ * read privacy mode from inside the provider the layout renders: with privacy
+ * on, a screenshot of the header must not name the member either.
+ */
+function SignedInAs({
+  me,
+  className,
+  children,
+}: {
+  me: CurrentMember;
+  className: string;
+  children?: ReactNode;
+}) {
+  const mask = useMask();
+  return (
+    <span className={className} title={`${mask("email", me.email)} · ${me.role}`}>
+      {children}
+      {mask("auto", me.name ?? me.email)}
+    </span>
   );
 }
 

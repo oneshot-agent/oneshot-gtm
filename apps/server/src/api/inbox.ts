@@ -1,3 +1,4 @@
+import { currentMember } from "../members.ts";
 import {
   classifyReply,
   getGmailProfile,
@@ -34,7 +35,8 @@ import {
   inboxThreadKey,
   POSITIVE_REPLY_INTENTS,
 } from "@oneshot-gtm/shared-types";
-import { isLoopbackOrigin, jsonResponse } from "../server.ts";
+import { isAllowedOrigin } from "../members.ts";
+import { jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
 import { mailboxInboxView } from "./mailboxes.ts";
 import { autoReplyViews } from "./_auto-reply-view.ts";
@@ -710,6 +712,7 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   } else {
     status = bodyCommitsTerms(draftBody) ? "needs_decision" : null;
     ledger.upsertInboxDraft({
+      member: currentMember(req)?.email ?? null,
       threadKey,
       inboundEmailId,
       toEmail,
@@ -879,7 +882,7 @@ export async function steerRoute(req: Request): Promise<Response> {
  * are a best-effort fresh send (the platform has no threading API).
  */
 export async function sendReplyRoute(req: Request): Promise<Response> {
-  if (!isLoopbackOrigin(req.headers.get("origin") ?? ""))
+  if (!isAllowedOrigin(req.headers.get("origin") ?? ""))
     return jsonResponse({ error: "forbidden origin" }, 403, req);
   if (isDraining()) {
     return jsonResponse({ error: "server restarting — retry in a moment" }, 503, req);
@@ -991,7 +994,7 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
 /** Local organization only: never mutates a provider mailbox or sends mail. */
 export async function archiveInboxConversationRoute(req: Request): Promise<Response> {
   // CORS only prevents reading the response; simple cross-origin POSTs still execute.
-  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) {
+  if (!isAllowedOrigin(req.headers.get("origin") ?? "")) {
     return jsonResponse({ error: "forbidden origin" }, 403, req);
   }
   let body: unknown;

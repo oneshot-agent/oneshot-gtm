@@ -1061,6 +1061,8 @@ export interface QueueRowView {
    */
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
+  decidedByMember?: string | null;
+  sentByMember?: string | null;
   decidedAt: string | null;
   /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
   decisionReason?: DecisionReason | null;
@@ -1097,10 +1099,16 @@ export interface ProspectBrowseRow extends QueueRowView {
 export function describeDecision(row: {
   decision: QueueRowView["decision"];
   decidedBy: QueueRowView["decidedBy"];
+  decidedByMember?: string | null;
   status?: QueueStatusView;
 }): string {
   if (row.decision === "auto_reject" || (row.decision === "reject" && row.decidedBy === "machine"))
     return "auto-rejected";
+  if (row.decidedByMember && (row.decidedBy === "human" || row.decidedBy === "human_bulk")) {
+    if (row.decision === "reject") return `rejected by ${row.decidedByMember}`;
+    if (row.decision === "approve")
+      return `approved by ${row.decidedByMember}${row.decidedBy === "human_bulk" ? " (bulk)" : ""}`;
+  }
   if (row.decision === "reject") return "rejected by you";
   if (row.decision === "approve") {
     if (row.decidedBy === "human_bulk") return "bulk-approved";
@@ -1361,6 +1369,8 @@ export interface DraftAngle {
 }
 
 export interface LastDraft {
+  /** Member who requested this draft; null for unattended or legacy drafts. */
+  editedBy?: string | null;
   angle?: DraftAngle;
   subject: string;
   body: string;
@@ -2443,6 +2453,14 @@ export interface MoveQueueRowResult {
   destination: { name: string; port: number; queueId: number; reused: boolean };
 }
 
+/** Result of POST /api/workspaces. */
+export interface WorkspaceCreateResult {
+  name: string;
+  port: number;
+  persistent: boolean;
+  warning: string | null;
+}
+
 /** Workspace identity + roster served by GET /api/workspace. */
 export interface WorkspaceInfo {
   current: { name: string; home: string; port: number };
@@ -2455,6 +2473,16 @@ export interface WorkspaceInfo {
     /** Live-probed server-side (~300ms /api/health ping). */
     running: boolean;
   }>;
+}
+
+/**
+ * Who a request is acting as, served by GET /api/me. `email` is null for the
+ * local owner: someone on the host machine itself when no owner is listed.
+ */
+export interface CurrentMember {
+  email: string | null;
+  name: string | null;
+  role: "owner" | "member";
 }
 
 /* ── Calendar meetings (issue #577) ──────────────────────────────────── */

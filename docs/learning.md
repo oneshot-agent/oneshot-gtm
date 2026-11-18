@@ -39,7 +39,7 @@ Each proposal is one row showing only what would change.
 
 - **approve** applies it to drafts from now on.
 - **dismiss** drops it. The same evidence will not raise it again, and a later writing preference that mostly repeats its words (most content words shared, same numbers and negations) is skipped.
-- Open the row for **was**, **evidence** and **edit**. **edit before approving**, then **approve edited**, applies your wording.
+- Open the row for **was**, **evidence** and **edit**. **edit before approving**, then **approve edited**, applies your wording. With [members](./members.md#what-stays-private), the evidence leaves out LinkedIn messages on an account another member connected; the row says how many.
 - The history below lists what is applied. **Roll back** restores what was active before. A writing preference can be disabled and enabled again; twelve can be active at once.
 
 Approval is refused when the value moved since the proposal was made, for instance you edited the ICP by hand. Dismiss it and a fresh one follows. An approval never rewrites or sends an existing draft.

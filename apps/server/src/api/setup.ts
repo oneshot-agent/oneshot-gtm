@@ -1,3 +1,5 @@
+import { currentMember } from "../members.ts";
+import { saveServerConfig } from "./_config-save.ts";
 import {
   LINKEDIN_TEMPLATE_FIELDS,
   normalizeWebsite,
@@ -24,7 +26,6 @@ import {
   registerOneShotIdentity,
   registerSmartleadIdentity,
   resolveIdentities,
-  saveConfig,
   saveSecrets,
   secretSource,
   secretsPath,
@@ -430,7 +431,7 @@ export async function setup(req: Request): Promise<Response> {
     await validateNewOneShotSenders(body);
     await validateSendViaUpdates(body);
     sendViaNotices = await resolveNewSmartleadSendVia(body);
-    applySetup(body);
+    applySetup(body, currentMember(req)?.email ?? null);
   } catch (err) {
     if (err instanceof SetupValidationError) {
       return jsonResponse({ error: err.message }, 400, req);
@@ -551,7 +552,7 @@ async function validateSendViaUpdates(body: SetupRequest): Promise<void> {
 /**
  * Validate before writing so a 400 leaves config, identity pool, and .env unchanged.
  */
-function applySetup(body: SetupRequest): void {
+function applySetup(body: SetupRequest, member: string | null): void {
   if (body.onboardingStep === 1) {
     if (!body.founderName?.trim() || !body.productOneLiner?.trim())
       throw new SetupValidationError("Enter your name and product description.");
@@ -625,7 +626,7 @@ function applySetup(body: SetupRequest): void {
   }
 
   const previousAI = aiFingerprint();
-  saveConfig(merged);
+  saveServerConfig(merged, member, "setup");
 
   for (const id of remove) {
     try {

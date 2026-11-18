@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { join } from "node:path";
 import type { LinkedInAccount } from "@oneshot-agent/sdk";
 import type { LinkedInConversation, LinkedInMessage } from "../src/linkedin-fields.ts";
-import { LinkedInInboxStore } from "../src/linkedin-inbox.ts";
+import {
+  LinkedInInboxStore,
+  LinkedInReplacementOwnerMismatchError,
+} from "../src/linkedin-inbox.ts";
 let store: LinkedInInboxStore;
 const account = (id: string, member = "owner") =>
   ({
@@ -229,4 +232,73 @@ it("does not merge history using names or changed message content", () => {
   store.reconcileReplacementHistory("wallet:old");
   expect(store.allMessages("wallet:old")).toHaveLength(2);
   expect(store.threads()).toHaveLength(2);
+});
+
+/** The account being replaced, as Mia connected it, and a record of the new connection saved for `owner`. */
+function replacingMiasAccountWith(owner: string | undefined) {
+  store.db.exec("DELETE FROM accounts WHERE key='wallet:old'");
+  store.saveAccount({
+    key: "wallet:old",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: account("old"),
+    sync: null,
+    checkedAt: null,
+    error: null,
+    ownerMember: "mia@example.com",
+  });
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: account("new"),
+    sync: null,
+    checkedAt: null,
+    error: null,
+    ownerMember: owner,
+  });
+  store.saveConversation("wallet:new", conversation("new-chat"), [], "new");
+  store.saveMessages("wallet:new", [message("new-message", "new-chat")]);
+}
+const untouched = () => {
+  expect(store.account("wallet:old")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "old" },
+  });
+  expect(store.account("wallet:old")?.previousAccountIds).toBeUndefined();
+  expect(store.threads("wallet:old")).toHaveLength(1);
+  expect(store.threads("wallet:new")).toHaveLength(1);
+  expect(store.allMessages("wallet:new")).toHaveLength(1);
+};
+it.each([
+  ["another member", "bob@example.com"],
+  ["no member", undefined],
+])("merges no conversation from a record saved for %s into a member's account", (_who, owner) => {
+  replacingMiasAccountWith(owner);
+  expect(() => store.replaceAccount("wallet:old", account("new"), [])).toThrow(
+    LinkedInReplacementOwnerMismatchError,
+  );
+  untouched();
+  expect(store.account("wallet:new")?.ownerMember ?? undefined).toBe(owner);
+});
+it("merges no conversation saved under a key with no account record", () => {
+  replacingMiasAccountWith("mia@example.com");
+  store.db.exec("DELETE FROM accounts WHERE key='wallet:new'");
+  expect(() => store.replaceAccount("wallet:old", account("new"), [])).toThrow(
+    LinkedInReplacementOwnerMismatchError,
+  );
+  expect(store.account("wallet:old")?.account.id).toBe("old");
+  expect(store.threads("wallet:new")).toHaveLength(1);
+  expect(store.allMessages("wallet:new")).toHaveLength(1);
+});
+it("merges a record saved for the same member", () => {
+  replacingMiasAccountWith("mia@example.com");
+  store.replaceAccount("wallet:old", account("new"), []);
+  expect(store.account("wallet:old")).toMatchObject({
+    ownerMember: "mia@example.com",
+    account: { id: "new" },
+  });
+  expect(store.account("wallet:new")).toBeNull();
+  expect(store.threads("wallet:new")).toHaveLength(0);
+  expect(store.allMessages("wallet:old")).toHaveLength(1);
 });

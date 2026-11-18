@@ -46,6 +46,7 @@ function approvedRow(payload: Record<string, unknown>, key: string): number {
       sent: false,
       receiptIds: [],
       dryRun: false,
+      editedBy: "editor@example.com",
       configKey: queueDraftConfigKey("luma-events", "linkedin"),
     },
   });
@@ -73,9 +74,11 @@ describe("a refused manual LinkedIn send persists its reason", () => {
       flags: string[];
       sent: boolean;
       body: string;
+      editedBy: string;
     };
     expect(draft.sent).toBe(false);
     expect(draft.body).toBe("hello there");
+    expect(draft.editedBy).toBe("editor@example.com");
     expect(draft.flags[0]).toMatch(/^not-a-person:/);
 
     // What /queue renders from.
