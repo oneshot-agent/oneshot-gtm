@@ -415,7 +415,7 @@ export class CodeAnswerStore {
    */
   approve(
     id: string,
-    input: { text?: string | null; by: string; now?: Date },
+    input: { text?: string | null; by: string | null; now?: Date },
   ): { record: CodeAnswerRecord } | { error: string } {
     const existing = this.row(id);
     if (!existing) return { error: `code answer '${id}' not found` };
@@ -457,7 +457,7 @@ export class CodeAnswerStore {
   /** The founder does not want this question answered from the code. Any status but dismissed. */
   dismiss(
     id: string,
-    input: { by?: string; now?: Date } = {},
+    input: { by?: string | null; now?: Date } = {},
   ): { record: CodeAnswerRecord } | { error: string } {
     const existing = this.row(id);
     if (!existing) return { error: `code answer '${id}' not found` };

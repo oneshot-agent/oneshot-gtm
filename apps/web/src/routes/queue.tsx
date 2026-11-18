@@ -109,6 +109,7 @@ import {
 } from "../lib/channels.ts";
 import { flagAdvice, heldSummary, type HeldOptions } from "../lib/flagLabels.ts";
 import {
+  memberDecision,
   caseRows,
   personResearchBadge,
   personResearchRows,
@@ -1496,6 +1497,9 @@ export function QueueRow({
           colSpan={7}
           theCase={
             <CaseSection>
+              {!masked && memberDecision(row) && (
+                <p className="m-0 text-xs text-ink-muted">{memberDecision(row)}</p>
+              )}
               {liveReads && <ReadOnOpen row={row} />}
               {emptyResearch && (
                 <div role="note" className="text-[12px] leading-5 text-ink-muted">

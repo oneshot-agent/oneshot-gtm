@@ -1,3 +1,4 @@
+import { memberDecision } from "../src/lib/queueCase.ts";
 import { describe, expect, it } from "vitest";
 import {
   caseMeta,
@@ -142,5 +143,35 @@ describe("personResearchBadge with a draft that has no timestamp", () => {
     expect(personResearchBadge(payload, { draftedAt: "2026-09-13T00:00:00.000Z" })).toBe(
       "researched",
     );
+  });
+});
+
+describe("memberDecision", () => {
+  it("names the member for approvals, rejections and sends; omits machines and legacy rows", () => {
+    const row = {
+      status: "approved" as const,
+      decision: "approve" as const,
+      decidedBy: "human" as const,
+      decidedByMember: "mia@example.com",
+    };
+    expect(memberDecision(row)).toBe("Approved by mia@example.com");
+    expect(memberDecision({ ...row, status: "rejected", decision: "reject" })).toBe(
+      "Rejected by mia@example.com",
+    );
+    expect(memberDecision({ ...row, status: "sent", sentByMember: "sender@example.com" })).toBe(
+      "Sent by sender@example.com",
+    );
+    expect(memberDecision({ ...row, status: "sent", sentByMember: null })).toBeNull();
+    expect(memberDecision({ ...row, status: "sent" })).toBeNull();
+    expect(
+      memberDecision({
+        ...row,
+        status: "sent",
+        decidedBy: "machine",
+        sentByMember: "sender@example.com",
+      }),
+    ).toBe("Sent by sender@example.com");
+    expect(memberDecision({ ...row, decidedBy: "machine" })).toBeNull();
+    expect(memberDecision({ ...row, decidedByMember: null })).toBeNull();
   });
 });

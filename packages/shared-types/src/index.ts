@@ -1048,6 +1048,8 @@ export interface QueueRowView {
    */
   decision: "approve" | "reject" | "auto_reject" | null;
   decidedBy: "human" | "human_bulk" | "machine" | null;
+  decidedByMember?: string | null;
+  sentByMember?: string | null;
   decidedAt: string | null;
   /** The structured reason the founder picked (#813); null on legacy, bulk and machine decisions. */
   decisionReason?: DecisionReason | null;
@@ -1084,10 +1086,16 @@ export interface ProspectBrowseRow extends QueueRowView {
 export function describeDecision(row: {
   decision: QueueRowView["decision"];
   decidedBy: QueueRowView["decidedBy"];
+  decidedByMember?: string | null;
   status?: QueueStatusView;
 }): string {
   if (row.decision === "auto_reject" || (row.decision === "reject" && row.decidedBy === "machine"))
     return "auto-rejected";
+  if (row.decidedByMember && (row.decidedBy === "human" || row.decidedBy === "human_bulk")) {
+    if (row.decision === "reject") return `rejected by ${row.decidedByMember}`;
+    if (row.decision === "approve")
+      return `approved by ${row.decidedByMember}${row.decidedBy === "human_bulk" ? " (bulk)" : ""}`;
+  }
   if (row.decision === "reject") return "rejected by you";
   if (row.decision === "approve") {
     if (row.decidedBy === "human_bulk") return "bulk-approved";
@@ -1348,6 +1356,8 @@ export interface DraftAngle {
 }
 
 export interface LastDraft {
+  /** Member who requested this draft; null for unattended or legacy drafts. */
+  editedBy?: string | null;
   angle?: DraftAngle;
   subject: string;
   body: string;

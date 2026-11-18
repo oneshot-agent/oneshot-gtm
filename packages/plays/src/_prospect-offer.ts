@@ -153,7 +153,7 @@ export interface ProspectOffer {
    */
   judgedVersion?: string;
   /** Set when the founder wrote or edited it. Never re-derived. */
-  editedBy?: "founder";
+  editedBy?: string;
   /**
    * When the founder approved this offer although the judge rated it `weak`.
    * Lives on this offer object only: picking another offer or writing new
@@ -478,7 +478,7 @@ export function offerIsCurrent(
   cfg: { offerExclusions?: unknown } = loadConfig(),
 ): stored is ProspectOffer {
   if (!isProspectOffer(stored)) return false;
-  if (stored.editedBy === "founder") return true;
+  if (typeof stored.editedBy === "string" && !!stored.editedBy?.trim()) return true;
   return (
     stored.version === OFFER_PROMPT_VERSION &&
     stored.inputHash === inputHash &&
@@ -2283,7 +2283,7 @@ export async function offerSetForDraft(
   if (!playMakesOffer(input.playName, cfg)) return null;
   const t = input.target as JsonRecord;
   const stored = t["offer"];
-  if (isProspectOffer(stored) && stored.editedBy === "founder") {
+  if (isProspectOffer(stored) && typeof stored.editedBy === "string" && !!stored.editedBy?.trim()) {
     return { offer: stored, candidates: offerCandidatesOf(t), derived: false };
   }
   if (!cfg.productBrief?.trim()) return null;
@@ -2374,7 +2374,11 @@ export const WEAK_OFFER_HOLD_REASON =
  */
 export function offerHoldsSend(offer: unknown): boolean {
   if (!isProspectOffer(offer)) return false;
-  return offer.relevance === "weak" && offer.editedBy !== "founder" && !offerWeakApproved(offer);
+  return (
+    offer.relevance === "weak" &&
+    !(typeof offer.editedBy === "string" && !!offer.editedBy?.trim()) &&
+    !offerWeakApproved(offer)
+  );
 }
 
 /**
@@ -2444,7 +2448,7 @@ function offerIsStrong(
 ): offer is ProspectOffer {
   return (
     isProspectOffer(offer) &&
-    (offer.editedBy === "founder" ||
+    ((typeof offer.editedBy === "string" && !!offer.editedBy?.trim()) ||
       (offer.version === OFFER_PROMPT_VERSION &&
         offer.relevance === "relevant" &&
         offer.productHash === productHash &&
@@ -2491,8 +2495,12 @@ export function mergeKeptOffers(
     offerIsStrong(o, productHash, exclusionsHash, rulesHash),
   );
   const newOnes = fresh.filter(unseen);
-  const founders = previous.filter((o) => o.editedBy === "founder").filter(unseen);
-  const others = previous.filter((o) => o.editedBy !== "founder").filter(unseen);
+  const founders = previous
+    .filter((o) => typeof o.editedBy === "string" && !!o.editedBy?.trim())
+    .filter(unseen);
+  const others = previous
+    .filter((o) => !(typeof o.editedBy === "string" && !!o.editedBy?.trim()))
+    .filter(unseen);
   const kept = founders.slice(0, OFFER_COUNT - Math.min(1, newOnes.length));
   return [...newOnes.slice(0, OFFER_COUNT - kept.length), ...kept, ...others].slice(0, OFFER_COUNT);
 }
@@ -2512,7 +2520,7 @@ export function offerSkipPatch(
 ): { offerSkip: OfferSkip; offer?: null; offerCandidates?: null } {
   const stands =
     isProspectOffer(previous) &&
-    (previous.editedBy === "founder" ||
+    ((typeof previous.editedBy === "string" && !!previous.editedBy?.trim()) ||
       offerWeakApproved(previous) ||
       (previous.version === OFFER_PROMPT_VERSION &&
         offerExclusionsCurrent(previous, cfg) &&

@@ -404,7 +404,7 @@ describe("approveQueueRoute status transitions", () => {
       { id: "11" },
     );
     expect(res.status).toBe(200);
-    expect(statusCalls).toEqual([{ id: 11, status: "approved", decidedBy: "human" }]);
+    expect(statusCalls).toEqual([{ id: 11, status: "approved", decidedBy: "human", member: null }]);
   });
 
   it("does not approve a CSV reservation while classification is in progress", async () => {
@@ -443,6 +443,6 @@ describe("approveQueueRoute status transitions", () => {
       },
     );
     expect(res.status).toBe(200);
-    expect(statusCalls).toEqual([{ id: 11, status: "approved", decidedBy: "human" }]);
+    expect(statusCalls).toEqual([{ id: 11, status: "approved", decidedBy: "human", member: null }]);
   });
 });

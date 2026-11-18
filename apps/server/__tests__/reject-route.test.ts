@@ -104,19 +104,27 @@ describe("rejectQueueRoute", () => {
   it("no body → human reject with the note untouched (the bulk path)", async () => {
     const res = await rejectQueueRoute(post("7"), { id: "7" });
     expect(res.status).toBe(200);
-    expect(statusCalls).toEqual([{ id: 7, status: "rejected", decidedBy: "human" }]);
+    expect(statusCalls).toEqual([{ id: 7, status: "rejected", decidedBy: "human", member: null }]);
   });
 
   it("a reason is written as the human's note", async () => {
     await rejectQueueRoute(post("7", { reason: "  Recruiter, not the buyer. " }), { id: "7" });
     expect(statusCalls).toEqual([
-      { id: 7, status: "rejected", decidedBy: "human", notes: "Recruiter, not the buyer." },
+      {
+        id: 7,
+        status: "rejected",
+        decidedBy: "human",
+        member: null,
+        notes: "Recruiter, not the buyer.",
+      },
     ]);
   });
 
   it("an empty reason clears the stale machine note", async () => {
     await rejectQueueRoute(post("7", { reason: "" }), { id: "7" });
-    expect(statusCalls).toEqual([{ id: 7, status: "rejected", decidedBy: "human", notes: "" }]);
+    expect(statusCalls).toEqual([
+      { id: 7, status: "rejected", decidedBy: "human", member: null, notes: "" },
+    ]);
   });
 
   it("refuses the machine prefix and a non-string with 400 and no write", async () => {
@@ -347,6 +355,7 @@ describe("structured decision reasons (#813)", () => {
     expect(statusCalls.at(-1)).toMatchObject({
       status: "rejected",
       decidedBy: "human",
+      member: null,
       decisionReason: "wrong_person",
       notes: "not the buyer",
     });
