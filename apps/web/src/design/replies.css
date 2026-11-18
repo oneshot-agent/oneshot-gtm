@@ -161,14 +161,26 @@
   font-size: 10px;
   color: var(--ink-muted);
 }
+.replies-company-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
 .replies-company {
   display: block;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
   color: var(--ink-muted);
-  margin-top: 3px;
+}
+.replies-row-label {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
 }
 .replies-snippet {
   display: -webkit-box;

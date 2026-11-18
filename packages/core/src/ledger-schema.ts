@@ -676,6 +676,23 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // A LinkedIn reply's label (REPLY_INTENTS), copied from the shared inbox
+    // store's message label when the reply is delivered here or labelled
+    // later. NULL = not labelled yet. `intent_review` is the classifier's
+    // under-the-floor flag. The opt-out check reads `intent = 'unsubscribe'`
+    // once per prospect, so it gets a partial index like migration 30's.
+    version: 31,
+    name: "linkedin-reply-intent",
+    up: (db) => {
+      addColumnIfMissing(db, "channel_events", "intent", "TEXT");
+      addColumnIfMissing(db, "channel_events", "intent_review", "INTEGER");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_channel_events_unsubscribe
+          ON channel_events(prospect_id) WHERE intent = 'unsubscribe';
+      `);
+    },
+  },
 ];
 
 /**

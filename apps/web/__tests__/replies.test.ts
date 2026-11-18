@@ -5,7 +5,16 @@ import {
   type InboxReplyView,
   type ReplyThread,
 } from "@oneshot-gtm/shared-types";
-import { replyInTab, replyInView, replyNeedsAttention } from "../src/lib/replies.ts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ReplyRowLabel } from "../src/components/ReplyRowLabel.tsx";
+import {
+  replyHasLabel,
+  replyInTab,
+  replyInView,
+  replyLabelOptions,
+  replyNeedsAttention,
+} from "../src/lib/replies.ts";
 
 describe("unified reply views", () => {
   it("removes snoozed conversations from attention and restores them when due", () => {
@@ -140,5 +149,106 @@ describe("email subject identity", () => {
       emailThreads({ replies: [], conversations: [c], hasMore: false }, "test")[0]
         ?.combinedEmailHistory,
     ).toBe(false);
+  });
+});
+
+describe("reply label filter", () => {
+  const interested = { intent: "interested" } as const;
+  const notNow = { intent: "not_now" } as const;
+  const none = { intent: null };
+  it("matches one label, the positive group, unlabelled threads, or everything", () => {
+    expect(replyHasLabel(interested, "interested")).toBe(true);
+    expect(replyHasLabel(notNow, "interested")).toBe(false);
+    expect(replyHasLabel(interested, "positive")).toBe(true);
+    expect(replyHasLabel(notNow, "positive")).toBe(false);
+    expect(replyHasLabel(none, "positive")).toBe(false);
+    expect(replyHasLabel(none, "unlabelled")).toBe(true);
+    expect(replyHasLabel(interested, "unlabelled")).toBe(false);
+    expect([interested, notNow, none].every((t) => replyHasLabel(t, "all"))).toBe(true);
+  });
+  it("counts each option and keeps only labels someone has, plus the selected one", () => {
+    const threads = [interested, interested, notNow, none];
+    const options = replyLabelOptions(threads, "meeting");
+    expect(options.map((o) => [o.value, o.count])).toEqual([
+      ["all", 4],
+      ["positive", 2],
+      ["interested", 2],
+      ["meeting", 0],
+      ["not_now", 1],
+      ["unlabelled", 1],
+    ]);
+    expect(options.find((o) => o.value === "interested")?.title).toBe("Interested");
+  });
+  it("email threads carry the reply label on both build paths", () => {
+    const reply: InboxReplyView = {
+      id: "r1",
+      kind: "human",
+      intent: "interested",
+      intentReason: null,
+      intentReview: true,
+      fromEmail: "ada@example.com",
+      fromRaw: "Ada",
+      subject: "Hi",
+      receivedAt: "2026-09-17T12:00:00Z",
+      body: "Tell me more",
+      sourceIdentityId: "gmail:me@example.com",
+      sourceProvider: "gmail",
+      threadId: "t1",
+      messageId: "<r1>",
+      matched: null,
+      thread: null,
+    };
+    const [grouped] = emailThreads({ replies: [reply], hasMore: false }, "test");
+    expect(grouped).toMatchObject({ intent: "interested", intentReview: true });
+    const conversation = {
+      prospectId: 1,
+      name: "Ada",
+      company: null,
+      email: "ada@example.com",
+      archivedAt: null,
+      playName: null,
+      cadenceStatus: null,
+      lastActivityAt: "2026-09-17T12:00:00Z",
+      draftBody: null,
+      steer: null,
+      status: null,
+      intent: "meeting",
+      awaitingReply: true,
+      items: [
+        {
+          kind: "reply",
+          id: "c1",
+          threadKey: "t2",
+          sourceIdentityId: "gmail:me@example.com",
+          threadId: "t2",
+          messageId: "<c1>",
+          at: "2026-09-17T12:00:00Z",
+          subject: "Hi",
+          body: "Let's meet",
+          replyKind: "human",
+          intent: "meeting",
+        },
+      ],
+    } satisfies ConversationView;
+    const [fallback] = emailThreads(
+      { replies: [], conversations: [conversation], hasMore: false },
+      "test",
+    );
+    expect(fallback).toMatchObject({ intent: "meeting", intentReview: false });
+    const [unlabelled] = emailThreads(
+      { replies: [{ ...reply, intent: null, intentReview: undefined }], hasMore: false },
+      "test",
+    );
+    expect(unlabelled).toMatchObject({ intent: null, intentReview: false });
+  });
+  it("a conversation row shows its label, and nothing before one is set", () => {
+    const row = renderToStaticMarkup(
+      createElement(ReplyRowLabel, { thread: { intent: "interested", intentReview: true } }),
+    );
+    expect(row).toContain("Interested");
+    expect(row).toContain("check label");
+    expect(renderToStaticMarkup(createElement(ReplyRowLabel, { thread: { intent: null } }))).toBe(
+      "",
+    );
   });
 });

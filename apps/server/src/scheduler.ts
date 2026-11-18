@@ -4,6 +4,7 @@ import { refreshReplyLearning } from "./reply-learning.ts";
 import { refreshIcpProposal } from "./icp-proposals.ts";
 import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
+import { labelLinkedInReplies } from "./linkedin-intent.ts";
 import { startLoopLagMonitor } from "./loop-lag.ts";
 import {
   demoMode,
@@ -132,6 +133,9 @@ export function startScheduler(): SchedulerHandle {
   let lastBouncePollAt = 0;
   let lastIntentRetryAt = 0;
   let mailBackfillRunning = false;
+  // One LinkedIn labelling batch at a time: a slow classifier must not stack
+  // batches that each claim and pay for the next messages.
+  let linkedInIntentRunning = false;
   // Preserve the last sweep result across throttled ticks. Resetting it to true
   // could watermark a day whose bounce sweep is still incomplete.
   let bouncePollClean = true;
@@ -184,6 +188,17 @@ export function startScheduler(): SchedulerHandle {
     void Promise.resolve()
       .then(() => refreshLinkedInInbox())
       .catch((e) => logEvent("scheduler.linkedin.failed", { message: String(e) }, "warn"));
+    // Labels what the inbox already holds; a message the refresh above is
+    // still capturing is labelled next tick, and delivery carries the label.
+    if (!linkedInIntentRunning) {
+      linkedInIntentRunning = true;
+      lag.step("linkedin-intent");
+      void labelLinkedInReplies()
+        .catch((e) => logEvent("scheduler.linkedin_intent.failed", { message: String(e) }, "warn"))
+        .finally(() => {
+          linkedInIntentRunning = false;
+        });
+    }
     try {
       if (!mailBackfillRunning) {
         mailBackfillRunning = true;

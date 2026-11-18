@@ -1676,6 +1676,10 @@ intel
     "--allow-unsubscribe-downgrade",
     "let a re-label replace an existing unsubscribe (off by default)",
   )
+  .option(
+    "--linkedin",
+    "label this workspace's LinkedIn replies instead, until none is left (--limit caps the total)",
+  )
   .description(
     "Classify intent on older replies that have none. Labels only; never triggers follow-ups or opt-outs.",
   )
@@ -1687,8 +1691,10 @@ intel
         since?: number;
         dryRun?: boolean;
         allowUnsubscribeDowngrade?: boolean;
+        linkedin?: boolean;
       }) =>
         commandIntelBackfillIntent({
+          ...(opts.linkedin ? { linkedin: true } : {}),
           ...(opts.limit != null ? { limit: opts.limit } : {}),
           ...(opts.reclassify ? { reclassify: true } : {}),
           ...(opts.since != null ? { sinceDays: opts.since } : {}),

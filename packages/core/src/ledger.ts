@@ -79,6 +79,7 @@ import {
   recordCadenceSendError as cadRecordCadenceSendError,
   clearCadenceSendError as cadClearCadenceSendError,
   recordLinkedInReply as cadRecordLinkedInReply,
+  setLinkedInReplyIntent as cadSetLinkedInReplyIntent,
   suppressCadencesForReply,
   recordProspectReply as cadRecordProspectReply,
   recordSequenceEvent as cadRecordSequenceEvent,
@@ -1105,6 +1106,10 @@ export class Ledger {
     occurredAt: string;
     /** The message text, when the channel supplies one. Feeds the composer. */
     body?: string | null;
+    /** The reply's label (REPLY_INTENTS), when the inbox store already has one. */
+    intent?: string | null;
+    /** The label fell under the classifier's confidence floor. */
+    intentReview?: boolean;
   }): {
     duplicate: boolean;
     prospectId: number;
@@ -1114,6 +1119,16 @@ export class Ledger {
     const out = cadRecordLinkedInReply(this.db, this.drafts, input);
     if (out.cadencesStopped > 0) this.syncCadencePresence([out.prospectId]);
     return out;
+  }
+
+  /** @see ledger-cadence.ts#setLinkedInReplyIntent */
+  setLinkedInReplyIntent(input: {
+    source: string;
+    externalEventId: string;
+    intent: string;
+    intentReview?: boolean;
+  }): number[] {
+    return cadSetLinkedInReplyIntent(this.db, input);
   }
 
   /**

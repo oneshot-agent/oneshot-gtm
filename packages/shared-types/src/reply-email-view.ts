@@ -61,6 +61,8 @@ export function emailThreads(
       drafts: null,
       send: null,
       email: r,
+      intent: r.intent ?? null,
+      intentReview: !!r.intentReview,
       ...extra,
     });
   }
@@ -82,6 +84,8 @@ export function emailThreads(
       kind: newest.replyKind,
       intent: newest.intent,
       intentReason: null,
+      // A conversation item carries no confidence, so this label is never flagged for review.
+      intentReview: false,
       fromEmail: c.email,
       fromRaw: c.name ?? c.email,
       subject: newest.subject ?? "",

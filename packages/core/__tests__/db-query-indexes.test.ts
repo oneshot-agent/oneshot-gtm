@@ -203,13 +203,19 @@ it("answers the per-prospect opt-out check from the unsubscribe indexes after up
       `INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, kind, intent, received_at)
        VALUES ('r1', 't4', ?, 'said@example.test', 'take me off', 'human', 'unsubscribe', '2026-11-01')`,
     ).run(said);
+    // A LinkedIn reply labelled unsubscribe, and one labelled otherwise.
+    const onLinkedIn = ledger.upsertProspect({ email: "linkedin@example.test" });
+    const keen = ledger.upsertProspect({ email: "keen@example.test" });
+    const insertEvent = db.query(
+      `INSERT INTO channel_events (source, external_event_id, prospect_id, channel, event_type, occurred_at, intent)
+       VALUES ('oneshot-linkedin', ?, ?, 'linkedin', 'reply', '2026-11-01', ?)`,
+    );
+    insertEvent.run("account:1", onLinkedIn, "unsubscribe");
+    insertEvent.run("account:2", keen, "interested");
 
-    expect([linked, unlinked, other, said].map((id) => isProspectOptedOut(db, id))).toEqual([
-      true,
-      true,
-      false,
-      true,
-    ]);
+    expect(
+      [linked, unlinked, other, said, onLinkedIn, keen].map((id) => isProspectOptedOut(db, id)),
+    ).toEqual([true, true, false, true, true, false]);
     const clause = contactAllowedClause(db);
     for (const sql of [
       `SELECT 1 FROM prospects p WHERE p.id = ? AND NOT (${clause})`,
@@ -219,7 +225,8 @@ it("answers the per-prospect opt-out check from the unsubscribe indexes after up
       expect(details).toContain("USING INDEX mailbox_messages_unsubscribe");
       expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_kind");
       expect(details).toContain("USING INDEX idx_inbox_replies_unsubscribe_intent");
-      expect(details).not.toMatch(/^SCAN (m|ir)$/m);
+      expect(details).toContain("USING INDEX idx_channel_events_unsubscribe");
+      expect(details).not.toMatch(/^SCAN (m|ir|ce)$/m);
     }
   } finally {
     ledger.close();

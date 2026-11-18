@@ -6,6 +6,7 @@ import {
   getLedger,
   getLinkedInInboxStore,
   getReplyReviewStore,
+  isHumanLinkedInReply,
   loadConfig,
   linkedInMatches,
   replyContextVersion,
@@ -64,6 +65,14 @@ export function linkedInThreads(viewer?: LinkedInViewer): ReplyThread[] {
       }));
       const latest = history.findLast((m) => m.direction === "inbound" && !m.deleted);
       if (!latest) return [];
+      // The label of the newest human reply that has one, as email shows its
+      // latest labelled reply. Only human inbound messages are ever labelled.
+      const labels = store.conversationIntents(a.key, c.id);
+      const label =
+        rawMessages
+          .filter(isHumanLinkedInReply)
+          .map((m) => labels.get(m.id))
+          .findLast((l) => l != null) ?? null;
       const peers = c.attendees.filter((p) => !p.is_self);
       const peer = peers[0];
       const currentConnection = !a.previousAccountIds?.length || t.sourceAccountId === a.account.id;
@@ -117,6 +126,8 @@ export function linkedInThreads(viewer?: LinkedInViewer): ReplyThread[] {
           canSend,
           linkedinConnectionState,
           canGenerate,
+          intent: label?.intent ?? null,
+          intentReview: label?.review ?? false,
           // The LinkedIn account is shared by every workspace: an unassigned
           // conversation drafts as the workspace it is opened in, with no
           // prospect research behind it. Say so wherever its drafts show.
