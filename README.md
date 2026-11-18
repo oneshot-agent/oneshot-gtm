@@ -131,6 +131,8 @@ bun run --cwd apps/server build    # the published server bundle
 
 The `--bun` flag matters: `bun:sqlite` does not exist under Node. Tests set `ONESHOT_GTM_HOME` to a temp directory and never touch your ledger. [STATUS.md](./STATUS.md) carries the current test totals. Docs upkeep is in [maintaining the docs](./docs/documentation.md).
 
+New comments say why, not what: no restating the code, at most about a quarter of the code a PR adds and no new block over 8 lines (`scripts/comment-density.ts`, the `Comments` check). Existing comments stay as they are; see [#933](https://github.com/oneshot-agent/oneshot-gtm/issues/933).
+
 ### Watching what's happening
 
 Each install writes `~/.oneshot-gtm/events.jsonl`: one line per LLM call, gate decision, finder event and swallowed error. It never leaves the machine.
