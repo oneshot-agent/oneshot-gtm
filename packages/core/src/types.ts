@@ -930,11 +930,12 @@ export interface QualifiedOutcomeExample {
 /**
  * A queue row's phone lookup, kept on its payload as `phoneLookup` (the number
  * itself is `payload.phone`). `running` until the job ends; then `done` (a
- * number), `none` (no provider had one), `unavailable` (the provider did not
- * answer; worth asking again) or `error`.
+ * number), `none` (no provider had one), `other_person` (the profile the
+ * number came with is someone else's, so it was not kept), `unavailable` (the
+ * provider did not answer; worth asking again) or `error`.
  */
 export interface QueuePhoneLookup {
-  status: "running" | "done" | "none" | "unavailable" | "error";
+  status: "running" | "done" | "none" | "other_person" | "unavailable" | "error";
   /** When the lookup started (`running`) or ended. */
   at: string;
   /** What went wrong, for `error`; short. */
