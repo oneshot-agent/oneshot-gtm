@@ -207,6 +207,28 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
+  /** How many messages one identity has stored, from the identity index. */
+  countForIdentity(identityId: string): number {
+    return (
+      this.db
+        .query("SELECT count(*) AS n FROM mailbox_messages WHERE identity_id=?")
+        .get(identityId) as { n: number }
+    ).n;
+  }
+
+  /** Every inbound message of these identities, unordered. */
+  inboundFor(identityIds: string[]): MailboxMessage[] {
+    if (!identityIds.length) return [];
+    return (
+      this.db
+        .query(
+          `SELECT data FROM mailbox_messages WHERE direction='inbound'
+           AND identity_id IN (${identityIds.map(() => "?").join(",")})`,
+        )
+        .all(...identityIds) as { data: string }[]
+    ).map((r) => JSON.parse(r.data));
+  }
+
   /** Return all stored mailbox messages with the newest first. */
   all(): MailboxMessage[] {
     return (

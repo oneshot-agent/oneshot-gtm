@@ -24,7 +24,7 @@ import type { AnnotatedInboxListResult, BounceListResult } from "./oneshot.ts";
 
 export type { MailboxMessage, MailboxHealth } from "./mailbox-store.ts";
 const DAY = 86_400_000;
-const syncs = new Map<string, { started: number; pending: Promise<void> | null }>();
+const syncs = new Map<string, { finished: number; pending: Promise<void> | null }>();
 const reclassifiedStores = new WeakSet<object>();
 
 /** Adapt a parsed mailbox message to the shared delivery-failure parser. */
@@ -323,7 +323,9 @@ async function syncIdentity(identityId: string, address: string, ledger: Ledger)
     }
     health.status = "connected";
     health.lastSyncAt = new Date().toISOString();
-    health.messages = store.all().filter((m) => m.identityId === identityId).length;
+    // A count, not a load: reading every stored message to count one
+    // identity's took seconds per sync on an 80k-message workspace.
+    health.messages = store.countForIdentity(identityId);
   } catch (err) {
     resetMailboxConnections();
     health.status = "error";
@@ -339,37 +341,42 @@ async function syncIdentity(identityId: string, address: string, ledger: Ledger)
   }
 }
 
-/** Shared by the background poll and all inbox requests in this workspace process. */
-export async function syncSmartleadMailboxes(force = false): Promise<void> {
+/**
+ * Shared by the background poll and all inbox requests in this workspace
+ * process. `only` limits the sync to those identities: one mailbox's listing
+ * syncs that mailbox, not all of them.
+ */
+export async function syncSmartleadMailboxes(force = false, only?: string[]): Promise<void> {
   const ledger = getLedger();
-  const identities = smartleadMailboxIdentities();
+  const all = smartleadMailboxIdentities();
+  const identities = only ? all.filter((i) => only.includes(i.id)) : all;
   if (!reclassifiedStores.has(ledger.mailboxes)) {
-    const active = new Set(identities.map((i) => i.id));
-    for (const m of ledger.mailboxes.all()) {
-      if (m.direction === "inbound" && active.has(m.identityId)) {
-        const bounces = m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body);
-        ledger.mailboxes.reclassify(
-          m,
-          bounces.length
-            ? "auto"
-            : classifyReply({
-                subject: m.subject,
-                body: m.body,
-                autoSubmitted: Boolean(m.autoSubmitted),
-              }),
-          bounces,
-        );
-      }
+    for (const m of ledger.mailboxes.inboundFor(all.map((i) => i.id))) {
+      const bounces = m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body);
+      ledger.mailboxes.reclassify(
+        m,
+        bounces.length
+          ? "auto"
+          : classifyReply({
+              subject: m.subject,
+              body: m.body,
+              autoSubmitted: Boolean(m.autoSubmitted),
+            }),
+        bounces,
+      );
     }
     reclassifiedStores.add(ledger.mailboxes);
   }
   await parallelMap(identities, 3, async (identity) => {
     const previous = syncs.get(identity.id);
     if (previous?.pending) return previous.pending;
-    if (!force && previous && Date.now() - previous.started < 60_000) return;
-    const entry = { started: Date.now(), pending: null as Promise<void> | null };
+    // Counted from when the last sync finished: counted from its start, a
+    // round slower than a minute re-armed every identity mid-poll.
+    if (!force && previous && Date.now() - previous.finished < 60_000) return;
+    const entry = { finished: 0, pending: null as Promise<void> | null };
     entry.pending = syncIdentity(identity.id, identity.address ?? "", ledger).finally(() => {
       entry.pending = null;
+      entry.finished = Date.now();
     });
     syncs.set(identity.id, entry);
     return entry.pending;
@@ -398,7 +405,7 @@ export async function listMailboxInbox(
   identityId: string,
   opts?: { since?: string; until?: string; limit?: number },
 ): Promise<AnnotatedInboxListResult> {
-  await syncSmartleadMailboxes();
+  await syncSmartleadMailboxes(false, [identityId]);
   const ledger = getLedger();
   const health = mailboxHealth().find((h) => h.identityId === identityId);
   const messages = ledger.mailboxes.inbound(identityId, opts?.since, opts?.until);
