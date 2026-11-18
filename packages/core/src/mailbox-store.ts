@@ -83,6 +83,14 @@ export class MailboxStore {
     db.exec(
       "CREATE INDEX IF NOT EXISTS mailbox_messages_bounce ON mailbox_messages(identity_id, direction, stored_at)",
     );
+    // Synced unsubscribes only. The opt-out check (contact-optout.ts) matches
+    // them per prospect by id or by `from`, which no full index can serve; this
+    // one is a few rows, so each check reads it instead of every message. Its
+    // WHERE must stay word for word the check's filter, or the planner skips it.
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS mailbox_messages_unsubscribe ON mailbox_messages(prospect_id)
+       WHERE direction = 'inbound' AND json_extract(data, '$.kind') = 'unsubscribe'`,
+    );
   }
 
   /** Look up a persisted mailbox message by its workspace ID. */

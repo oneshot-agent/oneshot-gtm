@@ -138,6 +138,20 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_inbox_replies_unsubscribe_intent",
+      "sql": "CREATE INDEX idx_inbox_replies_unsubscribe_intent
+          ON inbox_replies(prospect_id) WHERE intent = 'unsubscribe'",
+      "tbl_name": "inbox_replies",
+      "type": "index",
+    },
+    {
+      "name": "idx_inbox_replies_unsubscribe_kind",
+      "sql": "CREATE INDEX idx_inbox_replies_unsubscribe_kind
+          ON inbox_replies(prospect_id) WHERE kind = 'unsubscribe'",
+      "tbl_name": "inbox_replies",
+      "type": "index",
+    },
+    {
       "name": "idx_inbox_sent_thread",
       "sql": "CREATE INDEX idx_inbox_sent_thread
         ON inbox_sent(thread_key, sent_at)",
@@ -419,6 +433,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
     {
       "name": "mailbox_messages_thread",
       "sql": "CREATE INDEX mailbox_messages_thread ON mailbox_messages(thread_key, at)",
+      "tbl_name": "mailbox_messages",
+      "type": "index",
+    },
+    {
+      "name": "mailbox_messages_unsubscribe",
+      "sql": "CREATE INDEX mailbox_messages_unsubscribe ON mailbox_messages(prospect_id)
+       WHERE direction = 'inbound' AND json_extract(data, '$.kind') = 'unsubscribe'",
       "tbl_name": "mailbox_messages",
       "type": "index",
     },
