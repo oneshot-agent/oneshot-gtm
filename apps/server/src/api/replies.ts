@@ -66,14 +66,10 @@ function thread(key: unknown, viewer: LinkedInViewer): ReplyThread {
   if (typeof key !== "string") throw new Error("Conversation key is required");
   const t = getReplyReviewStore().get(key);
   if (!t) throw new Error("Conversation not found in this workspace");
-  if (t.channel === "linkedin") {
-    const store = getLinkedInInboxStore();
-    const accountKey = t.accountKey ?? store.thread(key)?.accountKey ?? "";
-    if (!store.visibleTo(accountKey, viewer))
-      throw new ForbiddenError(
-        "This conversation is on a LinkedIn account another member connected.",
-      );
-  }
+  if (t.channel === "linkedin" && !getLinkedInInboxStore().visibleTo(t.accountKey ?? "", viewer))
+    throw new ForbiddenError(
+      "This conversation is on a LinkedIn account another member connected.",
+    );
   if (t.workspace && t.workspace !== currentWorkspaceName())
     throw new Error("Conversation not found in this workspace");
   if (t.channel === "linkedin") {

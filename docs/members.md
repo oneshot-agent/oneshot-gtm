@@ -6,9 +6,20 @@ Until you allow a host, only the host machine can open the dashboards.
 
 ## What members can see
 
-Every member sees every workspace and can do everything in its dashboard: review, send, run finders, change Setup and spend from the wallet. There is no per-workspace access, and `owner` and `member` differ only in the role the dashboard shows. Add the people you would hand the laptop to.
+Every member sees every workspace and can do everything in its dashboard: review, send, run finders, change Setup and spend from the wallet. There is no per-workspace access. The one exception is [LinkedIn conversations](#what-stays-private), which only the member who connected the account sees. Apart from that, `owner` and `member` differ only in the role the dashboard shows. Add the people you would hand the laptop to.
 
 The header names who is signed in; `GET /api/me` returns their email, name and role. The CLI stays on the host machine.
+
+## What stays private
+
+Workspaces and mailboxes are shared. A LinkedIn account is one person's identity, so its conversations belong to the member who connected it.
+
+- **Private to that member:** the account's conversations in Replies, matched to a prospect or not, with their messages and reply drafts. Replying, archiving, snoozing, assigning a conversation to a prospect, and the account's own actions (reconnect, import history, remove) are theirs alone. Anyone else who tries gets `403`.
+- **Shown to every member:** the account's name, who connected it and whether it is connected, under **Replies → Connections & reply preferences → LinkedIn** and in the Setup account picker. A workspace can send from any connected account, whoever connected it.
+- **Shared on purpose:** LinkedIn counts in Measure and the funnel, and the writing rules learned from replies. A rule is shown with a few of the sent replies it was learned from, LinkedIn ones included.
+- **Not affected:** syncing, history import, matching replies to prospects and stopping a sequence on a reply run for every account. A reply matched to a prospect still marks that prospect as replied in its workspace.
+
+The account belongs to the member who started **Connect LinkedIn**, and stays theirs through reconnects. An account connected before you added members, or one a sync found on the wallet, belongs to the owner: the first owner on the list, which is also who the host machine acts as. With no members at all, the one person using the install sees every account, as before.
 
 ## Add members
 
