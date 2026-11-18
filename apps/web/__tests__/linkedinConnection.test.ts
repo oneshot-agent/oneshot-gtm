@@ -95,4 +95,20 @@ describe("LinkedIn connection presentation", () => {
       title: "Allow profile access",
     });
   });
+  it("shows another member's account by name and status, with nothing to fix or act on", () => {
+    const theirs = { ...base, mine: false, ownerMember: "mia@example.com" };
+    expect(linkedInConnectionView(theirs)).toMatchObject({
+      mine: false,
+      title: "Connected",
+      attention: false,
+      description: "Connected by mia@example.com. Its conversations are visible only to them.",
+    });
+    // Its owner has to reconnect it: here it is a status, not a call to action.
+    expect(linkedInConnectionView({ ...theirs, status: "reconnect_required" })).toMatchObject({
+      title: "Reconnect LinkedIn",
+      attention: false,
+    });
+    // A server that does not say whose it is: the viewer's own, as before.
+    expect(linkedInConnectionView(base).mine).toBe(true);
+  });
 });

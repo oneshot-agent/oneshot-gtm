@@ -14,7 +14,7 @@ Withdrawing is an action on your LinkedIn account. A withdrawal that fails is tr
 
 ## Connecting
 
-**Connect LinkedIn** on Setup connects a messaging account. When it can view profiles, the same connection handles [live profile reads](./finders.md#live-linkedin-reads); otherwise Setup offers a browser sign-in. **Replies → Connections & reply preferences → LinkedIn** manages connections afterwards. An account connected from workspace B belongs to B even if workspace A syncs first. Accounts remain in the shared store; their owning workspace supplies the wallet credentials.
+**Connect LinkedIn** on Setup connects a messaging account. When it can view profiles, the same connection handles [live profile reads](./finders.md#live-linkedin-reads); otherwise Setup offers a browser sign-in. **Replies → Connections & reply preferences → LinkedIn** manages connections afterwards. An account connected from workspace B belongs to B even if workspace A syncs first. Accounts remain in the shared store; their owning workspace supplies the wallet credentials. With [members](./members.md#what-stays-private), an account's conversations are shown only to the member who connected it.
 
 ### Choosing this workspace's account
 

@@ -2440,6 +2440,14 @@ export interface MoveQueueRowResult {
   destination: { name: string; port: number; queueId: number; reused: boolean };
 }
 
+/** Result of POST /api/workspaces. */
+export interface WorkspaceCreateResult {
+  name: string;
+  port: number;
+  persistent: boolean;
+  warning: string | null;
+}
+
 /** Workspace identity + roster served by GET /api/workspace. */
 export interface WorkspaceInfo {
   current: { name: string; home: string; port: number };

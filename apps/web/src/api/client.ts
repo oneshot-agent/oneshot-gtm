@@ -72,6 +72,7 @@ import type {
   WorkspaceInfo,
   CurrentMember,
   MembersView,
+  WorkspaceCreateResult,
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
@@ -390,6 +391,7 @@ export const api = {
   setMemberRole: (email: string, role: CurrentMember["role"]) =>
     postJson<{ ok: boolean }>("/members/role", { email, role }),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
+  workspaceCreate: (name: string) => postJson<WorkspaceCreateResult>("/workspaces", { name }),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
       name,
