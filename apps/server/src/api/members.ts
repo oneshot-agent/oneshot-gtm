@@ -17,7 +17,9 @@ export function membersRoute(req: Request): Response {
     allowedHosts: db.allowedHosts(),
     currentMember: member,
   };
-  return jsonResponse(view, 200, req);
+  const response = jsonResponse(view, 200, req);
+  response.headers.set("cache-control", "no-store");
+  return response;
 }
 
 async function mutate(req: Request, action: "add" | "remove" | "role"): Promise<Response> {

@@ -39,6 +39,7 @@ function request(path = "/api/members", body?: unknown, who = owner) {
 it("lists active member details and allowed hosts for a member", async () => {
   const response = await request("/api/members", undefined, member);
   expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
   expect(await response.json()).toEqual({
     members: [
       { email: owner, name: "Olive", role: "owner", addedAt: expect.any(String) },
