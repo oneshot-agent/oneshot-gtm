@@ -1,3 +1,5 @@
+import { mkdtempSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RepliesResult } from "@oneshot-gtm/shared-types";
 
@@ -118,9 +120,10 @@ beforeEach(() => {
     "DELETE FROM accounts;DELETE FROM conversations;DELETE FROM messages;DELETE FROM progress;DELETE FROM identities;",
   );
   review.db.exec("DELETE FROM review_threads;DELETE FROM review_sends;DELETE FROM review_leases");
-  const db = getSharedDb();
-  for (const m of db.listMembers()) db.removeMember(m.email);
-  for (const host of db.allowedHosts()) db.disallowHost(host);
+  process.env["ONESHOT_GTM_SHARED"] = mkdtempSync(
+    join(process.env["ONESHOT_GTM_HOME"]!, "privacy-shared-"),
+  );
+  getSharedDb();
   sdk.mockReset();
   oliveThread = seedAccount("olive", OWNER);
   miaThread = seedAccount("mia", MIA);
