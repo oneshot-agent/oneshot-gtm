@@ -1,4 +1,4 @@
-// Copied from second-brain-pack packs/dev-runner/comment-density.ts at fdc4d75.
+// Copied from second-brain-pack packs/dev-runner/comment-density.ts at 812ee9d.
 // Change it there and copy it again; the loop's guard applies the same limits.
 // How much of a diff's added code is comments. The guard refuses a loop branch
 // over the limits; each target repo's CI runs a verbatim copy at
@@ -158,9 +158,8 @@ export function commentDensity(diff: string, limits: Partial<CommentLimits> = {}
     violations.push(`the diff adds ${comments} comment lines to ${code} code lines (${(share * 100).toFixed(1)}%, limit ${Math.round(lim.share * 100)}%)`);
   }
   if (blocks.length) {
-    const worst = blocks.toSorted((a, b) => b.length - a.length);
-    const named = worst.slice(0, 5).map((b) => `${b.file}:${b.line} (${b.length} lines)`).join(', ');
-    const more = worst.length > 5 ? ` and ${worst.length - 5} more` : '';
+    const named = blocks.slice(0, 5).map((b) => `${b.file}:${b.line} (${b.length} lines)`).join(', ');
+    const more = blocks.length > 5 ? ` and ${blocks.length - 5} more` : '';
     violations.push(`comment blocks longer than ${lim.block} lines: ${named}${more}`);
   }
   return { code, comments, share, blocks, violations };
