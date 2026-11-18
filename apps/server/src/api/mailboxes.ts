@@ -25,10 +25,12 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
   const health = mailboxHealth();
   const ledger = getLedger();
   const store = ledger.mailboxes;
-  if (!health.length && !store?.all().length) return {};
+  // Loaded once: each load parses every stored message.
+  const stored = store?.all() ?? [];
+  if (!health.length && !stored.length) return {};
   const identities = new Map(health.map((h) => [h.identityId, h.address]));
-  const groups = new Map<string, ReturnType<typeof store.all>>();
-  for (const message of store.all()) {
+  const groups = new Map<string, typeof stored>();
+  for (const message of stored) {
     const group = groups.get(message.threadKey) ?? [];
     group.push(message);
     groups.set(message.threadKey, group);
