@@ -317,6 +317,32 @@ describe("labelLinkedInReplyBatch", () => {
     expect(store.messageIntent("account", "slow")?.intent).toBe("meeting");
   });
 
+  it("a claimed completion for a message merged away meanwhile stores nothing", async () => {
+    store.saveMessages("account", [message("gone")] as never);
+    const out = await labelLinkedInReplyBatch({
+      classify: async () => {
+        // Reconciliation moved the claimed row to the kept message.
+        store.db.query("DELETE FROM message_intents WHERE message_id='gone'").run();
+        return label("interested");
+      },
+      store,
+    });
+    expect(out).toMatchObject({ labelled: 0, skipped: 1 });
+    expect(
+      store.db.query("SELECT count(*) AS n FROM message_intents WHERE message_id='gone'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("a label whose row could not be written counts as a failure, not a label", async () => {
+    store.saveMessages("account", [message("broken")] as never);
+    vi.spyOn(store, "setMessageIntent").mockImplementationOnce(() => {
+      throw new Error("disk I/O error");
+    });
+    const out = await labelLinkedInReplyBatch({ classify: async () => label("meeting"), store });
+    expect(out).toMatchObject({ labelled: 0, failed: 1, labels: [] });
+    expect(store.messageIntent("account", "broken")).toBeNull();
+  });
+
   it("a dry run classifies without storing", async () => {
     store.saveMessages("account", [message("dry")] as never);
     const out = await labelLinkedInReplyBatch({

@@ -992,30 +992,38 @@ export class LinkedInInboxStore {
     } = {},
   ): LinkedInLabelDelivery[] | null {
     const claim = opts.claim ?? null;
-    const stored = this.db
-      .query(
-        `INSERT INTO message_intents(account_key,message_id,intent,reason,confidence,probs,classifier,cost_micros,classified_at,review,claimed_until)
-         VALUES(?,?,?,?,?,?,?,?,?,?,NULL)
-         ON CONFLICT(account_key,message_id) DO UPDATE SET intent=excluded.intent,reason=excluded.reason,
-           confidence=excluded.confidence,probs=excluded.probs,classifier=excluded.classifier,
-           cost_micros=excluded.cost_micros,classified_at=excluded.classified_at,
-           review=excluded.review,claimed_until=NULL
-         WHERE message_intents.intent IS NULL AND (? IS NULL OR message_intents.claimed_until = ?)`,
-      )
-      .run(
-        accountKey,
-        messageId,
-        label.intent,
-        label.reason,
-        label.confidence,
-        label.probabilities ? JSON.stringify(label.probabilities) : null,
-        label.classifier,
-        label.costMicros,
-        new Date().toISOString(),
-        label.review ? 1 : 0,
-        claim,
-        claim,
-      ).changes;
+    const values = [
+      label.intent,
+      label.reason,
+      label.confidence,
+      label.probabilities ? JSON.stringify(label.probabilities) : null,
+      label.classifier,
+      label.costMicros,
+      new Date().toISOString(),
+      label.review ? 1 : 0,
+    ] as const;
+    // A claimed completion only updates the row it claimed: when that row was
+    // merged into another message meanwhile, an insert would revive it.
+    const stored =
+      claim != null
+        ? this.db
+            .query(
+              `UPDATE message_intents SET intent=?,reason=?,confidence=?,probs=?,classifier=?,
+                 cost_micros=?,classified_at=?,review=?,claimed_until=NULL
+               WHERE account_key=? AND message_id=? AND intent IS NULL AND claimed_until=?`,
+            )
+            .run(...values, accountKey, messageId, claim).changes
+        : this.db
+            .query(
+              `INSERT INTO message_intents(account_key,message_id,intent,reason,confidence,probs,classifier,cost_micros,classified_at,review,claimed_until)
+               VALUES(?,?,?,?,?,?,?,?,?,?,NULL)
+               ON CONFLICT(account_key,message_id) DO UPDATE SET intent=excluded.intent,reason=excluded.reason,
+                 confidence=excluded.confidence,probs=excluded.probs,classifier=excluded.classifier,
+                 cost_micros=excluded.cost_micros,classified_at=excluded.classified_at,
+                 review=excluded.review,claimed_until=NULL
+               WHERE message_intents.intent IS NULL`,
+            )
+            .run(accountKey, messageId, ...values).changes;
     if (stored === 0) return null;
     const delivered = this.db
       .query<{ workspace: string; prospect_id: number }, [string, string]>(
@@ -1488,13 +1496,16 @@ export async function labelLinkedInReplyBatch(opts: {
       }
       delivered = stored;
     } catch (err) {
-      // The label is stored once its row is written; a workspace copy that
-      // failed is filled in by the next sync's delivery replay.
-      logEvent(
-        "linkedin.reply.label_copy_failed",
-        { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
-        "warn",
-      );
+      const message_120 = ((err as Error)?.message ?? "").slice(0, 120);
+      // The label row itself was not written: a failure, not a label.
+      if (!store.messageIntent(accountKey, m.id)?.intent) {
+        store.recordMessageIntentFailure(accountKey, m.id, Date.now(), claim);
+        out.failed++;
+        logEvent("linkedin.reply.label_store_failed", { message_120 }, "warn");
+        continue;
+      }
+      // Stored, but a workspace copy failed: the next sync's delivery replay fills it in.
+      logEvent("linkedin.reply.label_copy_failed", { message_120 }, "warn");
     }
     for (const d of delivered) out.cadencesStopped += d.cadencesStopped;
     out.labels.push(shown);
