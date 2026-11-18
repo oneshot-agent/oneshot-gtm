@@ -124,7 +124,7 @@ it("approve all stamps only the matching pending rows", async () => {
   });
   expect(ledger.getQueueRow(other)?.decided_by_member).toBeNull();
 });
-it("move records the requester and failed handover restores through the guarded writer", async () => {
+it("move records the requester", async () => {
   const id = row();
   vi.stubGlobal(
     "fetch",
@@ -132,20 +132,25 @@ it("move records the requester and failed handover restores through the guarded 
   );
   expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(200);
   expect(ledger.getQueueRow(id)).toMatchObject({ status: "rejected", decided_by_member: member });
-  const failed = row();
-  ledger.setQueueStatus({ id: failed, status: "approved" });
+});
+it("failed moves restore the prior member, including pending and legacy rows", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => Response.json({ error: "refused" }, { status: 409 })),
   );
-  expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(failed))).status).toBe(
-    409,
-  );
-  expect(ledger.getQueueRow(failed)).toMatchObject({
-    status: "approved",
-    decided_by_member: member,
-  });
+  for (const status of ["approved", "rejected", "pending"] as const) {
+    for (const priorMember of [owner, null]) {
+      const id = row();
+      ledger.setQueueStatus({ id, status: "approved", member: priorMember });
+      ledger.setQueueStatus({ id, status, decidedBy: "human", member: priorMember });
+      expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
+        409,
+      );
+      expect(ledger.getQueueRow(id)).toMatchObject({ status, decided_by_member: priorMember });
+    }
+  }
 });
+
 it("a failed overlapping move preserves the intervening approver's member", async () => {
   const id = row();
   let release!: (response: Response) => void;

@@ -1984,7 +1984,7 @@ export class QueueStore {
       input.status === "pending"
         ? ", reviewed_at = NULL"
         : decision
-          ? ", reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = 'human', decided_by_member = $member, decision_reason = NULL"
+          ? ", reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = 'human', decision_reason = NULL"
           : "";
     const sentGuard =
       input.status === "pending" || input.status === "approved"
@@ -1992,16 +1992,15 @@ export class QueueStore {
         : "";
     const r = this.db
       .prepare(
-        `UPDATE target_queue SET status = $status, notes = $notes, send_started_at = NULL${decisionSql} WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
+        `UPDATE target_queue SET status = $status, notes = $notes, decided_by_member = $member, send_started_at = NULL${decisionSql} WHERE id = $id AND status = 'rejected' AND notes = $reserved${sentGuard}`,
       )
       .run({
         $status: input.status,
         $notes: input.notes === "" ? null : input.notes,
         $id: input.id,
         $reserved: input.reservedNotes,
-        ...(decisionSql.includes("$now")
-          ? { $now: now, $decision: decision, $member: input.member ?? null }
-          : {}),
+        $member: input.member ?? null,
+        ...(decisionSql.includes("$now") ? { $now: now, $decision: decision } : {}),
       });
     return r.changes === 1;
   }

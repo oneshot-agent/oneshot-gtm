@@ -1510,7 +1510,7 @@ export async function moveQueueRowRoute(
     imported: false,
     rejected: false,
     reserved: "",
-    previous: { status: row.status, notes: row.notes, member: currentMember(req)?.email ?? null },
+    previous: { status: row.status, notes: row.notes, member: row.decided_by_member ?? null },
   };
   const note = moveNote(row.notes, workspace, randomBytes(4).toString("hex"));
   // A move is a routing decision, never a fit judgment about the person.
