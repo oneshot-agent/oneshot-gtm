@@ -1476,6 +1476,7 @@ export class QueueStore {
   setQueueDraft(input: {
     id: number;
     draft: {
+      editedBy?: string | null;
       subject: string;
       body: string;
       flags: string[];

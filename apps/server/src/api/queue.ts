@@ -2741,6 +2741,7 @@ export async function sendDraftRoute(
       sent: true,
       receiptIds: result.receiptIds,
       dryRun: false,
+      editedBy: typeof parsed.editedBy === "string" ? parsed.editedBy : null,
       ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
     },
     sentBy: "human",

@@ -231,10 +231,13 @@ it("a failed overlapping move preserves the intervening approver's member", asyn
   expect((await first).status).toBe(409);
   expect(ledger.getQueueRow(id)).toMatchObject({ status: "approved", decided_by_member: owner });
 });
-it("send draft stores the sender even when another member approved", async () => {
+it("send draft preserves another member's approval and draft editor", async () => {
   const id = row();
   ledger.setQueueStatus({ id, status: "approved", member: owner });
-  draft(id);
+  expect(
+    (await queue.regenerateDraftRoute(req({}, "/api/queue", owner), params(id))).status,
+  ).toBe(200);
+  expect(queue.toView(ledger.getQueueRow(id)!).lastDraft?.editedBy).toBe(owner);
   expect((await queue.sendDraftRoute(req({ confirmStale: true }), params(id))).status).toBe(200);
   expect(ledger.getQueueRow(id)).toMatchObject({
     status: "sent",
@@ -244,6 +247,7 @@ it("send draft stores the sender even when another member approved", async () =>
   });
   const saved = ledger.getQueueRow(id)!;
   const view = queue.toView(saved);
+  expect(view.lastDraft?.editedBy).toBe(owner);
   expect(memberDecision(view)).toBe(`Sent by ${member}`);
   expect(describeDecision(view)).toBe(`approved by ${owner}`);
   expect(

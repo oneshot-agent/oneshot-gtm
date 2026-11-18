@@ -2591,6 +2591,7 @@ export class Ledger {
   setQueueDraft(input: {
     id: number;
     draft: {
+      editedBy?: string | null;
       subject: string;
       body: string;
       flags: string[];
