@@ -16,6 +16,7 @@ import { NotificationsSection } from "../components/setup/NotificationsSection.t
 import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
 import { VoiceSection } from "../components/setup/VoiceSection.tsx";
 import { LinkedInTemplatesSection } from "../components/setup/LinkedInTemplatesSection.tsx";
+import { MembersSection } from "../components/setup/MembersSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
 import { ReplyClassifierSection } from "../components/setup/ReplyClassifierSection.tsx";
 import { OffersSection } from "../components/setup/OffersSection.tsx";
@@ -249,6 +250,7 @@ function Sections({
       />
       <CalendarSection {...common} identities={status.identities ?? []} />
       <ReviewQueueSection {...common} />
+      <MembersSection onDirtyChange={onDirtyChange} />
       <TelemetrySection {...common} />
       <CredentialsSection
         {...common}

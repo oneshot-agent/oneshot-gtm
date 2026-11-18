@@ -140,6 +140,13 @@ export interface Member {
   removed_at: string | null;
 }
 
+export class LastOwnerError extends Error {
+  constructor() {
+    super("The last owner cannot be removed or demoted. Add another owner first.");
+    this.name = "LastOwnerError";
+  }
+}
+
 /** The stored form of a member email: trimmed and lowercased. Null when it cannot be one. */
 export function normalizeMemberEmail(input: string): string | null {
   const email = input.trim().toLowerCase();
@@ -1356,6 +1363,7 @@ export class SharedDb {
   /**
    * Add a member, or bring a removed one back. An active member keeps their row:
    * the role is set to what was asked, and the name only when one is given.
+   * Refuses to demote the last active owner.
    */
   addMember(input: { email: string; name?: string | null; role: MemberRole }): {
     member: Member;
@@ -1385,6 +1393,7 @@ export class SharedDb {
         );
         outcome = "restored";
       } else {
+        if (input.role !== "owner") this.assertNotLastOwner(existing);
         this.db.run("UPDATE members SET name = ?, role = ? WHERE id = ?", [
           name ?? existing.name,
           input.role,
@@ -1403,16 +1412,56 @@ export class SharedDb {
     }
   }
 
-  /** Mark an active member removed. False when no active member has the email. */
+  /** Change an active member's role without restoring a removed member. */
+  setMemberRole(email: string, role: MemberRole): boolean {
+    const normalized = normalizeMemberEmail(email);
+    if (!normalized) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.activeMember(normalized);
+      if (role !== "owner") this.assertNotLastOwner(existing);
+      const changed =
+        this.db.run("UPDATE members SET role = ? WHERE email = ? AND removed_at IS NULL", [
+          role,
+          normalized,
+        ]).changes === 1;
+      this.db.exec("COMMIT");
+      return changed;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** Mark an active member removed; refuse the last owner. False for an unknown or removed email. */
   removeMember(email: string): boolean {
     const normalized = normalizeMemberEmail(email);
     if (!normalized) return false;
-    return (
-      this.db.run("UPDATE members SET removed_at = ? WHERE email = ? AND removed_at IS NULL", [
-        new Date().toISOString(),
-        normalized,
-      ]).changes === 1
-    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.assertNotLastOwner(this.activeMember(normalized));
+      const removed =
+        this.db.run("UPDATE members SET removed_at = ? WHERE email = ? AND removed_at IS NULL", [
+          new Date().toISOString(),
+          normalized,
+        ]).changes === 1;
+      this.db.exec("COMMIT");
+      return removed;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  /** Called under the write lock so two workspace connections cannot lose the last owner. */
+  private assertNotLastOwner(member: Member | null): void {
+    if (member?.role !== "owner") return;
+    const other = this.db
+      .query<{ id: number }, [number]>(
+        "SELECT id FROM members WHERE role = 'owner' AND removed_at IS NULL AND id != ? LIMIT 1",
+      )
+      .get(member.id);
+    if (!other) throw new LastOwnerError();
   }
 
   /** Members in the order they were first added. Removed ones only on request. */

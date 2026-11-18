@@ -76,6 +76,12 @@ describe("members", () => {
     try {
       expect(other.activeMember("ana@example.com")?.role).toBe("owner");
       expect(other.isAllowedHost("gtm-host.tail1234.ts.net")).toBe(true);
+      expect(() => other.removeMember("ana@example.com")).toThrow(/last owner/);
+      expect(() => other.addMember({ email: "ana@example.com", role: "member" })).toThrow(
+        /last owner/,
+      );
+      expect(db.activeMember("ana@example.com")?.role).toBe("owner");
+      db.addMember({ email: "backup@example.com", role: "owner" });
       other.removeMember("ana@example.com");
       other.disallowHost("gtm-host.tail1234.ts.net");
       expect(db.activeMember("ana@example.com")).toBeNull();
