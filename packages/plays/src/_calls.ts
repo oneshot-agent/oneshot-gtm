@@ -221,7 +221,7 @@ export async function buildCallBrief(input: {
         ? sequenceOffer(prospect, playName)
         : null;
   const offerLines = playName
-    ? offerBlock(offer, cfg, playName)
+    ? offerBlock(offer, cfg, playName, { sequence: true })
     : cfg.productBrief?.trim()
       ? `PRODUCT BRIEF (the only source of product claims):\n${productBriefText(cfg) ?? ""}`
       : null;

@@ -8,6 +8,7 @@ import type { ProspectRecord } from "@oneshot-gtm/core";
 const llmCalls: Array<{ user: string; system: string }> = [];
 let pilotOffer: string | null = null;
 let noOfferPlays: string[] | undefined;
+let followUpOfferPlays: string[] | undefined;
 
 function baseCfg() {
   return {
@@ -38,6 +39,7 @@ function baseCfg() {
     calendarId: "primary",
     pilotOffer,
     noOfferPlays,
+    followUpOfferPlays,
   };
 }
 
@@ -119,6 +121,7 @@ const OFFER = "Four weeks building one workflow they pick, together.";
 beforeEach(() => {
   pilotOffer = null;
   noOfferPlays = undefined;
+  followUpOfferPlays = undefined;
   llmCalls.length = 0;
 });
 afterEach(() => vi.clearAllMocks());
@@ -173,6 +176,25 @@ describe("pilotOrBreakup", () => {
     await step("breakup")({ ...ctx(), sequenceOffer: stored } as never);
     expect(llmCalls[0]!.user).not.toContain(stored.offer);
     expect(llmCalls[0]!.user).not.toContain(stored.angles[0]);
+  });
+
+  it("closes a listed play on the pilot and restates its offer when followUpOfferPlays names it", async () => {
+    pilotOffer = OFFER;
+    noOfferPlays = ["stack-consolidation"];
+    followUpOfferPlays = ["stack-consolidation"];
+    const stored = {
+      offer: "recover three years of overbilled carrier charges",
+      steps: "files each dispute and follows up until credited",
+    };
+    const out = await step("breakup")({ ...ctx(), sequenceOffer: stored } as never);
+    expect(llmCalls[0]!.system).toContain("system:pilot-close-followup");
+    expect(llmCalls[0]!.user).toContain(
+      `OFFER (what you offer to do for them; the message opens with it): ${stored.offer}`,
+    );
+    expect(llmCalls[0]!.user).toContain(
+      `OFFER TERMS (the founder's general terms; never a price): ${OFFER}`,
+    );
+    expect(out).toMatchObject({ kind: "email", hardBans: true });
   });
 });
 

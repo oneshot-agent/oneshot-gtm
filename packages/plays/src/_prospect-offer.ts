@@ -24,7 +24,9 @@
  */
 import { createHash } from "node:crypto";
 import {
+  currentFollowUpOfferPlays,
   currentNoOfferPlays,
+  followUpOfferPlaysOf,
   isPersonResearchDossier,
   loadConfig,
   noOfferPlaysOf,
@@ -346,6 +348,29 @@ export function playMakesOffer(playName: string, cfg?: { noOfferPlays?: unknown 
   if (NO_OFFER_PLAYS.has(playName)) return false;
   const own = cfg ? noOfferPlaysOf(cfg) : currentNoOfferPlays();
   return !own.includes(playName);
+}
+
+/**
+ * True when every touch after the first carries the sequence's offer: the
+ * play makes offers, or the workspace lists it in both `noOfferPlays` and
+ * `followUpOfferPlays`. Never for `NO_OFFER_PLAYS`.
+ */
+export function playMakesSequenceOffer(
+  playName: string,
+  cfg?: { noOfferPlays?: unknown; followUpOfferPlays?: unknown },
+): boolean {
+  if (playMakesOffer(playName, cfg)) return true;
+  if (NO_OFFER_PLAYS.has(playName)) return false;
+  const followUps = cfg ? followUpOfferPlaysOf(cfg) : currentFollowUpOfferPlays();
+  return followUps.includes(playName);
+}
+
+function offerPlayAllowed(
+  playName: string,
+  cfg: { noOfferPlays?: unknown; followUpOfferPlays?: unknown },
+  sequence: boolean | undefined,
+): boolean {
+  return sequence ? playMakesSequenceOffer(playName, cfg) : playMakesOffer(playName, cfg);
 }
 
 function clip(text: string, max: number): string {
@@ -892,6 +917,8 @@ export interface DeriveOfferInput {
   research?: { queueRowId: number; source: string; waitMs?: number };
   /** Told what each model call and research read cost, in USD. */
   onCost?: (usd: number) => void;
+  /** For a touch after the first: checked with `playMakesSequenceOffer`. */
+  sequence?: boolean;
 }
 
 /** What the registered company research gave: the target, with research added when any came back. */
@@ -1553,7 +1580,7 @@ export async function deriveOffers(
   input: DeriveOfferInput & { fetchImpl?: typeof fetch },
 ): Promise<DerivedOffers> {
   const cfg = input.cfg ?? loadConfig();
-  if (!playMakesOffer(input.playName, cfg)) return { offers: [], skip: null };
+  if (!offerPlayAllowed(input.playName, cfg, input.sequence)) return { offers: [], skip: null };
   // The steps may claim only what the product brief says the product does.
   // With no brief there is nothing to ground them in.
   if (!cfg.productBrief?.trim()) return { offers: [], skip: null };
@@ -2223,7 +2250,7 @@ export async function ensureOfferSet(
   input: DeriveOfferInput,
 ): Promise<((OfferSet | OfferSkipped) & { changed: boolean }) | null> {
   const cfg = input.cfg ?? loadConfig();
-  if (!playMakesOffer(input.playName, cfg)) return null;
+  if (!offerPlayAllowed(input.playName, cfg, input.sequence)) return null;
   const t = input.target as JsonRecord;
   const stored = t["offer"];
   const research = offerResearchText(t, input.dossier);
@@ -2280,7 +2307,7 @@ export async function offerSetForDraft(
   input: DeriveOfferInput,
 ): Promise<((OfferSet | OfferSkipped) & { derived: boolean }) | null> {
   const cfg = input.cfg ?? loadConfig();
-  if (!playMakesOffer(input.playName, cfg)) return null;
+  if (!offerPlayAllowed(input.playName, cfg, input.sequence)) return null;
   const t = input.target as JsonRecord;
   const stored = t["offer"];
   if (isProspectOffer(stored) && typeof stored.editedBy === "string" && !!stored.editedBy?.trim()) {
@@ -2332,11 +2359,11 @@ const NO_TERMS_PLAYS: ReadonlySet<string> = new Set(["accelerator-batch"]);
  */
 export function offerBlock(
   offer: Pick<ProspectOffer, "offer" | "steps" | "return"> | null,
-  cfg: Pick<AppConfig, "pilotOffer" | "productBrief" | "noOfferPlays">,
+  cfg: Pick<AppConfig, "pilotOffer" | "productBrief" | "noOfferPlays" | "followUpOfferPlays">,
   playName: string,
-  opts: { brief?: boolean } = {},
+  opts: { brief?: boolean; sequence?: boolean } = {},
 ): string | null {
-  if (!playMakesOffer(playName, cfg)) return null;
+  if (!offerPlayAllowed(playName, cfg, opts.sequence)) return null;
   const lines: string[] = [];
   if (offer) {
     lines.push(`OFFER (what you offer to do for them; the message opens with it): ${offer.offer}`);

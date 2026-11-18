@@ -151,13 +151,8 @@ export function offerWriterOf(cfg: { offerWriter?: unknown }): {
   return { rounds, fallbackModel: raw["fallbackOnWeak"] === true && model ? model : null };
 }
 
-/**
- * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
- * blanks and repeats dropped. A hand-edited lone string counts as one entry;
- * anything else reads as none.
- */
-export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
-  const raw = cfg.noOfferPlays;
+/** A hand-edited play list: each name trimmed, blanks and repeats dropped; a lone string is one entry. */
+function playListOf(raw: unknown): string[] {
   const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
   const out: string[] = [];
   for (const entry of list) {
@@ -168,7 +163,26 @@ export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
   return out;
 }
 
-let noOfferPlaysMemo: { stamp: string; plays: string[] } | null = null;
+/**
+ * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
+ * blanks and repeats dropped. A hand-edited lone string counts as one entry;
+ * anything else reads as none.
+ */
+export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
+  return playListOf(cfg.noOfferPlays);
+}
+
+/** The workspace's `followUpOfferPlays`, read as `noOfferPlaysOf` reads its list. */
+export function followUpOfferPlaysOf(cfg: { followUpOfferPlays?: unknown }): string[] {
+  return playListOf(cfg.followUpOfferPlays);
+}
+
+interface OfferPlayLists {
+  noOffer: string[];
+  followUpOffer: string[];
+}
+
+let offerPlaysMemo: { stamp: string; lists: OfferPlayLists } | null = null;
 
 /**
  * `noOfferPlays` from the config file as it is now, for callers with no
@@ -177,7 +191,7 @@ let noOfferPlaysMemo: { stamp: string; plays: string[] } | null = null;
  * applies on the next call without a restart and an unchanged file costs one
  * stat.
  */
-export function currentNoOfferPlays(): string[] {
+function currentOfferPlayLists(): OfferPlayLists {
   let stamp: string;
   try {
     // ctime moves on every write, even one that keeps mtime and size, and an
@@ -185,13 +199,22 @@ export function currentNoOfferPlays(): string[] {
     const st = statSync(CONFIG_PATH, { bigint: true });
     stamp = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
   } catch {
-    noOfferPlaysMemo = null;
-    return [];
+    offerPlaysMemo = null;
+    return { noOffer: [], followUpOffer: [] };
   }
-  if (noOfferPlaysMemo?.stamp === stamp) return noOfferPlaysMemo.plays;
-  const plays = noOfferPlaysOf(readConfigOrDefault());
-  noOfferPlaysMemo = { stamp, plays };
-  return plays;
+  if (offerPlaysMemo?.stamp === stamp) return offerPlaysMemo.lists;
+  const cfg = readConfigOrDefault();
+  const lists = { noOffer: noOfferPlaysOf(cfg), followUpOffer: followUpOfferPlaysOf(cfg) };
+  offerPlaysMemo = { stamp, lists };
+  return lists;
+}
+
+export function currentNoOfferPlays(): string[] {
+  return currentOfferPlayLists().noOffer;
+}
+
+export function currentFollowUpOfferPlays(): string[] {
+  return currentOfferPlayLists().followUpOffer;
 }
 
 /** The workspace's do-not-contact list as every gate reads it. */

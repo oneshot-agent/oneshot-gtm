@@ -43,7 +43,7 @@ import {
   offerExclusionsCurrent,
   offerHoldsSend,
   offerProductHash,
-  playMakesOffer,
+  playMakesSequenceOffer,
   researchForOffer,
   type OfferResearch,
   type OfferSkip,
@@ -490,7 +490,9 @@ export async function deriveSequenceOffer(input: {
       // A preview that could not be dropped is stale by its config key anyway.
     }
   };
-  if (!playMakesOffer(input.playName)) return { status: "none", record, reason: "no-play-offer" };
+  if (!playMakesSequenceOffer(input.playName, input.cfg)) {
+    return { status: "none", record, reason: "no-play-offer" };
+  }
   try {
     const cfg = input.cfg ?? loadConfig();
     if (!cfg.productBrief?.trim()) return { status: "none", record, reason: "no-brief" };
@@ -502,6 +504,7 @@ export async function deriveSequenceOffer(input: {
       dossier: person.dossier,
       playName: input.playName,
       cfg,
+      sequence: true,
       ...(thread.length > 0 ? { thread } : {}),
       ...(input.avoid && input.avoid.length > 0 ? { avoid: input.avoid } : {}),
       ...(input.onCost ? { onCost: input.onCost } : {}),
@@ -711,7 +714,9 @@ export async function ensureCloseOffer(input: {
     const read = sequenceOfferRecord(input);
     if (!read.offer) return { status: "none", reason: "no-offer" };
     const record = { ...read, offer: read.offer };
-    if (!playMakesOffer(input.playName, cfg)) return { status: "none", reason: "no-play-offer" };
+    if (!playMakesSequenceOffer(input.playName, cfg)) {
+      return { status: "none", reason: "no-play-offer" };
+    }
     const thread = sequenceThread(input.prospectId, input.playName);
     const picked = pickCloseOffer(record, cfg, thread);
     if (picked) {
@@ -734,6 +739,7 @@ export async function ensureCloseOffer(input: {
       dossier: person.dossier,
       playName: input.playName,
       cfg,
+      sequence: true,
       avoid: made,
       ...(thread.length > 0 ? { thread } : {}),
       ...(queued ? { research: { queueRowId: queued.id, source: queued.source } } : {}),

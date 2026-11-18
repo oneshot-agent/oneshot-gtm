@@ -119,6 +119,27 @@ describe("draftConfigKey", () => {
     expect(key(member)).toBe(key(base));
   });
 
+  it("reads followUpOfferPlays on follow-ups only, and only for a play turned off", () => {
+    const first: DraftSurface = { channel: "email", stage: "first_touch" };
+    const linkedin: DraftSurface = { channel: "linkedin", stage: "follow_up" };
+    const off = { ...base, noOfferPlays: ["example-play"] } as Cfg;
+    const on = { ...off, followUpOfferPlays: ["example-play"] } as Cfg;
+    // First touch: the setting changes nothing, so no approved first email reads stale.
+    expect(key(on, first)).toBe(key(off, first));
+    // Follow-up: keyed as an offer play's, so a preview written offer-free is stale.
+    expect(key(on)).not.toBe(key(off));
+    expect(key(on)).toBe(key(base));
+    expect(key(on, linkedin)).toBe(key(base, linkedin));
+    // Naming a play that still makes offers, or one that never does, changes no key.
+    const unlisted = { ...base, followUpOfferPlays: ["example-play"] } as Cfg;
+    expect(key(unlisted)).toBe(key(base));
+    expect(key(unlisted, first)).toBe(key(base, first));
+    const builtIn = { ...base, followUpOfferPlays: ["community-reply"] } as Cfg;
+    expect(key(builtIn, EMAIL_FOLLOW_UP, "community-reply")).toBe(
+      key(base, EMAIL_FOLLOW_UP, "community-reply"),
+    );
+  });
+
   it("changes when approved guidance for the surface changes, and not for another surface", () => {
     let instructions = [{ id: "g1", instruction: "lead with the route" }];
     const ledger = {

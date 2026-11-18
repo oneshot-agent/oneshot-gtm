@@ -601,6 +601,30 @@ describe("POST /api/setup — offerJudge", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("followUpOfferPlays: trimmed and saved, absent keeps, null or empty clears, a non-name refused", async () => {
+    expect(
+      await post({ followUpOfferPlays: [" repo-interest ", "repo-interest", "", "luma-events"] }),
+    ).toEqual({ status: 200 });
+    expect(savedCfg().followUpOfferPlays).toEqual(["repo-interest", "luma-events"]);
+    current = { ...current, followUpOfferPlays: ["repo-interest"] };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().followUpOfferPlays).toEqual(["repo-interest"]);
+    saveConfigMock.mockClear();
+    expect(await post({ followUpOfferPlays: [] })).toEqual({ status: 200 });
+    expect(savedCfg().followUpOfferPlays).toBeUndefined();
+    saveConfigMock.mockClear();
+    expect(await post({ followUpOfferPlays: null })).toEqual({ status: 200 });
+    expect(savedCfg().followUpOfferPlays).toBeUndefined();
+    for (const bad of ["repo-interest", ["repo interest"], [3]]) {
+      saveConfigMock.mockClear();
+      const res = await post({ followUpOfferPlays: bad });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+      expect(res.error).toMatch(/followUpOfferPlays/);
+      expect(saveConfigMock).not.toHaveBeenCalled();
+    }
+  });
+
   it("null clears it; absent leaves it as stored", async () => {
     current = { ...current, offerJudge: { engine: "decisions", model: "m" } };
     expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });

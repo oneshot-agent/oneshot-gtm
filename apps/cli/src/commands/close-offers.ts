@@ -5,7 +5,7 @@ import {
   isProspectOffer,
   offerProductHash,
   pickCloseOffer,
-  playMakesOffer,
+  playMakesSequenceOffer,
   sequenceOfferOf,
   sequenceThread,
   type OfferThreadEmail,
@@ -86,7 +86,7 @@ export async function commandCloseOffers(opts: CloseOffersOpts): Promise<CloseOf
     picked: ReturnType<typeof pickCloseOffer>;
   }> = getLedger()
     .listActiveCadences()
-    .filter((cad) => playMakesOffer(cad.play_name, cfg))
+    .filter((cad) => playMakesSequenceOffer(cad.play_name, cfg))
     .map((cad) => ({ cad, record: sequenceOfferOf(cad) }))
     .filter(({ cad, record }) => isProspectOffer(record.offer) && closeAhead(cad))
     .map(({ cad, record }) => {
