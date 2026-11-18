@@ -1,6 +1,13 @@
 import { toast } from "sonner";
 import { api } from "../api/client.ts";
 
+/**
+ * The name input's `pattern`, matching the server's workspace name rule.
+ * Browsers compile it with the `v` flag, where a literal `-` in a class must
+ * be escaped; an invalid pattern is silently not enforced.
+ */
+export const WORKSPACE_NAME_PATTERN = "[a-z0-9][a-z0-9\\-]{0,31}";
+
 /** Called directly from form submission to reserve a tab before awaiting the server. */
 export async function createAndOpenWorkspace(name: string): Promise<void> {
   const win = window.open("", "_blank");

@@ -3,7 +3,7 @@ import { Check, Circle, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { openWorkspace } from "../../lib/openWorkspace.ts";
-import { createAndOpenWorkspace } from "../../lib/createWorkspace.ts";
+import { WORKSPACE_NAME_PATTERN, createAndOpenWorkspace } from "../../lib/createWorkspace.ts";
 import { cn } from "../../lib/cn.ts";
 import { workspaceHue } from "../../lib/workspaceHue.ts";
 
@@ -186,7 +186,7 @@ export function WorkspaceSwitcher() {
                   value={newName}
                   onChange={(event) => setNewName(event.target.value)}
                   required
-                  pattern="[a-z0-9][a-z0-9-]{0,31}"
+                  pattern={WORKSPACE_NAME_PATTERN}
                   maxLength={32}
                   title="1–32 lowercase letters, digits or hyphens; start with a letter or digit"
                   disabled={creating}

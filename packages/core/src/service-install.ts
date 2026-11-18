@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
@@ -39,7 +39,15 @@ export async function installDashboardService(
   const content = platform === "darwin" ? renderLaunchdService(spec) : renderSystemdService(spec);
   mkdirSync(dirname(target), { recursive: true });
   // Do not overwrite an orphaned or operator-managed service with the same name.
-  writeFileSync(target, content, { flag: "wx", mode: 0o644 });
+  try {
+    writeFileSync(target, content, { flag: "wx", mode: 0o644 });
+  } catch (err) {
+    // `wx` creates the file before writing it. EEXIST means it was another
+    // file, which stays; any other failure leaves a partial file of ours that
+    // would block every retry with EEXIST.
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") rmSync(target, { force: true });
+    throw err;
+  }
   let activationAttempted = false;
   try {
     if (platform === "darwin") {
