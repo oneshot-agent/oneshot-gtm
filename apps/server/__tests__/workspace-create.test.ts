@@ -30,6 +30,9 @@ const target = (platform: NodeJS.Platform, name = "acme") =>
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "workspace-create-"));
   vi.stubEnv("ONESHOT_GTM_WORKSPACES", join(tmp, "registry"));
+  // The creating dashboard's port is reserved, so a PORT inherited from the
+  // developer's shell would shift every expected port below.
+  vi.stubEnv("PORT", String(BASE_PORT));
   spawn.mockReset();
   run.mockReset().mockResolvedValue(undefined);
   _setLaunchSpawn(spawn);
