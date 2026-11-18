@@ -4,7 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallBrief, CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
 import { api } from "../src/api/client.ts";
-import { briefKey, dialledNumber, saveCall } from "../src/components/calls/DialPanel.tsx";
+import {
+  briefKey,
+  CallHistory,
+  dialledNumber,
+  saveCall,
+} from "../src/components/calls/DialPanel.tsx";
 import { CallStepActions } from "../src/components/calls/CallStepActions.tsx";
 import { CallsView } from "../src/routes/calls.tsx";
 import {
@@ -20,6 +25,19 @@ import {
   type DialKeyEvent,
   type DialState,
 } from "../src/lib/dialler.ts";
+
+// Privacy mode, switched per test.
+const privacy = vi.hoisted(() => ({ masked: false }));
+vi.mock("../src/lib/privacy.tsx", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/lib/privacy.tsx")>();
+  const { applyMask } = await import("../src/lib/mask.ts");
+  return {
+    ...actual,
+    usePrivacy: () => ({ masked: privacy.masked, setMasked: () => {} }),
+    useMask: () => (kind: Parameters<typeof applyMask>[1], value: string | null | undefined) =>
+      applyMask(privacy.masked, kind, value),
+  };
+});
 
 // Links need a router; the page's own logic doesn't. Render them as plain anchors.
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -424,5 +442,61 @@ describe("calls page: review fixes", () => {
     expect(dialledNumber(1000, "+15126531187", "+15126539999")).toBe("+15126531187");
     // No call started here: the number on the row is the one dialled by hand.
     expect(dialledNumber(null, null, "+15126539999")).toBe("+15126539999");
+  });
+
+  it("privacy mode hides the brief and the call notes", () => {
+    client.setQueryData(briefKey({ prospectId: 2, playName: null }), brief);
+    client.setQueryData(["prospect-calls", 2], {
+      calls: [
+        {
+          id: 1,
+          prospectId: 2,
+          playName: null,
+          startedAt: "2026-11-17T10:00:00Z",
+          durationSec: 30,
+          outcome: "voicemail",
+          note: "Asked about their recall backlog",
+          provider: "tel",
+          transcriptStatus: "none",
+          transcript: null,
+          suggestion: null,
+        },
+      ],
+    });
+    privacy.masked = true;
+    try {
+      const html = page(data(), 2);
+      expect(html).not.toContain("No budget");
+      expect(html).not.toContain("Asked about their recall backlog");
+      expect(html).toContain("Hidden while privacy mode is on.");
+      expect(html).toContain("Left voicemail");
+    } finally {
+      privacy.masked = false;
+    }
+    expect(page(data(), 2)).toContain("Asked about their recall backlog");
+  });
+
+  it("call history tells a failed read from an empty one", () => {
+    const retry = vi.fn();
+    const failed = renderToStaticMarkup(
+      <CallHistory
+        calls={undefined}
+        isLoading={false}
+        error={new Error("offline")}
+        onRetry={retry}
+        masked={false}
+      />,
+    );
+    expect(failed).toContain("couldn&#x27;t load the calls · offline");
+    expect(failed).toContain("Retry");
+    expect(failed).not.toContain("No calls logged yet.");
+    const empty = renderToStaticMarkup(
+      <CallHistory calls={[]} isLoading={false} error={null} onRetry={retry} masked={false} />,
+    );
+    expect(empty).toContain("No calls logged yet.");
+    const loading = renderToStaticMarkup(
+      <CallHistory calls={undefined} isLoading error={null} onRetry={retry} masked={false} />,
+    );
+    expect(loading).not.toContain("No calls logged yet.");
   });
 });

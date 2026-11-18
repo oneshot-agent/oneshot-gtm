@@ -3,6 +3,7 @@ import type {
   CallBrief,
   CallListResponse,
   CallListRow,
+  CallRecordView,
   LogCallRequest,
 } from "@oneshot-gtm/shared-types";
 import { Loader2, Phone, RotateCw } from "lucide-react";
@@ -23,7 +24,7 @@ import {
   windowHint,
 } from "../../lib/dialler.ts";
 import { humanizeFlag } from "../../lib/flagLabels.ts";
-import { useMask } from "../../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../../lib/privacy.tsx";
 import { readOnly } from "../../lib/readOnly.ts";
 import { SheetHeading } from "../ledger/SheetHeading.tsx";
 import { Button, buttonStyles } from "../primitives/Button.tsx";
@@ -111,6 +112,7 @@ export function DialPanel({
 }) {
   const qc = useQueryClient();
   const mask = useMask();
+  const { masked } = usePrivacy();
   const [state, dispatch] = useReducer(dialReducer, undefined, () => ({
     outcome: null,
     note: "",
@@ -229,7 +231,11 @@ export function DialPanel({
             couldn't load the brief · {brief.error.message}
           </div>
         ) : brief.data ? (
-          <BriefView brief={brief.data} flags={flags} />
+          masked ? (
+            <PrivacyHidden />
+          ) : (
+            <BriefView brief={brief.data} flags={flags} />
+          )
         ) : null}
       </section>
 
@@ -286,25 +292,68 @@ export function DialPanel({
 
       <section>
         <SheetHeading label="calls" />
-        {history.data && history.data.calls.length > 0 ? (
-          <ul className="flex flex-col gap-1.5 text-[12px] text-ink-cream-2">
-            {history.data.calls.map((c) => (
-              <li key={c.id}>
-                <span className="font-mono text-[11px] text-ink-muted">{timeAgo(c.startedAt)}</span>{" "}
-                {outcomeTitle(c.outcome)}
-                {c.durationSec != null && (
-                  <span className="text-ink-muted"> · {formatDuration(c.durationSec)}</span>
-                )}
-                {c.note && <span className="text-ink-muted"> · {c.note}</span>}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="text-[12px] text-ink-faint">
-            {history.isLoading ? "…" : "No calls logged yet."}
-          </div>
-        )}
+        <CallHistory
+          calls={history.data?.calls}
+          isLoading={history.isLoading}
+          error={history.error}
+          onRetry={() => void history.refetch()}
+          masked={masked}
+        />
       </section>
+    </div>
+  );
+}
+
+/** What privacy mode hides: the brief restates research and the offer. */
+function PrivacyHidden() {
+  return <div className="text-[12px] text-ink-faint">Hidden while privacy mode is on.</div>;
+}
+
+/**
+ * The prospect's calls, newest first. A failed read with nothing cached says
+ * so with Retry; "No calls logged yet." only after a read that found none.
+ * Notes are free text about the person: hidden in privacy mode.
+ */
+export function CallHistory({
+  calls,
+  isLoading,
+  error,
+  onRetry,
+  masked,
+}: {
+  calls: CallRecordView[] | undefined;
+  isLoading: boolean;
+  error: Error | null;
+  onRetry: () => void;
+  masked: boolean;
+}) {
+  if (calls && calls.length > 0)
+    return (
+      <ul className="flex flex-col gap-1.5 text-[12px] text-ink-cream-2">
+        {calls.map((c) => (
+          <li key={c.id}>
+            <span className="font-mono text-[11px] text-ink-muted">{timeAgo(c.startedAt)}</span>{" "}
+            {outcomeTitle(c.outcome)}
+            {c.durationSec != null && (
+              <span className="text-ink-muted"> · {formatDuration(c.durationSec)}</span>
+            )}
+            {c.note && !masked && <span className="text-ink-muted"> · {c.note}</span>}
+          </li>
+        ))}
+      </ul>
+    );
+  if (!calls && error)
+    return (
+      <div className="flex items-center gap-2 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+        couldn't load the calls · {error.message}
+        <Button variant="ghost" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  return (
+    <div className="text-[12px] text-ink-faint">
+      {calls ? "No calls logged yet." : isLoading ? "…" : ""}
     </div>
   );
 }
