@@ -80,6 +80,9 @@ describe("phoneLookupState", () => {
       state("approved", { linkedinUrl, phoneLookup: { status: "unavailable", at: at(0) } }),
     ).toMatchObject({ kind: "retry", label: "Unavailable, try again" });
     expect(
+      state("approved", { linkedinUrl, phoneLookup: { status: "other_person", at: at(5000) } }),
+    ).toEqual({ kind: "retry", label: "Matched another person", at: at(5000) });
+    expect(
       state("approved", {
         linkedinUrl,
         phoneLookup: { status: "error", at: at(0), message: "Bad input" },
@@ -111,6 +114,15 @@ describe("FindPhone", () => {
     });
     expect(html).toContain("Looking up a phone number");
     expect(html).not.toContain("Find phone");
+  });
+
+  it("says when the number belonged to another person, and offers another try", () => {
+    const html = render("approved", {
+      linkedinUrl,
+      phoneLookup: { status: "other_person", at: new Date().toISOString() },
+    });
+    expect(html).toContain("Matched another person");
+    expect(html).toContain("Find phone");
   });
 
   it("offers another try when the provider did not answer", () => {
