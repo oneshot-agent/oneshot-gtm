@@ -163,6 +163,44 @@ it("failed moves restore the prior member, including pending and legacy rows", a
   }
 });
 
+it("failed pending moves restore the decision history, including undecided, bulk and machine rows", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json({ error: "refused" }, { status: 409 })),
+  );
+  for (const history of ["undecided", "human", "human_bulk", "machine"] as const) {
+    const id = row();
+    if (history === "human_bulk") {
+      ledger.approveAllPending({ ids: [id], member: owner });
+    } else if (history !== "undecided") {
+      ledger.setQueueStatus({
+        id,
+        status: "rejected",
+        decidedBy: history,
+        member: owner,
+        decisionReason: "wrong_person",
+      });
+    }
+    ledger.setQueueStatus({ id, status: "pending" });
+    const before = ledger.getQueueRow(id)!;
+    expect((await queue.moveQueueRowRoute(req({ workspace: "other" }), params(id))).status).toBe(
+      409,
+    );
+    const restored = ledger.getQueueRow(id)!;
+    expect(restored).toMatchObject({
+      status: "pending",
+      reviewed_at: null,
+      decision: before.decision,
+      decided_at: before.decided_at,
+      decided_by: before.decided_by,
+      decided_by_member: before.decided_by_member,
+      decision_reason: before.decision_reason,
+    });
+    expect(memberDecision(queue.toView(restored))).toBe(memberDecision(queue.toView(before)));
+    expect(describeDecision(queue.toView(restored))).toBe(describeDecision(queue.toView(before)));
+  }
+});
+
 it("a failed overlapping move preserves the intervening approver's member", async () => {
   const id = row();
   let release!: (response: Response) => void;

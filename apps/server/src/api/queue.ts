@@ -1446,7 +1446,10 @@ const activeQueueMoves = new Map<
     imported: boolean;
     rejected: boolean;
     reserved: string;
-    previous: Pick<QueueRow, "status" | "notes"> & { member: string | null };
+    previous: Pick<QueueRow, "status" | "notes"> & {
+      member: string | null;
+      pendingDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
+    };
   }
 >();
 
@@ -1511,7 +1514,21 @@ export async function moveQueueRowRoute(
     imported: false,
     rejected: false,
     reserved: "",
-    previous: { status: row.status, notes: row.notes, member: row.decided_by_member ?? null },
+    previous: {
+      status: row.status,
+      notes: row.notes,
+      member: row.decided_by_member ?? null,
+      ...(row.status === "pending"
+        ? {
+            pendingDecision: {
+              decision: row.decision ?? null,
+              decided_at: row.decided_at ?? null,
+              decided_by: row.decided_by ?? null,
+              decision_reason: row.decision_reason ?? null,
+            },
+          }
+        : {}),
+    },
   };
   const note = moveNote(row.notes, workspace, randomBytes(4).toString("hex"));
   // A move is a routing decision, never a fit judgment about the person.
@@ -1593,9 +1610,7 @@ export async function moveQueueRowRoute(
         ledger.restoreQueueMoveIf({
           id,
           reservedNotes: moves.reserved,
-          member: moves.previous.member,
-          status: moves.previous.status,
-          notes: moves.previous.notes,
+          ...moves.previous,
         });
       }
     }

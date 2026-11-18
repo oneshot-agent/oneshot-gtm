@@ -1977,6 +1977,8 @@ export class QueueStore {
     id: number;
     reservedNotes: string;
     member?: string | null;
+    /** Pending rows can retain an earlier decision; restore it with its member. */
+    pendingDecision?: Pick<QueueRow, "decision" | "decided_at" | "decided_by" | "decision_reason">;
     status: QueueStatus;
     notes: string | null;
   }): boolean {
@@ -1985,7 +1987,7 @@ export class QueueStore {
       input.status === "approved" ? "approve" : input.status === "rejected" ? "reject" : null;
     const decisionSql =
       input.status === "pending"
-        ? ", reviewed_at = NULL"
+        ? ", reviewed_at = NULL, decision = $decision, decided_at = $decidedAt, decided_by = $decidedBy, decision_reason = $decisionReason"
         : decision
           ? ", reviewed_at = $now, decision = $decision, decided_at = $now, decided_by = 'human', decision_reason = NULL"
           : "";
@@ -2003,7 +2005,16 @@ export class QueueStore {
         $id: input.id,
         $reserved: input.reservedNotes,
         $member: input.member ?? null,
-        ...(decisionSql.includes("$now") ? { $now: now, $decision: decision } : {}),
+        ...(input.status === "pending"
+          ? {
+              $decision: input.pendingDecision?.decision ?? null,
+              $decidedAt: input.pendingDecision?.decided_at ?? null,
+              $decidedBy: input.pendingDecision?.decided_by ?? null,
+              $decisionReason: input.pendingDecision?.decision_reason ?? null,
+            }
+          : decisionSql.includes("$now")
+            ? { $now: now, $decision: decision }
+            : {}),
       });
     return r.changes === 1;
   }

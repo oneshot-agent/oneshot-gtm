@@ -78,6 +78,11 @@ describe("Ledger.restoreQueueMoveIf", () => {
       status: "pending",
       notes: null,
       reviewed_at: null,
+      decision: null,
+      decided_at: null,
+      decided_by: null,
+      decided_by_member: null,
+      decision_reason: null,
     });
   });
 
