@@ -136,7 +136,7 @@ describe("send-draft for a known connection", () => {
       status: "sent",
       metadata: { via: "profile-read", inviteStatus: "already_connected", accountId: "acct-1" },
     });
-    expect(statusCalls).toEqual([{ id: 1, status: "sent", decidedBy: "human" }]);
+    expect(statusCalls).toEqual([{ id: 1, status: "sent", decidedBy: "human", member: null }]);
     // The row keeps the connection as what shipped, stored as unattended: no
     // text went out, so it is never a reviewed send.
     expect(drafts.at(-1)).toMatchObject({
