@@ -271,6 +271,9 @@ export function WorkspaceSwitcher() {
   const roster = ws.data?.workspaces ?? [];
 
   const onRowClick = async (row: (typeof roster)[number]) => {
+    // The row being started stays clickable. A second launch of it would
+    // settle on its own and unblock creation while the other still runs.
+    if (launching !== null) return;
     if (row.isCurrent || row.running) setOpen(false);
     await openWorkspace(row, {
       onLaunchStart: () => setLaunching(row.name),

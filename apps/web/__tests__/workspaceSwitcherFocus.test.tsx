@@ -8,8 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // new-workspace form opens, reopens on a kept draft, and closes. This is the
 // one suite that needs a document, so the environment is set for this file only.
 
-const mocks = vi.hoisted(() => ({ workspace: vi.fn() }));
-vi.mock("../src/api/client.ts", () => ({ api: { workspace: mocks.workspace } }));
+const mocks = vi.hoisted(() => ({ workspace: vi.fn(), launch: vi.fn(), create: vi.fn() }));
+vi.mock("../src/api/client.ts", () => ({
+  api: { workspace: mocks.workspace, workspaceLaunch: mocks.launch },
+}));
+vi.mock("../src/lib/createWorkspace.ts", async (actual) => ({
+  ...(await actual<typeof import("../src/lib/createWorkspace.ts")>()),
+  createAndOpenWorkspace: mocks.create,
+}));
 const { WorkspaceSwitcher } = await import("../src/components/shell/WorkspaceSwitcher.tsx");
 
 const row = (name: string, port: number, isCurrent: boolean) => ({
@@ -34,6 +40,17 @@ const nameField = () =>
   host.querySelector<HTMLInputElement>('form[aria-label="New workspace"] input');
 const button = (label: string) =>
   [...host.querySelectorAll("button")].find((el) => el.textContent === label) ?? null;
+const alphaRow = () =>
+  [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((el) =>
+    el.textContent.startsWith("alpha"),
+  )!;
+/** Click the stopped workspace's row; its launch stays pending until the returned call. */
+const startAlpha = async () => {
+  let settle!: (answer: { status: "already-running"; port: number }) => void;
+  mocks.launch.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+  await press(alphaRow());
+  return () => act(async () => settle({ status: "already-running", port: 3031 }));
+};
 
 /** A click as the browser makes it: the button takes focus, then fires. */
 const press = (el: HTMLElement) =>
@@ -52,6 +69,8 @@ const type = (field: HTMLInputElement, text: string) =>
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   mocks.workspace.mockResolvedValue(info);
+  // A launch reserves a tab; none opens here.
+  vi.spyOn(window, "open").mockReturnValue(null);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -70,6 +89,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -110,5 +130,16 @@ describe("workspace switcher focus", () => {
     expect(nameField()).toBeNull();
     expect(button("New workspace")).not.toBeNull();
     expect(document.activeElement).toBe(button("New workspace"));
+  });
+
+  it("starts a workspace once however often its row is clicked, and blocks create until it settles", async () => {
+    const settle = await startAlpha();
+    await press(alphaRow());
+
+    expect(mocks.launch).toHaveBeenCalledOnce();
+    expect(button("New workspace")!.disabled).toBe(true);
+
+    await settle();
+    expect(button("New workspace")!.disabled).toBe(false);
   });
 });
