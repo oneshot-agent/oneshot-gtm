@@ -1487,13 +1487,7 @@ export class Ledger {
     const found = this.findProspectByEmail(email);
     if (!found) return [];
     if (!this.people) return [found.id];
-    const rows = this.db
-      .query(
-        `SELECT o.id FROM prospects p JOIN prospects o ON o.shared_person_id = p.shared_person_id
-          WHERE p.id = ?`,
-      )
-      .all(found.id) as Array<{ id: number }>;
-    return [...new Set([found.id, ...rows.map((r) => r.id)])];
+    return [...new Set([found.id, ...this.prospects.samePersonIds(found.id)])];
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
