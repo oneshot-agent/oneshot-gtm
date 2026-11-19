@@ -45,10 +45,15 @@ export function usesProxy(v: Pick<LlmSectionValues, "llmProvider" | "fallbackPro
   return v.llmProvider === "proxy" || v.fallbackProvider === "proxy";
 }
 
+/** Whether the main provider reads `llmReasoningEffort`. */
+export function takesReasoningEffort(v: Pick<LlmSectionValues, "llmProvider">): boolean {
+  return v.llmProvider === "openrouter" || v.llmProvider === "proxy";
+}
+
 /**
  * `llmFallback` goes out whole whenever either of its fields changed, read from the latest values.
  * An endpoint edit is left out once neither route uses the proxy, and an effort edit once the
- * provider is not OpenRouter: those fields are hidden then.
+ * provider does not read it: those fields are hidden then.
  */
 export function llmSectionRequest(
   values: LlmSectionValues,
@@ -59,7 +64,7 @@ export function llmSectionRequest(
   if (sent.llmModel !== undefined) req.llmModel = sent.llmModel.trim();
   if (sent.llmBaseUrl !== undefined && usesProxy(values))
     req.llmBaseUrl = sent.llmBaseUrl.trim() || null;
-  if (sent.reasoningEffort !== undefined && values.llmProvider === "openrouter")
+  if (sent.reasoningEffort !== undefined && takesReasoningEffort(values))
     req.llmReasoningEffort = sent.reasoningEffort || null;
   if (sent.fallbackProvider !== undefined || sent.fallbackModel !== undefined) {
     req.llmFallback = values.fallbackProvider

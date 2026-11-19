@@ -240,7 +240,7 @@ interface Route {
   model: string;
   key: string;
   baseUrl?: string;
-  /** `llmReasoningEffort`, on the primary route only; read by the openrouter dispatch. */
+  /** `llmReasoningEffort`, on the primary route only; read by the openrouter and proxy dispatch. */
   reasoningEffort?: LlmReasoningEffort;
 }
 
@@ -482,17 +482,35 @@ function dispatch(
       return anthropicComplete({ key, model, input, timeoutMs });
     case "proxy": {
       const baseUrl = route.baseUrl ?? proxyBaseUrl(undefined);
+      const effort = route.reasoningEffort;
       if (proxyShape(model) === "anthropic") {
-        return anthropicComplete({ key, model, input, timeoutMs, baseUrl, provider: "proxy" });
+        const claude: AnthropicArgs = { key, model, input, timeoutMs, baseUrl, provider: "proxy" };
+        if (!effort || !anthropicTakesEffort(model)) return anthropicComplete(claude);
+        return withEffortOrToday(
+          `proxy\n${model}\n${effort}`,
+          () => anthropicComplete({ ...claude, reasoningEffort: effort }),
+          () => anthropicComplete(claude),
+        );
       }
-      return openaiCompatibleComplete({
+      const chat: OpenAIArgs = {
         key,
         model,
         baseUrl: `${baseUrl}/v1`,
         provider: "proxy",
         input,
         timeoutMs,
-      });
+      };
+      if (!effort) return openaiCompatibleComplete(chat);
+      return withEffortOrToday(
+        `proxy\n${model}\n${effort}`,
+        () =>
+          openaiCompatibleComplete({
+            ...chat,
+            openaiReasoningEffort: effort,
+            extraMaxTokens: REASONING_ALLOWANCE_TOKENS[effort],
+          }),
+        () => openaiCompatibleComplete(chat),
+      );
     }
   }
 }
@@ -586,6 +604,25 @@ async function completeAtEffort(
   const out = await openaiCompatibleComplete(raised);
   settledEffort.set(key, null);
   return out;
+}
+
+/** Proxy routes whose effort drew a 400: they get today's request from then on. */
+const effortRefused = new Set<string>();
+
+/** The proxy's effort step: a 400 about reasoning or effort falls back to today's request. */
+async function withEffortOrToday(
+  key: string,
+  atEffort: () => Promise<LlmCompleteOutput>,
+  today: () => Promise<LlmCompleteOutput>,
+): Promise<LlmCompleteOutput> {
+  if (effortRefused.has(key)) return today();
+  try {
+    return await atEffort();
+  } catch (err) {
+    if (!isEffortRejection(err)) throw err;
+    effortRefused.add(key);
+    return today();
+  }
 }
 
 function isEffortRejection(err: unknown): boolean {
@@ -691,6 +728,8 @@ interface OpenAIArgs {
    * reasoning cannot be switched off. Mutually exclusive with disableReasoning.
    */
   reasoningEffort?: string;
+  /** Send the OpenAI chat API's top-level `reasoning_effort`: the proxy's form. */
+  openaiReasoningEffort?: string;
   /**
    * Extra completion budget on top of the caller's `maxTokens`. A reasoning-
    * mandatory model spends its thinking inside `max_tokens`, so the caller's
@@ -715,6 +754,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
         : args.reasoningEffort
           ? { reasoning: { effort: args.reasoningEffort } }
           : {}),
+      ...(args.openaiReasoningEffort ? { reasoning_effort: args.openaiReasoningEffort } : {}),
     },
     provider: args.provider,
     timeoutMs: args.timeoutMs,
@@ -794,6 +834,8 @@ interface AnthropicArgs {
   baseUrl?: string;
   /** Provider name for errors and the result; default `anthropic`. */
   provider?: string;
+  /** `llmReasoningEffort` in place of `low`, for a model `anthropicEffort` sets an effort on. */
+  reasoningEffort?: LlmReasoningEffort;
 }
 
 /**
@@ -808,18 +850,30 @@ const ANTHROPIC_NO_SAMPLING = /^claude-(sonnet-5|opus-5|opus-4-[78]|haiku-5|fabl
  * max_tokens. Sonnet 4.6 did not think, so callers size maxTokens for the
  * answer alone. Low effort keeps thinking short or skipped, and the same
  * allowance the OpenRouter path adds keeps maxTokens an answer budget.
- * `llmReasoningEffort` is OpenRouter-only and does not change this.
+ * Through the proxy, `llmReasoningEffort` replaces `low` and its allowance;
+ * the `anthropic` provider and other Claude models are unchanged.
  */
-function anthropicEffort(model: string): {
+function anthropicEffort(
+  model: string,
+  chosen?: LlmReasoningEffort,
+): {
   extra: { output_config?: { effort: string } };
   extraMaxTokens: number;
 } {
-  return model.startsWith("claude-sonnet-5-5")
+  if (!anthropicTakesEffort(model)) return { extra: {}, extraMaxTokens: 0 };
+  return chosen
     ? {
+        extra: { output_config: { effort: chosen } },
+        extraMaxTokens: REASONING_ALLOWANCE_TOKENS[chosen],
+      }
+    : {
         extra: { output_config: { effort: MANDATORY_REASONING_EFFORT } },
         extraMaxTokens: MANDATORY_REASONING_ALLOWANCE_TOKENS,
-      }
-    : { extra: {}, extraMaxTokens: 0 };
+      };
+}
+
+function anthropicTakesEffort(model: string): boolean {
+  return model.startsWith("claude-sonnet-5-5");
 }
 
 async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput> {
@@ -827,7 +881,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
   const messages = args.input.messages
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role, content: m.content }));
-  const effort = anthropicEffort(args.model);
+  const effort = anthropicEffort(args.model, args.reasoningEffort);
   const maxTokens = (args.input.maxTokens ?? 1024) + effort.extraMaxTokens;
   const provider = args.provider ?? "anthropic";
 

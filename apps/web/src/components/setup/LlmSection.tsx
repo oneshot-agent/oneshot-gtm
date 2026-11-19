@@ -7,6 +7,7 @@ import {
   llmSectionErrors,
   llmSectionRequest,
   llmSectionValues,
+  takesReasoningEffort,
   usesProxy,
 } from "../../lib/llmSettings.ts";
 import { KeyStatusLine } from "./KeyStatusLine.tsx";
@@ -105,10 +106,10 @@ export function LlmSection({ cfg, sources, onDirtyChange }: SectionProps) {
             />
           </Field>
         )}
-        {v.llmProvider === "openrouter" && (
+        {takesReasoningEffort(v) && (
           <Field
             label="Reasoning effort"
-            hint="Default: off where the model allows it, else low. Higher reasons longer and costs more."
+            hint="Default sends no effort setting, except for models that need one. Higher reasons longer and costs more."
           >
             <Select
               value={v.reasoningEffort}

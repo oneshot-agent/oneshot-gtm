@@ -738,7 +738,7 @@ export interface SetupRequest {
   llmBaseUrl?: string | null;
   /** Provider and model for calls the primary can't serve. Null clears it. */
   llmFallback?: { provider: LlmProvider; model: string } | null;
-  /** OpenRouter reasoning effort. `undefined` = leave unchanged; `null` = clear (default); anything else is a 400. */
+  /** Reasoning effort on OpenRouter or the proxy. `undefined` = leave unchanged; `null` = clear (default); anything else is a 400. */
   llmReasoningEffort?: LlmReasoningEffort | null;
   telemetryEnabled?: boolean;
   walletMode?: WalletMode;

@@ -440,12 +440,12 @@ export interface OneShotConfig {
    */
   llmFallback?: LlmFallbackConfig | null;
   /**
-   * Reasoning effort on OpenRouter when it is `llmProvider`. Every model then
-   * reasons at this effort, ones that could have it off too, with the effort's
-   * allowance added to each call's maxTokens. A model that refuses the effort
-   * is asked at `low`, then with no effort. Unset: reasoning off where the
-   * model allows it, else `low`. `llmFallback`, `proxy` and the Anthropic API
-   * ignore it.
+   * Reasoning effort when `llmProvider` is `openrouter` or `proxy`, with the
+   * effort's allowance added to each call's maxTokens. OpenRouter: every model
+   * reasons at it; a refused effort is asked at `low`, then with none. Proxy:
+   * `reasoning_effort` on chat models, `output_config.effort` on the Claude
+   * models already sent one; a refusal sends today's request. Unset: today's
+   * requests. `llmFallback` and the `anthropic` provider ignore it.
    */
   llmReasoningEffort?: LlmReasoningEffort;
   telemetryEnabled: boolean;

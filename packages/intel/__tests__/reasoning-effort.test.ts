@@ -41,6 +41,15 @@ function ok(text = '{"ok":true}') {
       }),
   };
 }
+function claudeOk() {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: () =>
+      Promise.resolve({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+  };
+}
 function rejection(status: number, message: string) {
   return {
     ok: false,
@@ -247,35 +256,106 @@ describe("llmReasoningEffort set", () => {
     expect(sent(fn, 1).body["max_tokens"]).toBe(500);
   });
 
-  it("the proxy and Anthropic providers ignore it", async () => {
+  it("the anthropic provider ignores it", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "an-key");
-    vi.stubEnv("LLM_PROXY_API_KEY", "px-key");
     state.cfg = {
       llmProvider: "anthropic",
       llmModel: "claude-sonnet-5-5",
       llmReasoningEffort: "high",
     };
-    const reply = {
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: () =>
-        Promise.resolve({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
-    };
-    const anthropic = stubFetch(() => reply);
+    const anthropic = stubFetch(() => claudeOk());
     await complete({ messages: msgs, maxTokens: 500 });
     expect(sent(anthropic, 0).body["output_config"]).toEqual({ effort: "low" });
     expect(sent(anthropic, 0).body["max_tokens"]).toBe(500 + MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+});
 
-    state.cfg = {
-      llmProvider: "proxy",
-      llmModel: "gpt-test",
-      llmBaseUrl: "http://127.0.0.1:8317",
-      llmReasoningEffort: "high",
-    };
-    const proxy = stubFetch(() => ok());
+describe("llmReasoningEffort on the proxy", () => {
+  const PROXY = "http://127.0.0.1:8317";
+  beforeEach(() => {
+    vi.stubEnv("LLM_PROXY_API_KEY", "px-key");
+    state.cfg = { llmProvider: "proxy", llmModel: fresh, llmBaseUrl: PROXY, llmFallback: null };
+  });
+
+  it("unset: the chat request is unchanged", async () => {
+    const fn = stubFetch(() => ok());
+    await complete({ messages: msgs, maxTokens: 500, temperature: 0.2 });
+    expect(sent(fn, 0).url).toBe(`${PROXY}/v1/chat/completions`);
+    expect(sent(fn, 0).body).toEqual({
+      model: fresh,
+      messages: expect.any(Array),
+      temperature: 0.2,
+      max_tokens: 500,
+    });
+  });
+
+  it("set: reasoning_effort on the chat request, the allowance on top of maxTokens", async () => {
+    state.cfg["llmReasoningEffort"] = "high";
+    const fn = stubFetch(() => ok());
     await complete({ messages: msgs, maxTokens: 500 });
-    expect(sent(proxy, 0).body.reasoning).toBeUndefined();
-    expect(sent(proxy, 0).body["max_tokens"]).toBe(500);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sent(fn, 0).body["reasoning_effort"]).toBe("high");
+    expect(sent(fn, 0).body.reasoning).toBeUndefined();
+    expect(sent(fn, 0).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
+  });
+
+  it("a 400 about the effort sends today's request, and the route remembers it", async () => {
+    state.cfg["llmReasoningEffort"] = "xhigh";
+    const fn = stubFetch((_url, body) =>
+      body["reasoning_effort"] ? rejection(400, "invalid reasoning_effort: xhigh") : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body["reasoning_effort"]).toBeUndefined();
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500);
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(sent(fn, 2).body["reasoning_effort"]).toBeUndefined();
+  });
+
+  it("a 400 about something else is not retried", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const fn = stubFetch(() => rejection(400, "messages must not be empty"));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(/400/);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("Claude Sonnet 5.5 gets the effort in place of low; 400 goes back to low", async () => {
+    state.cfg = { ...state.cfg, llmModel: "claude-sonnet-5-5", llmReasoningEffort: "medium" };
+    const fn = stubFetch((_url, body) =>
+      (body["output_config"] as { effort?: string } | undefined)?.effort === "medium"
+        ? rejection(400, "output_config.effort: unsupported value")
+        : claudeOk(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(sent(fn, 0).url).toBe(`${PROXY}/v1/messages`);
+    expect(sent(fn, 0).body["output_config"]).toEqual({ effort: "medium" });
+    expect(sent(fn, 0).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.medium);
+    expect(sent(fn, 1).body["output_config"]).toEqual({ effort: "low" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+
+  it("other Claude models are unchanged, set or not", async () => {
+    state.cfg = { ...state.cfg, llmModel: "claude-opus-5-5", llmReasoningEffort: "high" };
+    const fn = stubFetch(() => claudeOk());
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sent(fn, 0).body["output_config"]).toBeUndefined();
+    expect(sent(fn, 0).body["max_tokens"]).toBe(500);
+  });
+
+  it("a proxy fallback gets no effort", async () => {
+    state.cfg = {
+      llmProvider: "openrouter",
+      llmModel: `${fresh}-primary`,
+      llmBaseUrl: PROXY,
+      llmReasoningEffort: "high",
+      llmFallback: { provider: "proxy", model: fresh },
+    };
+    const fn = stubFetch((url) => (url.startsWith(PROXY) ? ok() : rejection(503, "down")));
+    await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 });
+    expect(sent(fn, 1).url).toBe(`${PROXY}/v1/chat/completions`);
+    expect(sent(fn, 1).body["reasoning_effort"]).toBeUndefined();
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500);
   });
 });
