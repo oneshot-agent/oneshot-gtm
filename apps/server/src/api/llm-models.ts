@@ -1,6 +1,5 @@
-import { demoMode, loadConfig } from "@oneshot-gtm/core";
+import { demoMode, llmProxyOrigin, loadConfig } from "@oneshot-gtm/core";
 import { listLlmModels } from "@oneshot-gtm/doctor";
-import { proxyBaseUrl } from "@oneshot-gtm/intel";
 import type { LlmModelsResponse } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { SetupValidationError, validateLlmBaseUrl } from "./setup.ts";
@@ -35,13 +34,14 @@ export async function llmModelsRoute(req: Request): Promise<Response> {
     throw err;
   }
   if (!raw) return reply({ error: "Enter the proxy's address first." }, 400, req);
-  const base = proxyBaseUrl(raw);
+  const base = llmProxyOrigin(raw);
   // The saved key goes only to the saved proxy, so a request cannot send it elsewhere.
-  const savedKey = saved && proxyBaseUrl(saved) === base ? process.env.LLM_PROXY_API_KEY : "";
+  const savedKey = saved && llmProxyOrigin(saved) === base ? process.env.LLM_PROXY_API_KEY : "";
   const key = (typeof b.key === "string" && b.key.trim()) || savedKey?.trim() || "";
 
   const out = await listLlmModels(base, key, MODELS_TIMEOUT_MS);
   if (out.ok) return reply({ models: out.models }, 200, req);
   const error = `${out.message.charAt(0).toUpperCase()}${out.message.slice(1)}.`;
-  return reply({ error }, out.failure === "auth" ? out.status! : 502, req);
+  const status = out.failure === "auth" ? out.status! : out.failure === "insecure" ? 400 : 502;
+  return reply({ error }, status, req);
 }

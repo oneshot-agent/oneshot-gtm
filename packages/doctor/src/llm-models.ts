@@ -1,7 +1,13 @@
-import { llmProxyOrigin } from "@oneshot-gtm/core";
+import { llmProxyOrigin, llmProxyOriginProblem } from "@oneshot-gtm/core";
 
 /** Why a proxy's model list could not be read. */
-export type LlmModelsFailure = "unreachable" | "timeout" | "auth" | "status" | "bad-body";
+export type LlmModelsFailure =
+  | "unreachable"
+  | "timeout"
+  | "auth"
+  | "status"
+  | "bad-body"
+  | "insecure";
 
 export type LlmModelsResult =
   | { ok: true; models: string[] }
@@ -18,11 +24,15 @@ export async function listLlmModels(
   timeoutMs: number,
 ): Promise<LlmModelsResult> {
   const base = llmProxyOrigin(baseUrl);
+  const problem = llmProxyOriginProblem(base);
+  if (problem) return { ok: false, failure: "insecure", message: `the proxy address ${problem}` };
   let res: Response;
   try {
     res = await fetch(`${base}/v1/models`, {
       headers: key ? { authorization: `Bearer ${key}`, "x-api-key": key } : {},
       signal: AbortSignal.timeout(timeoutMs),
+      // Never follow a redirect with the key: x-api-key survives a cross-origin hop.
+      redirect: "manual",
     });
   } catch (err) {
     const name = (err as Error).name;

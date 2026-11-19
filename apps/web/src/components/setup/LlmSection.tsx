@@ -109,7 +109,7 @@ export function LlmSection({ cfg, sources, onDirtyChange }: SectionProps) {
             <Field
               label="Endpoint URL"
               error={s.errors.llmBaseUrl}
-              hint="Where your proxy listens."
+              hint="Where your proxy listens: https, or http on this machine or a private network."
             >
               <Input
                 value={v.llmBaseUrl}

@@ -22,6 +22,32 @@ import { useReportDirty, type SectionProps } from "./types.ts";
 
 type Secrets = Record<SecretKey, string>;
 
+/** The keys the saved provider and fallback read. */
+function llmKeys(cfg: SectionProps["cfg"]): SecretKey[] {
+  return [
+    LLM_KEY[cfg.llmProvider],
+    ...(cfg.llmFallback ? [LLM_KEY[cfg.llmFallback.provider]] : []),
+  ];
+}
+
+/** The decisions engine reads OPENROUTER_API_KEY whatever the provider is. */
+function decisionsEngine(cfg: SectionProps["cfg"]): boolean {
+  return cfg.replyClassifier?.engine === "decisions" || cfg.offerJudge?.engine === "decisions";
+}
+
+export function llmKeyInUse(cfg: SectionProps["cfg"], k: SecretKey): boolean {
+  return llmKeys(cfg).includes(k) || (k === "OPENROUTER_API_KEY" && decisionsEngine(cfg));
+}
+
+export function llmCaption(cfg: SectionProps["cfg"]): string {
+  const read = [`the saved provider's key (${cfg.llmProvider})`];
+  if (cfg.llmFallback) read.push(`the fallback's (${cfg.llmFallback.provider})`);
+  if (decisionsEngine(cfg) && !llmKeys(cfg).includes("OPENROUTER_API_KEY"))
+    read.push("OpenRouter's (decisions engine)");
+  const list = read.length > 1 ? `${read.slice(0, -1).join(", ")} and ${read.at(-1)}` : read[0];
+  return `Only ${list} ${read.length > 1 ? "are" : "is"} read.`;
+}
+
 /**
  * The badge next to a key. "in use" means the runtime reads THIS key today
  * (selected by the saved preferences AND present). A selected key that is
@@ -130,13 +156,9 @@ export function CredentialsSection({
     () => [
       {
         title: "LLM",
-        caption: cfg.llmFallback
-          ? `Only the saved provider's key (${cfg.llmProvider}) and the fallback's (${cfg.llmFallback.provider}) are read.`
-          : `Only the saved provider's key (${cfg.llmProvider}) is read.`,
+        caption: llmCaption(cfg),
         keys: ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_PROXY_API_KEY"],
-        inUse: (k) =>
-          k === LLM_KEY[cfg.llmProvider] ||
-          (cfg.llmFallback != null && k === LLM_KEY[cfg.llmFallback.provider]),
+        inUse: (k) => llmKeyInUse(cfg, k),
         placeholder: {
           OPENROUTER_API_KEY: "sk-or-...",
           OPENAI_API_KEY: "sk-...",

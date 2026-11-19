@@ -3,13 +3,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/api/client.ts";
 import { LlmSection } from "../src/components/setup/LlmSection.tsx";
+import { llmCaption, llmKeyInUse } from "../src/components/setup/CredentialsSection.tsx";
 import {
+  loadedFor,
   loadProxyModels,
+  proxyModelsRequest,
   ProxyModelPicker,
   type ProxyModels,
 } from "../src/components/setup/ProxyModelField.tsx";
 import type { SetupCfg } from "../src/components/setup/types.ts";
-import { llmSectionErrors, llmSectionRequest, llmSectionValues } from "../src/lib/llmSettings.ts";
+import {
+  fallbackAfterPicking,
+  llmSectionErrors,
+  llmSectionRequest,
+  llmSectionValues,
+} from "../src/lib/llmSettings.ts";
 
 // The /setup LLM section: the proxy provider, its model list, and the fallback.
 
@@ -89,7 +97,20 @@ describe("proxy model list", () => {
     expect(html).toContain("<select");
     expect(html).toContain('<option value="claude-sonnet-5-5">');
     expect(html).toContain('<option value="gpt-6.1-sol" selected="">');
+    expect(html).toContain("Custom model…");
     expect(html).toContain("Reload");
+  });
+
+  it("shows a list only for the endpoint and key that loaded it", () => {
+    const a = proxyModelsRequest(" http://127.0.0.1:8317 ", "sk-a");
+    const loaded = { request: a, result: { models: ["m"] } };
+    expect(loadedFor(loaded, proxyModelsRequest("http://127.0.0.1:8317", " sk-a"))).toEqual({
+      models: ["m"],
+    });
+    expect(loadedFor(loaded, proxyModelsRequest("https://proxy.example.com", "sk-a"))).toBeNull();
+    expect(loadedFor(loaded, proxyModelsRequest("http://127.0.0.1:8317", "sk-b"))).toBeNull();
+    expect(loadedFor(loaded, proxyModelsRequest("http://127.0.0.1:8317"))).toBeNull();
+    expect(loadedFor(null, a)).toBeNull();
   });
 
   it("leaves a blank key out so the server uses the saved one", async () => {
@@ -150,6 +171,25 @@ describe("LLM section request", () => {
     });
   });
 
+  it("leaves out an endpoint edit once neither route uses the proxy", () => {
+    const hosted = { ...base, llmProvider: "openai" as const, llmBaseUrl: "localhost:8317" };
+    expect(
+      llmSectionRequest(hosted, { llmProvider: "openai", llmBaseUrl: "localhost:8317" }),
+    ).toEqual({ llmProvider: "openai" });
+    expect(llmSectionErrors(hosted).llmBaseUrl).toBeNull();
+    const viaFallback = { ...hosted, fallbackProvider: "proxy" as const, fallbackModel: "m" };
+    expect(llmSectionRequest(viaFallback, { llmBaseUrl: "http://127.0.0.1:8317" })).toEqual({
+      llmBaseUrl: "http://127.0.0.1:8317",
+    });
+  });
+
+  it("onboarding clears a saved fallback on the provider it picks, and keeps another", () => {
+    const fallback = { provider: "proxy" as const, model: "m" };
+    expect(fallbackAfterPicking("proxy", fallback)).toEqual({ llmFallback: null });
+    expect(fallbackAfterPicking("openai", fallback)).toEqual({});
+    expect(fallbackAfterPicking("proxy", undefined)).toEqual({});
+  });
+
   it("sends llmFallback whole when either of its fields changed", () => {
     const values = { ...base, fallbackProvider: "openai" as const, fallbackModel: "gpt-4o-mini" };
     expect(llmSectionRequest(values, { fallbackModel: "gpt-4o-mini" })).toEqual({
@@ -189,5 +229,29 @@ describe("LLM section request", () => {
         .fallbackProvider,
     ).toBe("pick a provider other than the one above");
     expect(llmSectionErrors(base).fallbackProvider).toBeNull();
+  });
+});
+
+describe("LLM credentials", () => {
+  it("counts OPENROUTER_API_KEY as in use while a decisions engine runs", () => {
+    const proxy = cfg({ llmProvider: "proxy", llmFallback: { provider: "openai", model: "m" } });
+    expect(llmKeyInUse(proxy, "OPENROUTER_API_KEY")).toBe(false);
+    expect(llmCaption(proxy)).toBe(
+      "Only the saved provider's key (proxy) and the fallback's (openai) are read.",
+    );
+    for (const decisions of [
+      { replyClassifier: { engine: "decisions" as const, model: "d" } },
+      { offerJudge: { engine: "decisions" as const, model: "d" } },
+    ]) {
+      const c = { ...proxy, ...decisions } as SetupCfg;
+      expect(llmKeyInUse(c, "OPENROUTER_API_KEY")).toBe(true);
+      expect(llmKeyInUse(c, "ANTHROPIC_API_KEY")).toBe(false);
+      expect(llmCaption(c)).toBe(
+        "Only the saved provider's key (proxy), the fallback's (openai) and OpenRouter's (decisions engine) are read.",
+      );
+    }
+    expect(llmCaption(cfg({ offerJudge: { engine: "decisions", model: "d" } }))).toBe(
+      "Only the saved provider's key (openrouter) is read.",
+    );
   });
 });

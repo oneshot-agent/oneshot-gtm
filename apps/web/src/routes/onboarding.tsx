@@ -12,6 +12,7 @@ import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { LLM_DEFAULTS, LLM_KEY, LLM_PROVIDER_LABELS } from "../components/setup/constants.ts";
 import { ProxyModelField } from "../components/setup/ProxyModelField.tsx";
+import { fallbackAfterPicking } from "../lib/llmSettings.ts";
 import { openStrategist } from "../lib/openStrategist.ts";
 
 export const Route = createFileRoute("/onboarding")({
@@ -114,14 +115,21 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
         });
       if (step === 2)
         await api.setup({ onboardingStep: 2, icpOneLiner: values.icpOneLiner.trim() });
-      if (step === 3)
+      if (step === 3) {
+        // The fallback is not in the onboarding status; the server refuses one on the same provider.
+        const current = await qc.ensureQueryData({
+          queryKey: ["setup"],
+          queryFn: api.setupStatus,
+        });
         await api.setup({
           onboardingStep: 3,
           llmProvider: provider,
           llmModel: model.trim(),
+          ...fallbackAfterPicking(provider, current.cfg.llmFallback),
           ...(provider === "proxy" ? { llmBaseUrl: baseUrl.trim() } : {}),
           ...(key.trim() ? { secrets: { [LLM_KEY[provider]]: key.trim() } } : {}),
         });
+      }
       setDirty(false);
       dirtyRef.current = false;
       setKey("");

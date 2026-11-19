@@ -83,9 +83,11 @@ export async function configLlm(opts: ConfigLlmOptions = {}): Promise<void> {
     (await prompts({ ...q, name: "v" }, { onCancel: () => process.exit(0) }))["v"] as T;
 
   let baseUrl = cfg.llmBaseUrl;
+  let proxySetUp = false;
   const secrets: Record<string, string> = {};
   const proxyKey = () => secrets["LLM_PROXY_API_KEY"] ?? llmApiKey("proxy") ?? "";
   const setUpProxy = async (): Promise<void> => {
+    proxySetUp = true;
     if (opts.baseUrl !== undefined) {
       if (!isHttpUrl(opts.baseUrl))
         throw new Error("--base-url must be an http:// or https:// URL with no query or fragment");
@@ -192,6 +194,12 @@ export async function configLlm(opts: ConfigLlmOptions = {}): Promise<void> {
     throw new Error(
       `the saved fallback is also ${provider}: pass --fallback-provider with another one, or --no-fallback`,
     );
+  // A saved proxy fallback is never set up above, but an explicit --base-url still applies to it.
+  if (opts.baseUrl !== undefined && !proxySetUp) {
+    if (provider !== "proxy" && fallback?.provider !== "proxy")
+      throw new Error("--base-url is only used when the provider or the fallback is proxy");
+    await setUpProxy();
+  }
 
   const { llmFallback: _old, ...rest } = cfg;
   void _old;
@@ -912,6 +920,12 @@ export async function configKeys(): Promise<void> {
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);
   const cfg = loadConfig();
   const llmEnvName = LLM_KEY_ENV[cfg.llmProvider];
+  // The fallback's key is asked only while it is missing; it never serves without one.
+  const fallback = cfg.llmFallback;
+  const fallbackEnvName =
+    fallback && fallback.provider !== cfg.llmProvider && !llmApiKey(fallback.provider)
+      ? LLM_KEY_ENV[fallback.provider]
+      : null;
 
   const answers = await prompts(
     [
@@ -919,6 +933,11 @@ export async function configKeys(): Promise<void> {
         type: "password",
         name: "llmKey",
         message: `${llmEnvName} (current provider: ${cfg.llmProvider})`,
+      },
+      {
+        type: fallbackEnvName ? "password" : null,
+        name: "fallbackKey",
+        message: `${fallbackEnvName} (fallback provider: ${fallback?.provider})`,
       },
       {
         type: "select",
@@ -1009,6 +1028,8 @@ export async function configKeys(): Promise<void> {
 
   const updates: Record<string, string> = {};
   if (answers["llmKey"]) updates[llmEnvName] = answers["llmKey"] as string;
+  if (fallbackEnvName && answers["fallbackKey"])
+    updates[fallbackEnvName] = answers["fallbackKey"] as string;
   if (answers["cdpId"]) updates["CDP_API_KEY_ID"] = answers["cdpId"] as string;
   if (answers["cdpSecret"]) updates["CDP_API_KEY_SECRET"] = answers["cdpSecret"] as string;
   if (answers["cdpWallet"]) updates["CDP_WALLET_SECRET"] = answers["cdpWallet"] as string;

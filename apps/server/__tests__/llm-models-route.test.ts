@@ -93,6 +93,8 @@ describe("POST /api/setup/llm-models", () => {
   it("answers 400 with no address, or one that is not an http(s) URL", async () => {
     expect((await call({})).status).toBe(400);
     expect((await call({ baseUrl: "ftp://127.0.0.1" })).status).toBe(400);
+    const plain = await call({ baseUrl: "http://proxy.example.com:8317", key: "k" });
+    expect(plain.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

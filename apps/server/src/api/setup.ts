@@ -41,6 +41,8 @@ import {
   getLedger,
   callsOf,
   MAX_CALL_STEP_DAYS,
+  llmProxyOrigin,
+  llmProxyOriginProblem,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -883,6 +885,8 @@ export function validateLlmBaseUrl(value: unknown): string {
     throw new SetupValidationError("llmBaseUrl must start with http:// or https://");
   if (/[?#]/.test(raw))
     throw new SetupValidationError("llmBaseUrl must not have a query or a fragment");
+  const problem = llmProxyOriginProblem(llmProxyOrigin(raw));
+  if (problem) throw new SetupValidationError(`llmBaseUrl ${problem}`);
   return raw;
 }
 

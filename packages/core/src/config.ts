@@ -942,7 +942,45 @@ export const LLM_PROVIDERS = Object.keys(LLM_KEY_ENV) as OneShotConfig["llmProvi
 
 /** A proxy origin as the client calls it: trimmed, without a trailing slash or `/v1`. */
 export function llmProxyOrigin(raw: string | undefined): string {
-  return (raw ?? "").trim().replace(/\/+$/, "").replace(/\/v1$/, "");
+  let base = (raw ?? "").trim();
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return base.endsWith("/v1") ? base.slice(0, -3) : base;
+}
+
+/** Loopback, a private range, or a private-network name: plain http stays off the internet. */
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host === "::1" || /^f[cd][0-9a-f]{2}:/.test(host)) return true;
+  if ([".localhost", ".local", ".internal", ".ts.net"].some((s) => host.endsWith(s))) return true;
+  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (!ip) return false;
+  const [a, b] = [Number(ip[1]), Number(ip[2])];
+  return (
+    a === 127 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/**
+ * Why the proxy key must not be sent to this origin, or null. Plain http is
+ * allowed only on this machine or a private network: anywhere else the key
+ * and every prompt would cross the internet in cleartext.
+ */
+export function llmProxyOriginProblem(origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return "must be a URL such as http://127.0.0.1:8317";
+  }
+  if (url.protocol === "https:") return null;
+  if (url.protocol !== "http:") return "must start with http:// or https://";
+  return isPrivateHost(url.hostname)
+    ? null
+    : "must use https:// unless the proxy is on this machine or a private network";
 }
 
 export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {

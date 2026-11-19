@@ -8,6 +8,8 @@ import {
   DEFAULT_LLM_MODEL,
   learningExpireAfterDaysOf,
   llmApiKey,
+  llmProxyOrigin,
+  llmProxyOriginProblem,
   currentFollowUpOfferPlays,
   currentNoOfferPlays,
   followUpOfferPlaysOf,
@@ -373,5 +375,36 @@ describe("volumeGoalPerDayOf", () => {
     expect(volumeGoalPerDayOf({ volumeGoalPerDay: 40 })).toBe(40);
     for (const volumeGoalPerDay of [undefined, null, 0, -5, Number.NaN, Infinity, "40"])
       expect(volumeGoalPerDayOf({ volumeGoalPerDay })).toBeNull();
+  });
+});
+
+describe("llmProxyOriginProblem", () => {
+  it("allows https anywhere and http only on this machine or a private network", () => {
+    for (const ok of [
+      "https://proxy.example.com",
+      "http://127.0.0.1:8317",
+      "http://localhost:8317",
+      "http://[::1]:8317",
+      "http://10.0.0.5:8317",
+      "http://172.20.1.1",
+      "http://192.168.1.20:8317",
+      "http://100.101.102.103:8317",
+      "http://box.tail1234.ts.net:8317",
+      "http://proxy.internal",
+    ]) {
+      expect(llmProxyOriginProblem(ok), ok).toBeNull();
+    }
+    for (const bad of ["http://proxy.example.com:8317", "http://8.8.8.8", "http://172.32.0.1"]) {
+      expect(llmProxyOriginProblem(bad), bad).toMatch(/https/);
+    }
+    expect(llmProxyOriginProblem("ftp://x")).toMatch(/http/);
+    expect(llmProxyOriginProblem("nope")).toMatch(/URL/);
+  });
+
+  it("strips trailing slashes and /v1", () => {
+    expect(llmProxyOrigin(" http://127.0.0.1:8317/v1/ ")).toBe("http://127.0.0.1:8317");
+    expect(llmProxyOrigin(`http://127.0.0.1:8317${"/".repeat(5000)}`)).toBe(
+      "http://127.0.0.1:8317",
+    );
   });
 });

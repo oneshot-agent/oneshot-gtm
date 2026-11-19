@@ -1,10 +1,32 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { Button } from "../primitives/Button.tsx";
 import { Field, Input, Select } from "../primitives/Field.tsx";
 
 export type ProxyModels = { models: string[] } | { error: string };
+
+/** The endpoint and key a list was loaded with, trimmed as they are sent. */
+export type ProxyModelsRequest = { baseUrl: string; key: string };
+export type LoadedProxyModels = { request: ProxyModelsRequest; result: ProxyModels };
+
+export function proxyModelsRequest(baseUrl: string, key = ""): ProxyModelsRequest {
+  return { baseUrl: baseUrl.trim(), key: key.trim() };
+}
+
+function sameRequest(a: ProxyModelsRequest | undefined, b: ProxyModelsRequest): boolean {
+  return a?.baseUrl === b.baseUrl && a.key === b.key;
+}
+
+/** A list shows only while the endpoint and key it came from are still the ones typed. */
+export function loadedFor(
+  loaded: LoadedProxyModels | null,
+  current: ProxyModelsRequest,
+): ProxyModels | null {
+  return loaded && sameRequest(loaded.request, current) ? loaded.result : null;
+}
+
+const CUSTOM_MODEL = "\u0000custom";
 
 /**
  * Ask the proxy what it serves. A blank URL or key is left out, so the server
@@ -30,7 +52,8 @@ export async function loadProxyModels(input: {
 
 /**
  * The model id for a proxy: a dropdown once its list has loaded, free text
- * until then or when loading failed. A saved id the list lacks stays selectable.
+ * until then, when loading failed, or after "Custom model…". A saved id the
+ * list lacks stays selectable.
  */
 export function ProxyModelPicker({
   value,
@@ -53,9 +76,11 @@ export function ProxyModelPicker({
   error?: string | null;
   hint?: string;
 }) {
+  const [custom, setCustom] = useState(false);
   const models = loaded && "models" in loaded ? loaded.models : null;
   const loadError = loaded && "error" in loaded ? loaded.error : null;
-  const options = models && value && !models.includes(value) ? [value, ...models] : models;
+  const options =
+    models && !custom && value && !models.includes(value) ? [value, ...models] : models;
   return (
     <Field
       label={label}
@@ -63,14 +88,20 @@ export function ProxyModelPicker({
       hint={hint}
     >
       <div className="flex gap-2">
-        {options ? (
-          <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        {options && !custom ? (
+          <Select
+            value={value}
+            onChange={(e) =>
+              e.target.value === CUSTOM_MODEL ? setCustom(true) : onChange(e.target.value)
+            }
+          >
             {!value && <option value="">Pick a model</option>}
             {options.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
             ))}
+            <option value={CUSTOM_MODEL}>Custom model…</option>
           </Select>
         ) : (
           <Input
@@ -80,15 +111,26 @@ export function ProxyModelPicker({
             spellCheck={false}
           />
         )}
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={!canLoad || loading}
-          onClick={onLoad}
-          className="shrink-0"
-        >
-          {loading ? "Loading…" : models ? "Reload" : "Load models"}
-        </Button>
+        {models && custom ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setCustom(false)}
+            className="shrink-0"
+          >
+            Show list
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={!canLoad || loading}
+            onClick={onLoad}
+            className="shrink-0"
+          >
+            {loading ? "Loading…" : models ? "Reload" : "Load models"}
+          </Button>
+        )}
       </div>
     </Field>
   );
@@ -104,18 +146,27 @@ export function ProxyModelField({
   /** A key typed but not saved yet; blank uses the saved one. */
   apiKey?: string;
 }) {
-  const [loaded, setLoaded] = useState<ProxyModels | null>(null);
+  const [loaded, setLoaded] = useState<LoadedProxyModels | null>(null);
+  const current = proxyModelsRequest(baseUrl, apiKey);
+  const latest = useRef(current);
+  useLayoutEffect(() => {
+    latest.current = { baseUrl: current.baseUrl, key: current.key };
+  }, [current.baseUrl, current.key]);
+  // An edited endpoint or key drops the list; a reply for the old pair is dropped too.
+  if (loaded && !sameRequest(loaded.request, current)) setLoaded(null);
   const load = useMutation({
-    mutationFn: () => loadProxyModels({ baseUrl, key: apiKey }),
-    onSuccess: setLoaded,
+    mutationFn: (request: ProxyModelsRequest) => loadProxyModels(request),
+    onSuccess: (result, request) => {
+      if (sameRequest(request, latest.current)) setLoaded({ request, result });
+    },
   });
   return (
     <ProxyModelPicker
       {...rest}
-      loaded={loaded}
-      loading={load.isPending}
-      canLoad={baseUrl.trim().length > 0}
-      onLoad={() => load.mutate()}
+      loaded={loadedFor(loaded, current)}
+      loading={load.isPending && sameRequest(load.variables, current)}
+      canLoad={current.baseUrl.length > 0}
+      onLoad={() => load.mutate(current)}
     />
   );
 }

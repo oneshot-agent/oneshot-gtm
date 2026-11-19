@@ -33,7 +33,10 @@ export function usesProxy(v: Pick<LlmSectionValues, "llmProvider" | "fallbackPro
   return v.llmProvider === "proxy" || v.fallbackProvider === "proxy";
 }
 
-/** `llmFallback` goes out whole whenever either of its fields changed, read from the latest values. */
+/**
+ * `llmFallback` goes out whole whenever either of its fields changed, read from the latest values.
+ * An endpoint edit is left out once neither route uses the proxy: the field is hidden then.
+ */
 export function llmSectionRequest(
   values: LlmSectionValues,
   sent: Partial<LlmSectionValues>,
@@ -41,7 +44,8 @@ export function llmSectionRequest(
   const req: SetupRequest = {};
   if (sent.llmProvider !== undefined) req.llmProvider = sent.llmProvider;
   if (sent.llmModel !== undefined) req.llmModel = sent.llmModel.trim();
-  if (sent.llmBaseUrl !== undefined) req.llmBaseUrl = sent.llmBaseUrl.trim() || null;
+  if (sent.llmBaseUrl !== undefined && usesProxy(values))
+    req.llmBaseUrl = sent.llmBaseUrl.trim() || null;
   if (sent.fallbackProvider !== undefined || sent.fallbackModel !== undefined) {
     req.llmFallback = values.fallbackProvider
       ? { provider: values.fallbackProvider, model: values.fallbackModel.trim() }
@@ -49,6 +53,14 @@ export function llmSectionRequest(
   }
   if (sent.proxyKey?.trim()) req.secrets = { LLM_PROXY_API_KEY: sent.proxyKey.trim() };
   return req;
+}
+
+/** Picking the saved fallback's provider as the primary clears the fallback; another one stays. */
+export function fallbackAfterPicking(
+  provider: LlmProvider,
+  fallback: SetupCfg["llmFallback"],
+): Pick<SetupRequest, "llmFallback"> {
+  return fallback?.provider === provider ? { llmFallback: null } : {};
 }
 
 function validateBaseUrl(raw: string): string | null {

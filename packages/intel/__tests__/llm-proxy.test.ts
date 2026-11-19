@@ -115,8 +115,18 @@ describe("proxy provider", () => {
     expect(proxyBaseUrl("http://127.0.0.1:8317/")).toBe(PROXY);
     expect(proxyBaseUrl(" http://127.0.0.1:8317/v1/ ")).toBe(PROXY);
     expect(() => proxyBaseUrl("  ")).toThrow(/llmBaseUrl/);
+    expect(() => proxyBaseUrl("http://proxy.example.com:8317")).toThrow(/https/);
+    expect(proxyBaseUrl("https://proxy.example.com")).toBe("https://proxy.example.com");
+    expect(proxyBaseUrl("http://192.168.1.20:8317")).toBe("http://192.168.1.20:8317");
     expect(proxyShape("claude-opus-5-5")).toBe("anthropic");
     expect(proxyShape("gemini-3.8-flash")).toBe("openai");
+  });
+
+  it("never follows a redirect with the key", async () => {
+    const fn = stubFetch({ [`${PROXY}/v1/messages`]: [messages("ok")] });
+    await complete({ messages: msgs });
+    const [, init] = fn.mock.calls[0] as [string, RequestInit];
+    expect(init.redirect).toBe("manual");
   });
 
   it("names the missing proxy key", async () => {
@@ -185,6 +195,27 @@ describe("fallback", () => {
 
     vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
     expect((await complete({ messages: msgs, maxAttempts: 1 })).content).toBe("primary back");
+  });
+
+  it("a call that started before a failure does not close the breaker the failure opened", async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    let n = 0;
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith(OR)) return { ok: true, status: 200, json: async () => chat("fb").body };
+      n++;
+      if (n === 1) {
+        await slow;
+        return { ok: true, status: 200, json: async () => messages("slow").body };
+      }
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof fetch;
+    const first = complete({ messages: msgs, maxAttempts: 1 });
+    await complete({ messages: msgs, maxAttempts: 1 });
+    release();
+    expect((await first).content).toBe("slow");
+    expect((await complete({ messages: msgs, maxAttempts: 1 })).content).toBe("fb");
+    expect(n).toBe(2);
   });
 
   it("holds the breaker for a Retry-After longer than its window", async () => {

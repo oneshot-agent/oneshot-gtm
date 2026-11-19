@@ -2,6 +2,7 @@ import {
   LLM_KEY_ENV,
   llmApiKey,
   llmProxyOrigin,
+  llmProxyOriginProblem,
   loadConfig,
   logEvent,
   type OneShotConfig,
@@ -284,7 +285,8 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     baseUrl: fallbackCfg.provider === "proxy" ? proxyBaseUrl(cfg.llmBaseUrl) : undefined,
   });
   const name = routeName(primary);
-  const skipUntil = breakerUntil.get(name) ?? 0;
+  const seen = breakerUntil.get(name);
+  const skipUntil = seen ?? 0;
   if (Date.now() < skipUntil) {
     const to = fallback();
     logEvent("llm.fallback", {
@@ -298,7 +300,8 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   }
   try {
     const out = await run(primary);
-    breakerUntil.delete(name);
+    // A call that failed while this one ran may have opened a new breaker: keep it.
+    if (breakerUntil.get(name) === seen) breakerUntil.delete(name);
     return out;
   } catch (err) {
     if (!isAvailabilityFailure(err)) throw err;
@@ -408,6 +411,8 @@ export function proxyBaseUrl(raw: string | undefined): string {
   const base = llmProxyOrigin(raw);
   if (!base)
     throw new LlmError("No llmBaseUrl set for the proxy provider. Run: oneshot-gtm config llm");
+  const problem = llmProxyOriginProblem(base);
+  if (problem) throw new LlmError(`llmBaseUrl ${problem}`);
   return base;
 }
 
@@ -556,6 +561,8 @@ async function postJson(args: {
         headers: { "Content-Type": "application/json", ...args.headers },
         body: JSON.stringify(args.body),
         signal: controller.signal,
+        // A redirect would carry x-api-key to another origin: fail on the 3xx instead.
+        redirect: "manual",
       });
     } catch (err) {
       // No response at all: either our own abort or a transport failure. These
