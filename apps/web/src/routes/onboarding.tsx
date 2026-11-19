@@ -117,9 +117,10 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
         await api.setup({ onboardingStep: 2, icpOneLiner: values.icpOneLiner.trim() });
       if (step === 3) {
         // The fallback is not in the onboarding status; the server refuses one on the same provider.
-        const current = await qc.ensureQueryData({
+        const current = await qc.fetchQuery({
           queryKey: ["setup"],
           queryFn: api.setupStatus,
+          staleTime: 0,
         });
         await api.setup({
           onboardingStep: 3,

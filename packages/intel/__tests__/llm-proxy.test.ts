@@ -218,6 +218,34 @@ describe("fallback", () => {
     expect(n).toBe(2);
   });
 
+  it("a later short failure does not shorten a Retry-After breaker", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let release!: () => void;
+    const slow = new Promise<void>((r) => (release = r));
+    let n = 0;
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.startsWith(OR)) return { ok: true, status: 200, json: async () => chat("fb").body };
+      n++;
+      if (n === 1) {
+        await slow;
+        throw new TypeError("fetch failed");
+      }
+      return {
+        ok: false,
+        status: 429,
+        headers: new Headers({ "retry-after": "1800" }),
+        text: async () => "{}",
+      };
+    }) as unknown as typeof fetch;
+    const first = complete({ messages: msgs, maxAttempts: 1 });
+    await complete({ messages: msgs, maxAttempts: 1 });
+    release();
+    await first;
+    vi.setSystemTime(Date.now() + 20 * 60_000);
+    expect((await complete({ messages: msgs, maxAttempts: 1 })).content).toBe("fb");
+    expect(n).toBe(2);
+  });
+
   it("holds the breaker for a Retry-After longer than its window", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     stubFetch({

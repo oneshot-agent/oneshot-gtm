@@ -308,7 +308,8 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     const status = err instanceof LlmError ? (err.status ?? null) : null;
     const retryAfterMs = err instanceof LlmError ? (err.retryAfterMs ?? 0) : 0;
     const until = Date.now() + Math.min(Math.max(BREAKER_MS, retryAfterMs), BREAKER_MAX_MS);
-    breakerUntil.set(name, until);
+    // Keep a longer cooldown another call already set (a Retry-After).
+    breakerUntil.set(name, Math.max(breakerUntil.get(name) ?? 0, until));
     const to = fallback();
     logEvent(
       "llm.fallback",
