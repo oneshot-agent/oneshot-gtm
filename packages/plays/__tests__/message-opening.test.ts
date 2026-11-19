@@ -124,6 +124,28 @@ describe("no-product-line after a problem line", () => {
     );
     expect(followUp(named)).not.toContain("no-product-line");
   });
+
+  it("problem: a lead-in that loosely reads as an offer does not make the real offer count", () => {
+    ws.opening = "problem";
+    ws.oneLiner = "Acme is an agent that signs vendor renewals";
+    const loose = `Hi Sam,\n\nI could be wrong, but renewals may be taking your team too long. I can get every vendor renewal signed through Acme. Worth a look?\n\nJ`;
+    expect(followUp(loose)).toContain("no-product-line");
+  });
+});
+
+describe("problem lines that wrap or carry an abbreviation", () => {
+  const opts = { problemFirst: true };
+
+  it("keeps a title abbreviation inside its sentence", () => {
+    const titled = `Hi Sam,\n\nDr. Lee may be losing time to renewals. ${offerLine}\n\nJ`;
+    expect(opensWithOffer(titled, offer, opts)).toBe(true);
+  });
+
+  it("reads a hard-wrapped two-sentence problem paragraph as one", () => {
+    const wrapped = `Hi Sam,\n\n${problem}\nRenewals pile up.\n\n${offerLine}\n\nJ`;
+    expect(opensWithOffer(wrapped, offer, opts)).toBe(true);
+    expect(opensWithOffer(wrapped, offer)).toBe(false);
+  });
 });
 
 describe("the offer-first rules", () => {

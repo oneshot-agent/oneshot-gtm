@@ -2390,16 +2390,9 @@ export function offerBlock(
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-/** The input line an email draft gets under `messageOpening: "problem"`; see `_offer-first.md`. */
 export const PROBLEM_OPENING_LINE = "OPENING: problem";
 
-/**
- * `offerLines` (an email's `offerBlock`) with the `OPENING: problem` line
- * added, when the workspace's `messageOpening` is `problem` and the email
- * makes an offer. Otherwise `offerLines` unchanged, so the input is
- * byte-identical to before the setting existed. Email drafts only: LinkedIn,
- * X and call briefs never read it.
- */
+/** Email drafts only; unset leaves `offerLines` byte-identical. */
 export function withOpeningLine(
   offerLines: string | null,
   offer: unknown,

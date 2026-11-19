@@ -391,7 +391,6 @@ export interface OfferWriterConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
-/** What an email that makes an offer opens on; see `OneShotConfig.messageOpening`. */
 export type MessageOpening = "offer" | "problem";
 
 /** The pattern checks a workspace can run on every written offer; see `OneShotConfig.offerChecks`. */
@@ -591,14 +590,9 @@ export interface OneShotConfig {
    */
   offerAnchor?: OfferAnchor;
   /**
-   * What an email that makes an offer opens on. `problem`: the first email
-   * and the email follow-ups get an `OPENING: problem` line, and may open
-   * with one line naming a problem this reader very likely has, in their
-   * words and stated as a bet, before the offer; the opening lint accepts
-   * that one line first. `offer` (the default, and anything unrecognized):
-   * the first sentence is the offer, the behaviour before this setting
-   * existed. LinkedIn, X and call briefs are unchanged. Read through
-   * `messageOpeningOf`.
+   * What an email that makes an offer opens on. `problem`: one line naming
+   * the reader's likely problem may come before the offer. `offer` (the
+   * default, and anything unrecognized): the offer first. Email only.
    */
   messageOpening?: MessageOpening;
   /**
