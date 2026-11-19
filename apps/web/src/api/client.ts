@@ -96,6 +96,7 @@ import type {
   RunRecord,
   RunTriggerResult,
   SenderIdentityView,
+  LlmProvider,
   SetupRequest,
   SmartleadAccountView,
   SpendByPlay,
@@ -467,8 +468,11 @@ export const api = {
         founderVoice?: string | null;
         mobileSignature: boolean;
         dailySpendCeilingUsd: number | null;
-        llmProvider: "openrouter" | "openai" | "anthropic";
+        llmProvider: LlmProvider;
         llmModel: string;
+        /** The proxy origin; absent until a proxy is set up. */
+        llmBaseUrl?: string | null;
+        llmFallback?: { provider: LlmProvider; model: string } | null;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
         slackWebhookUrl: string | null;
@@ -530,6 +534,10 @@ export const api = {
   // `warnings`: saved, but worth a look (a LinkedIn template that can run
   // past its step's limit once filled).
   setup: (req: SetupRequest) => postJson<{ ok: boolean; warnings?: string[] }>("/setup", req),
+  // The models a proxy serves. POST so a just-pasted key rides the body, never a URL;
+  // a value left out falls back to the saved one.
+  llmModels: (body: { baseUrl?: string; key?: string }) =>
+    postJson<{ models: string[] }>("/setup/llm-models", body),
   setupCalendars: (identityId: string) =>
     getJson<{ calendars: CalendarPickerEntry[] }>(
       `/setup/calendars?identityId=${encodeURIComponent(identityId)}`,

@@ -10,7 +10,9 @@ import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
-import { LLM_DEFAULTS, LLM_KEY } from "../components/setup/constants.ts";
+import { LLM_DEFAULTS, LLM_KEY, LLM_PROVIDER_LABELS } from "../components/setup/constants.ts";
+import { ProxyModelField } from "../components/setup/ProxyModelField.tsx";
+import { fallbackAfterPicking } from "../lib/llmSettings.ts";
 import { openStrategist } from "../lib/openStrategist.ts";
 
 export const Route = createFileRoute("/onboarding")({
@@ -43,6 +45,14 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
   const [provider, setProvider] = useState(initial.provider);
   const [model, setModel] = useState(initial.model);
   const [key, setKey] = useState("");
+  // The proxy URL is not in the onboarding status; until edited it shows the saved one.
+  const setup = useQuery({
+    queryKey: ["setup"],
+    queryFn: api.setupStatus,
+    enabled: provider === "proxy",
+  });
+  const [baseUrlDraft, setBaseUrl] = useState<string | null>(null);
+  const baseUrl = baseUrlDraft ?? setup.data?.cfg.llmBaseUrl ?? "";
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
   dirtyRef.current = dirty;
@@ -79,7 +89,13 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
     if (step === 2 && !values.icpOneLiner.trim())
       problems.icpOneLiner = "Describe who you want to reach.";
     if (step === 3) {
-      if (!model.trim()) problems.model = "Enter a model ID or restore the default.";
+      if (!model.trim())
+        problems.model =
+          provider === "proxy"
+            ? "Pick a model your proxy serves, or type its ID."
+            : "Enter a model ID or restore the default.";
+      if (provider === "proxy" && !/^https?:\/\/\S+$/i.test(baseUrl.trim()))
+        problems.baseUrl = "Enter your proxy's URL, like http://127.0.0.1:8317.";
       if (!key.trim() && !saved.credentials[provider]) problems.key = "Enter your API key.";
     }
     setErrors(problems);
@@ -99,16 +115,26 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
         });
       if (step === 2)
         await api.setup({ onboardingStep: 2, icpOneLiner: values.icpOneLiner.trim() });
-      if (step === 3)
+      if (step === 3) {
+        // The fallback is not in the onboarding status; the server refuses one on the same provider.
+        const current = await qc.fetchQuery({
+          queryKey: ["setup"],
+          queryFn: api.setupStatus,
+          staleTime: 0,
+        });
         await api.setup({
           onboardingStep: 3,
           llmProvider: provider,
           llmModel: model.trim(),
+          ...fallbackAfterPicking(provider, current.cfg.llmFallback),
+          ...(provider === "proxy" ? { llmBaseUrl: baseUrl.trim() } : {}),
           ...(key.trim() ? { secrets: { [LLM_KEY[provider]]: key.trim() } } : {}),
         });
+      }
       setDirty(false);
       dirtyRef.current = false;
       setKey("");
+      setBaseUrl(null);
       const status = await api.onboarding();
       accept(status);
       setValues(status.context);
@@ -266,18 +292,21 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
                         setDirty(true);
                       }}
                     >
-                      <option value="openrouter">OpenRouter</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
+                      <option value="openrouter">{LLM_PROVIDER_LABELS.openrouter}</option>
+                      <option value="openai">{LLM_PROVIDER_LABELS.openai}</option>
+                      <option value="anthropic">{LLM_PROVIDER_LABELS.anthropic}</option>
+                      <option value="proxy">{LLM_PROVIDER_LABELS.proxy}</option>
                     </Select>
                   </Field>
                   <Field
-                    label="API key"
+                    label={provider === "proxy" ? "Proxy key" : "API key"}
                     error={errors.key}
                     hint={
                       saved.credentials[provider]
                         ? "Existing credentials found, including environment keys. Leave blank to keep them."
-                        : "Use a key from your selected provider."
+                        : provider === "proxy"
+                          ? "One of the api-keys in your proxy's config."
+                          : "Use a key from your selected provider."
                     }
                   >
                     <Input
@@ -291,31 +320,60 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
                     />
                   </Field>
                 </div>
-                <p className="text-sm text-ink-muted">Model: {model}</p>
-                <details>
-                  <summary className="cursor-pointer">Advanced: custom model</summary>
-                  <div className="mt-3">
-                    <Field label="Model ID" error={errors.model}>
+                {provider === "proxy" ? (
+                  <>
+                    <Field label="Endpoint URL" error={errors.baseUrl}>
                       <Input
-                        value={model}
+                        placeholder="http://127.0.0.1:8317"
+                        spellCheck={false}
+                        value={baseUrl}
                         onChange={(e) => {
-                          setModel(e.target.value);
+                          setBaseUrl(e.target.value);
                           setDirty(true);
                         }}
                       />
                     </Field>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => {
-                        setModel(LLM_DEFAULTS[provider]!);
+                    <ProxyModelField
+                      value={model}
+                      onChange={(next) => {
+                        setModel(next);
                         setDirty(true);
                       }}
-                    >
-                      Restore default model
-                    </Button>
-                  </div>
-                </details>
+                      baseUrl={baseUrl}
+                      apiKey={key}
+                      error={errors.model}
+                      hint="Load models asks your proxy what it serves."
+                    />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-ink-muted">Model: {model}</p>
+                    <details>
+                      <summary className="cursor-pointer">Advanced: custom model</summary>
+                      <div className="mt-3">
+                        <Field label="Model ID" error={errors.model}>
+                          <Input
+                            value={model}
+                            onChange={(e) => {
+                              setModel(e.target.value);
+                              setDirty(true);
+                            }}
+                          />
+                        </Field>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setModel(LLM_DEFAULTS[provider]!);
+                            setDirty(true);
+                          }}
+                        >
+                          Restore default model
+                        </Button>
+                      </div>
+                    </details>
+                  </>
+                )}
                 <p className="text-sm text-ink-muted">
                   Testing sends one small request to your AI provider and may incur provider
                   charges.
@@ -335,6 +393,7 @@ function OnboardingForm({ initial }: { initial: OnboardingStatus }) {
                   setProvider(saved.provider);
                   setModel(saved.model);
                   setKey("");
+                  setBaseUrl(null);
                   setDirty(false);
                   setErrors({});
                   setError("");

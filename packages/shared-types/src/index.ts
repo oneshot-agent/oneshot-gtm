@@ -548,7 +548,7 @@ export interface PlayDescriptor {
   defaultDays: number[];
 }
 
-export type LlmProvider = "openrouter" | "openai" | "anthropic";
+export type LlmProvider = "openrouter" | "openai" | "anthropic" | "proxy";
 export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
@@ -733,6 +733,10 @@ export interface SetupRequest {
   calendarId?: string;
   llmProvider?: LlmProvider;
   llmModel?: string;
+  /** Proxy origin, read when `llmProvider` is `proxy`. Blank or null clears it. */
+  llmBaseUrl?: string | null;
+  /** Provider and model for calls the primary can't serve. Null clears it. */
+  llmFallback?: { provider: LlmProvider; model: string } | null;
   telemetryEnabled?: boolean;
   walletMode?: WalletMode;
   /**
@@ -789,6 +793,7 @@ export interface SetupRequest {
       | "OPENROUTER_API_KEY"
       | "OPENAI_API_KEY"
       | "ANTHROPIC_API_KEY"
+      | "LLM_PROXY_API_KEY"
       | "CDP_API_KEY_ID"
       | "CDP_API_KEY_SECRET"
       | "CDP_WALLET_SECRET"
@@ -2580,6 +2585,11 @@ export interface CalendarPickerEntry {
   summary: string;
   accessRole: string;
   recentEventCount: number;
+}
+/** POST /api/setup/llm-models: the model ids a proxy serves at `/v1/models`, or why it could not list them. */
+export interface LlmModelsResponse {
+  models?: string[];
+  error?: string;
 }
 export * from "./replies.ts";
 export * from "./icp-proposals.ts";

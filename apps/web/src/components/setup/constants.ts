@@ -1,24 +1,35 @@
-import type { SetupRequest } from "@oneshot-gtm/shared-types";
+import type { LlmProvider, SetupRequest } from "@oneshot-gtm/shared-types";
 
 export type SecretKey = keyof NonNullable<SetupRequest["secrets"]>;
 export type KeySource = "env" | "file" | null | undefined;
 
+// A proxy has no default: its model comes from the list the proxy serves.
 export const LLM_DEFAULTS: Record<string, string> = {
   openrouter: "anthropic/claude-sonnet-5.5",
   openai: "gpt-4o-mini",
   anthropic: "claude-sonnet-5-5",
+  proxy: "",
 };
 
-export const LLM_KEY: Record<"openrouter" | "openai" | "anthropic", SecretKey> = {
+export const LLM_KEY: Record<LlmProvider, SecretKey> = {
   openrouter: "OPENROUTER_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
+  proxy: "LLM_PROXY_API_KEY",
+};
+
+export const LLM_PROVIDER_LABELS: Record<LlmProvider, string> = {
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  proxy: "Your own proxy (CLIProxyAPI or similar)",
 };
 
 export const SECRET_LABELS: Record<SecretKey, string> = {
   OPENROUTER_API_KEY: "OpenRouter API key",
   OPENAI_API_KEY: "OpenAI API key",
   ANTHROPIC_API_KEY: "Anthropic API key",
+  LLM_PROXY_API_KEY: "Proxy key",
   CDP_API_KEY_ID: "CDP_API_KEY_ID",
   CDP_API_KEY_SECRET: "CDP_API_KEY_SECRET",
   CDP_WALLET_SECRET: "CDP_WALLET_SECRET",

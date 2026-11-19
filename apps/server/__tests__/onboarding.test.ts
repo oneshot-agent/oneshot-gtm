@@ -37,6 +37,7 @@ beforeEach(() => {
     "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
+    "LLM_PROXY_API_KEY",
     "AGENT_PRIVATE_KEY",
     "CDP_API_KEY_ID",
     "SMARTLEAD_API_KEY",
@@ -152,6 +153,50 @@ describe("workspace onboarding", () => {
   it("does not call the provider without credentials", async () => {
     expect((await verifyOnboardingAI(req())).status).toBe(400);
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+describe("onboarding with a proxy", () => {
+  beforeEach(() => {
+    business();
+    Object.assign(cfg, {
+      llmProvider: "proxy",
+      llmModel: "claude-sonnet-5-5",
+      llmBaseUrl: "http://127.0.0.1:8317",
+    });
+    vi.stubEnv("LLM_PROXY_API_KEY", "proxy-key");
+  });
+  it("verifies, and a new base URL invalidates the verification", async () => {
+    expect((await verifyOnboardingAI(req())).status).toBe(200);
+    expect(onboardingStatus()).toMatchObject({ aiVerified: true, credentials: { proxy: true } });
+    cfg.llmBaseUrl = "http://127.0.0.1:9000";
+    expect(onboardingStatus().aiVerified).toBe(false);
+  });
+  it("the base URL is not part of the fingerprint for other providers", async () => {
+    Object.assign(cfg, { llmProvider: "openrouter", llmModel: "m" });
+    vi.stubEnv("OPENROUTER_API_KEY", "key");
+    expect((await verifyOnboardingAI(req())).status).toBe(200);
+    cfg.llmBaseUrl = "http://127.0.0.1:9000";
+    expect(onboardingStatus().aiVerified).toBe(true);
+  });
+  it("asks for the address before calling a proxy without one", async () => {
+    cfg.llmBaseUrl = undefined;
+    const result = await verifyOnboardingAI(req());
+    expect(result.status).toBe(400);
+    expect(((await result.json()) as { error: string }).error).toMatch(/proxy's address/);
+    expect(complete).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ name: "LlmNetworkError" }, /http:\/\/127\.0\.0\.1:8317 is unreachable/],
+    [{ status: 401 }, /rejected the key/],
+    [{ status: 404 }, /could not use this model/],
+    [{ status: 503 }, /failed \(503\)/],
+  ])("names the proxy in a failure: %j", async (error, message) => {
+    complete.mockRejectedValue({ ...error, message: "proxy-key leaked" });
+    const result = await verifyOnboardingAI(req());
+    expect(result.status).toBe(502);
+    const text = await result.text();
+    expect(text).toMatch(message);
+    expect(text).not.toContain("proxy-key");
   });
 });
 describe("website normalization", () => {

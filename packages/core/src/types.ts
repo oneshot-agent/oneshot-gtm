@@ -412,10 +412,29 @@ export type PriorityPriors = Record<string, PlayPriorityPriors>;
 /** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
 export type SubjectCase = "lowercase" | "sentence" | "as-written";
 
+/** Where LLM completions go. `proxy` is a server the user runs (CLIProxyAPI or similar) at `llmBaseUrl`. */
+export type LlmProviderName = "openrouter" | "openai" | "anthropic" | "proxy";
+
+/** Second provider for a call the primary could not serve; see `OneShotConfig.llmFallback`. */
+export interface LlmFallbackConfig {
+  provider: LlmProviderName;
+  model: string;
+}
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
-  llmProvider: "openrouter" | "openai" | "anthropic";
+  llmProvider: LlmProviderName;
   llmModel: string;
+  /**
+   * Origin of the user's own proxy (`http://127.0.0.1:8317`). Read only when
+   * `llmProvider` is `proxy`; the key is `LLM_PROXY_API_KEY`.
+   */
+  llmBaseUrl?: string;
+  /**
+   * Used when the primary is unreachable, rate-limited or refuses the key:
+   * the call is sent again here on `model`. Absent or null: no fallback.
+   */
+  llmFallback?: LlmFallbackConfig | null;
   telemetryEnabled: boolean;
   founderName: string | null;
   founderEmail: string | null;

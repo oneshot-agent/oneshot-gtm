@@ -40,6 +40,7 @@ export const SECRET_KEYS = [
   "OPENROUTER_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "LLM_PROXY_API_KEY",
   "CDP_API_KEY_ID",
   "CDP_API_KEY_SECRET",
   "CDP_WALLET_SECRET",
@@ -935,15 +936,51 @@ export function clearGmailTokenScope(identityId: string): void {
   writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
 }
 
-export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
-  switch (provider) {
-    case "openrouter":
-      return process.env.OPENROUTER_API_KEY ?? null;
-    case "openai":
-      return process.env.OPENAI_API_KEY ?? null;
-    case "anthropic":
-      return process.env.ANTHROPIC_API_KEY ?? null;
+/** The secret each LLM provider reads its key from. */
+export const LLM_KEY_ENV = {
+  openrouter: "OPENROUTER_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  proxy: "LLM_PROXY_API_KEY",
+} as const satisfies Record<OneShotConfig["llmProvider"], SecretKey>;
+
+export const LLM_PROVIDERS = Object.keys(LLM_KEY_ENV) as OneShotConfig["llmProvider"][];
+
+/** A proxy origin as the client calls it: trimmed, without a trailing slash or `/v1`. */
+export function llmProxyOrigin(raw: string | undefined): string {
+  let base = (raw ?? "").trim();
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return base.endsWith("/v1") ? base.slice(0, -3) : base;
+}
+
+/** This machine: the only place plain http keeps the key and prompts off the network. */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * Why the proxy key must not be sent to this origin, or null. Plain http is
+ * allowed only on this machine: anywhere else the key and every prompt would
+ * cross a network in cleartext (use https, or an SSH tunnel to loopback).
+ */
+export function llmProxyOriginProblem(origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return "must be a URL such as http://127.0.0.1:8317";
   }
+  if (url.protocol === "https:") return null;
+  if (url.protocol !== "http:") return "must start with http:// or https://";
+  return isLoopbackHost(url.hostname)
+    ? null
+    : "must use https:// unless the proxy is on this machine (or tunnelled to it)";
+}
+
+export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
+  return process.env[LLM_KEY_ENV[provider]] ?? null;
 }
 
 export function oneshotEnvReady(): boolean {

@@ -15,6 +15,7 @@ import {
   identityCapacities,
   isValidTimeZone,
   listSendingDomains,
+  LLM_PROVIDERS,
   loadConfig,
   loadGmailTokens,
   MAX_OFFER_WRITER_ROUNDS,
@@ -40,6 +41,8 @@ import {
   getLedger,
   callsOf,
   MAX_CALL_STEP_DAYS,
+  llmProxyOrigin,
+  llmProxyOriginProblem,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -257,6 +260,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
         OPENAI_API_KEY: secretSource("OPENAI_API_KEY"),
         ANTHROPIC_API_KEY: secretSource("ANTHROPIC_API_KEY"),
+        LLM_PROXY_API_KEY: secretSource("LLM_PROXY_API_KEY"),
         CDP_API_KEY_ID: secretSource("CDP_API_KEY_ID"),
         CDP_API_KEY_SECRET: secretSource("CDP_API_KEY_SECRET"),
         CDP_WALLET_SECRET: secretSource("CDP_WALLET_SECRET"),
@@ -566,7 +570,7 @@ function applySetup(body: SetupRequest, member: string | null): void {
     throw new SetupValidationError("Describe your target customer.");
   if (
     body.onboardingStep === 3 &&
-    (!["openrouter", "openai", "anthropic"].includes(body.llmProvider ?? "") ||
+    (!(LLM_PROVIDERS as readonly string[]).includes(body.llmProvider ?? "") ||
       !body.llmModel?.trim())
   )
     throw new SetupValidationError("Select a provider and model.");
@@ -687,8 +691,11 @@ export function mergeSetupConfig(
     followUpOfferPlays: _followUpOfferPlays,
     linkedin: _linkedin,
     calls: _calls,
+    llmBaseUrl: _llmBaseUrl,
+    llmFallback: _llmFallback,
     ...kept
   } = current;
+  const llm = mergeLlm(body, current, llmProvider);
   const linkedin = mergeLinkedIn(body.linkedin, current.linkedin);
   const calls = mergeCalls(body.calls, current.calls);
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
@@ -720,6 +727,8 @@ export function mergeSetupConfig(
     walletMode,
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
+    ...(llm.llmBaseUrl ? { llmBaseUrl: llm.llmBaseUrl } : {}),
+    ...(llm.llmFallback ? { llmFallback: llm.llmFallback } : {}),
     telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
     founderName: mergeString(body.founderName, current.founderName),
     founderEmail: mergeString(body.founderEmail, current.founderEmail),
@@ -819,6 +828,87 @@ function mergeSlackWebhookUrl(incoming: string | undefined, current: string | nu
     );
   }
   return merged;
+}
+
+const MAX_LLM_BASE_URL_CHARS = 300;
+const MAX_LLM_MODEL_CHARS = 200;
+
+/**
+ * The proxy base URL and the fallback provider. `undefined` keeps each,
+ * blank or `null` clears it. The rules below run only when the body touches
+ * an LLM field, so a hand-edited config does not block unrelated saves.
+ */
+export function mergeLlm(
+  body: SetupRequest,
+  current: OneShotConfig,
+  llmProvider: LlmProvider,
+): Pick<OneShotConfig, "llmBaseUrl" | "llmFallback"> {
+  const llmBaseUrl =
+    body.llmBaseUrl === undefined
+      ? current.llmBaseUrl
+      : validateLlmBaseUrl(body.llmBaseUrl) || undefined;
+  const llmFallback =
+    body.llmFallback === undefined
+      ? (current.llmFallback ?? undefined)
+      : validateLlmFallback(body.llmFallback);
+  const touched =
+    body.llmProvider !== undefined ||
+    body.llmBaseUrl !== undefined ||
+    body.llmFallback !== undefined;
+  if (!touched) return { llmBaseUrl, llmFallback };
+  if (!(LLM_PROVIDERS as readonly string[]).includes(llmProvider))
+    throw new SetupValidationError(
+      `invalid llmProvider '${String(llmProvider)}' — must be one of ${LLM_PROVIDERS.join(", ")}`,
+    );
+  if (llmProvider === "proxy" && !llmBaseUrl)
+    throw new SetupValidationError("The proxy provider needs llmBaseUrl, the proxy's address.");
+  if (llmFallback && llmFallback.provider === llmProvider)
+    throw new SetupValidationError(
+      `llmFallback.provider must differ from the main provider (${llmProvider})`,
+    );
+  if (llmFallback?.provider === "proxy" && !llmBaseUrl)
+    throw new SetupValidationError("A proxy fallback needs llmBaseUrl, the proxy's address.");
+  return { llmBaseUrl, llmFallback };
+}
+
+export function validateLlmBaseUrl(value: unknown): string {
+  if (value === null) return "";
+  if (typeof value !== "string") throw new SetupValidationError("llmBaseUrl must be a URL");
+  const raw = value.trim();
+  if (!raw) return "";
+  if (raw.length > MAX_LLM_BASE_URL_CHARS)
+    throw new SetupValidationError(`llmBaseUrl is at most ${MAX_LLM_BASE_URL_CHARS} characters`);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new SetupValidationError("llmBaseUrl must be a URL such as http://127.0.0.1:8317");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new SetupValidationError("llmBaseUrl must start with http:// or https://");
+  if (/[?#]/.test(raw))
+    throw new SetupValidationError("llmBaseUrl must not have a query or a fragment");
+  const problem = llmProxyOriginProblem(llmProxyOrigin(raw));
+  if (problem) throw new SetupValidationError(`llmBaseUrl ${problem}`);
+  return raw;
+}
+
+function validateLlmFallback(value: unknown): OneShotConfig["llmFallback"] {
+  if (value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value))
+    throw new SetupValidationError("llmFallback must be { provider, model }, or null to clear it");
+  const { provider, model } = value as Record<string, unknown>;
+  if (!(LLM_PROVIDERS as readonly unknown[]).includes(provider))
+    throw new SetupValidationError(
+      `invalid llmFallback.provider '${String(provider)}' — must be one of ${LLM_PROVIDERS.join(", ")}`,
+    );
+  const id = typeof model === "string" ? model.trim() : "";
+  if (!id) throw new SetupValidationError("llmFallback.model is blank — name a model");
+  if (id.length > MAX_LLM_MODEL_CHARS)
+    throw new SetupValidationError(
+      `llmFallback.model is at most ${MAX_LLM_MODEL_CHARS} characters`,
+    );
+  return { provider: provider as LlmProvider, model: id };
 }
 
 const MAX_REF_CHARS = 200;
