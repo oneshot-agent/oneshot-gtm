@@ -83,6 +83,7 @@ import {
   recordLinkedInReply as cadRecordLinkedInReply,
   setLinkedInReplyIntent as cadSetLinkedInReplyIntent,
   setChannelEventIntent as cadSetChannelEventIntent,
+  recordLinkedInOptOut as cadRecordLinkedInOptOut,
   suppressCadencesForReply,
   recordProspectReply as cadRecordProspectReply,
   recordSequenceEvent as cadRecordSequenceEvent,
@@ -1158,6 +1159,15 @@ export class Ledger {
     intentReview?: boolean;
   }): boolean {
     return cadSetChannelEventIntent(this.db, input);
+  }
+
+  /** @see ledger-cadence.ts#recordLinkedInOptOut */
+  recordLinkedInOptOut(input: {
+    prospectId: number;
+    externalEventId: string;
+    occurredAt: string;
+  }): boolean {
+    return cadRecordLinkedInOptOut(this.db, input);
   }
 
   /**

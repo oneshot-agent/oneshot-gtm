@@ -365,6 +365,31 @@ describe("labels reach the workspace ledger", () => {
     expect(isProspectOptedOut(raw(ledger), optOut.prospectId)).toBe(true);
   });
 
+  it("an unsubscribe from a reassigned thread's new owner opts them out, leaving the reply row", () => {
+    const first = seedThread([message("moved", { text: "Please stop messaging me." })]);
+    first.deliver();
+    const owner = ledger.upsertProspect({ email: `b-${randomUUID()}@example.test`, name: "Bea" });
+    store.assign(`linkedin:account:${first.chat}`, { workspace, prospectId: owner });
+    first.deliver();
+    const stopCadences = vi.fn(() => 0);
+    store.setMessageIntent("account", "moved", label("unsubscribe"), { stopCadences });
+    expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), owner);
+    expect(isProspectOptedOut(raw(ledger), owner)).toBe(true);
+    // The reply row stays the first prospect's.
+    expect(
+      raw(ledger)
+        .query(
+          "SELECT prospect_id FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id='account:moved'",
+        )
+        .get(),
+    ).toEqual({ prospect_id: first.prospectId });
+    expect(
+      store.db
+        .query("SELECT count(*) AS n FROM label_copies WHERE message_id='moved' AND prospect_id=?")
+        .get(owner),
+    ).toEqual({ n: 1 });
+  });
+
   it("a delivery whose ledger row took no label stays pending", () => {
     const { deliver } = seedThread([message("lost")]);
     deliver();

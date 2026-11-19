@@ -1335,6 +1335,24 @@ export function setChannelEventIntent(
   );
 }
 
+/**
+ * A LinkedIn opt-out for a prospect who holds no reply row of their own (the
+ * thread was reassigned to them): an `opt_out` event, not a reply, so it
+ * counts in no reply stats yet blocks contact like an unsubscribe label.
+ */
+export function recordLinkedInOptOut(
+  db: Database,
+  input: { prospectId: number; externalEventId: string; occurredAt: string },
+): boolean {
+  db.prepare(
+    `INSERT INTO channel_events
+       (source, external_event_id, prospect_id, channel, event_type, occurred_at, intent, intent_review)
+     VALUES ('oneshot-linkedin', ?, ?, 'linkedin', 'opt_out', ?, 'unsubscribe', 0)
+     ON CONFLICT(source, external_event_id) DO UPDATE SET intent = 'unsubscribe'`,
+  ).run(input.externalEventId, input.prospectId, input.occurredAt);
+  return true;
+}
+
 /** Suppression is independent of inbox ownership and never creates or removes reply history. */
 export function suppressCadencesForReply(
   db: Database,

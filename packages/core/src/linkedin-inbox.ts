@@ -1143,12 +1143,15 @@ export class LinkedInInboxStore {
           prospect_id: number;
           intent: string;
           review: number;
+          sent_at: string | null;
         },
         string[]
       >(
-        `SELECT d.account_key, d.message_id, d.workspace, d.prospect_id, mi.intent, mi.review
+        `SELECT d.account_key, d.message_id, d.workspace, d.prospect_id, mi.intent, mi.review,
+                json_extract(m.data,'$.sent_at') AS sent_at
            FROM deliveries d
            JOIN message_intents mi ON mi.account_key = d.account_key AND mi.message_id = d.message_id
+           LEFT JOIN messages m ON m.account_key = d.account_key AND m.id = d.message_id
           WHERE d.account_key IN (${accountKeys.map(() => "?").join(",")})
             ${opts.messageId != null ? "AND d.message_id = ?" : ""}
             AND mi.intent IS NOT NULL
@@ -1195,7 +1198,12 @@ export class LinkedInInboxStore {
                       prospectId: d.prospect_id,
                       ...intent,
                     }).length > 0
-                  : true;
+                  : !optOut ||
+                    ledger.recordLinkedInOptOut({
+                      prospectId: d.prospect_id,
+                      externalEventId: `${key.slice(7)}:opt-out:${d.prospect_id}`,
+                      occurredAt: d.sent_at ?? new Date().toISOString(),
+                    });
               if (!labelled) done = false;
             }
             const cadencesStopped =
@@ -1298,8 +1306,9 @@ export class LinkedInInboxStore {
         const legacy = imported.length > 0;
         // Always replay suppression. Delivery markers deduplicate attribution, never suppression.
         const eventId = `${t.accountKey}:${m.id}`;
-        // The ledger rows a label is copied onto: `none` when another
-        // prospect holds the event, so there is nothing to label here.
+        // The ledger rows a label is copied onto. When another prospect holds
+        // the event (a reassigned thread), `optout:` records an opt-out for
+        // this one instead, leaving that row's attribution alone.
         let targets: string[] = [];
         const existing = handles
           .database(match.home)
@@ -1329,7 +1338,7 @@ export class LinkedInInboxStore {
           targets = [`ext:${eventId}`];
         } else {
           ledger.suppressCadencesForReply(match.prospectId, t.accountKey);
-          targets = legacy ? imported.map((e) => `row:${e.id}`) : ["none"];
+          targets = legacy ? imported.map((e) => `row:${e.id}`) : [`optout:${eventId}`];
         }
         if (isOwner) {
           this.db
