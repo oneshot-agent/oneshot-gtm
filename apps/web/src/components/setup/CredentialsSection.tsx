@@ -80,7 +80,8 @@ interface Group {
 
 /**
  * Every `type="password"` input on the page, in one place (issue #451 scope
- * item 4). Preferences stay in their own sections; this one posts only
+ * item 4), except the LLM section's proxy key, which Load models needs
+ * before a first save. Preferences stay in their own sections; this one posts only
  * `{ secrets }`. A blank field means "keep what's there": there is no
  * delete path for a secret from the web UI, same as before.
  */
@@ -129,13 +130,18 @@ export function CredentialsSection({
     () => [
       {
         title: "LLM",
-        caption: `Only the saved provider's key (${cfg.llmProvider}) is read.`,
-        keys: ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
-        inUse: (k) => k === LLM_KEY[cfg.llmProvider],
+        caption: cfg.llmFallback
+          ? `Only the saved provider's key (${cfg.llmProvider}) and the fallback's (${cfg.llmFallback.provider}) are read.`
+          : `Only the saved provider's key (${cfg.llmProvider}) is read.`,
+        keys: ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "LLM_PROXY_API_KEY"],
+        inUse: (k) =>
+          k === LLM_KEY[cfg.llmProvider] ||
+          (cfg.llmFallback != null && k === LLM_KEY[cfg.llmFallback.provider]),
         placeholder: {
           OPENROUTER_API_KEY: "sk-or-...",
           OPENAI_API_KEY: "sk-...",
           ANTHROPIC_API_KEY: "sk-ant-...",
+          LLM_PROXY_API_KEY: "from the proxy's api-keys",
         },
       },
       {

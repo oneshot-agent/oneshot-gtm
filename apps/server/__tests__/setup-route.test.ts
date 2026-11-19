@@ -797,3 +797,122 @@ it("rolls back the config audit entry when the file save fails", async () => {
     db.close();
   }
 });
+
+// The proxy provider and the fallback: the base URL must be a plain http(s)
+// URL, a proxy needs one, and the fallback names another provider and a model.
+describe("POST /api/setup — llmBaseUrl and llmFallback", () => {
+  it("saves a proxy with its base URL and a fallback, trimmed", async () => {
+    const body = {
+      llmProvider: "proxy",
+      llmModel: "claude-sonnet-5-5",
+      llmBaseUrl: " http://127.0.0.1:8317 ",
+      llmFallback: { provider: "openrouter", model: " vendor/model " },
+    };
+    expect(await post(body)).toEqual({ status: 200 });
+    expect(savedCfg()).toMatchObject({
+      llmProvider: "proxy",
+      llmBaseUrl: "http://127.0.0.1:8317",
+      llmFallback: { provider: "openrouter", model: "vendor/model" },
+    });
+  });
+
+  it("absent keeps both; blank or null clears the base URL and null clears the fallback", async () => {
+    current = {
+      ...current,
+      llmBaseUrl: "https://proxy.example.com",
+      llmFallback: { provider: "openai", model: "m" },
+    };
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg()).toMatchObject({
+      llmBaseUrl: "https://proxy.example.com",
+      llmFallback: { provider: "openai", model: "m" },
+    });
+    for (const llmBaseUrl of ["  ", null]) {
+      saveConfigMock.mockClear();
+      expect(await post({ llmBaseUrl, llmFallback: null })).toEqual({ status: 200 });
+      const saved = savedCfg();
+      expect("llmBaseUrl" in saved).toBe(false);
+      expect("llmFallback" in saved).toBe(false);
+    }
+  });
+
+  it("refuses a base URL that is not plain http(s), has a query or fragment, or runs long", async () => {
+    for (const llmBaseUrl of [
+      "127.0.0.1:8317",
+      "ftp://127.0.0.1:8317",
+      "not a url",
+      "http://127.0.0.1:8317/?key=x",
+      "http://127.0.0.1:8317/#v1",
+      `http://example.com/${"a".repeat(300)}`,
+      7,
+    ]) {
+      const res = await post({ llmBaseUrl });
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/llmBaseUrl/);
+    }
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("the proxy provider needs a base URL, in the body or already saved", async () => {
+    const res = await post({ llmProvider: "proxy", llmModel: "m" });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/llmBaseUrl/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    current = { ...current, llmBaseUrl: "http://127.0.0.1:8317" };
+    expect(await post({ llmProvider: "proxy", llmModel: "m" })).toEqual({ status: 200 });
+    // Clearing the address of the proxy in use is refused too.
+    current = { ...current, llmProvider: "proxy" };
+    saveConfigMock.mockClear();
+    expect((await post({ llmBaseUrl: "" })).status).toBe(400);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a fallback on the main provider, an unknown provider, or a blank or long model", async () => {
+    for (const llmFallback of [
+      { provider: "openrouter", model: "m" },
+      { provider: "bogus", model: "m" },
+      { provider: "openai", model: "  " },
+      { provider: "openai", model: "m".repeat(201) },
+      { provider: "openai" },
+      "openai",
+    ]) {
+      const res = await post({ llmFallback });
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/llmFallback/);
+    }
+    // The main provider in the same body counts, not just the saved one.
+    expect(
+      (await post({ llmProvider: "openai", llmFallback: { provider: "openai", model: "m" } }))
+        .status,
+    ).toBe(400);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
+  it("a proxy fallback needs a base URL", async () => {
+    const res = await post({ llmFallback: { provider: "proxy", model: "claude-sonnet-5-5" } });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/llmBaseUrl/);
+    expect(
+      await post({
+        llmBaseUrl: "http://127.0.0.1:8317",
+        llmFallback: { provider: "proxy", model: "claude-sonnet-5-5" },
+      }),
+    ).toEqual({ status: 200 });
+    expect(savedCfg().llmFallback).toEqual({ provider: "proxy", model: "claude-sonnet-5-5" });
+  });
+
+  it("the onboarding AI step accepts the proxy", async () => {
+    expect(
+      await post({
+        onboardingStep: 3,
+        llmProvider: "proxy",
+        llmModel: "gpt-5",
+        llmBaseUrl: "http://127.0.0.1:8317/v1",
+      }),
+    ).toEqual({ status: 200 });
+    expect(savedCfg()).toMatchObject({
+      llmProvider: "proxy",
+      llmBaseUrl: "http://127.0.0.1:8317/v1",
+    });
+  });
+});

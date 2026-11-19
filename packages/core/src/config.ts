@@ -39,6 +39,7 @@ export const SECRET_KEYS = [
   "OPENROUTER_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "LLM_PROXY_API_KEY",
   "CDP_API_KEY_ID",
   "CDP_API_KEY_SECRET",
   "CDP_WALLET_SECRET",
@@ -929,15 +930,23 @@ export function clearGmailTokenScope(identityId: string): void {
   writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
 }
 
+/** The secret each LLM provider reads its key from. */
+export const LLM_KEY_ENV = {
+  openrouter: "OPENROUTER_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  proxy: "LLM_PROXY_API_KEY",
+} as const satisfies Record<OneShotConfig["llmProvider"], SecretKey>;
+
+export const LLM_PROVIDERS = Object.keys(LLM_KEY_ENV) as OneShotConfig["llmProvider"][];
+
+/** A proxy origin as the client calls it: trimmed, without a trailing slash or `/v1`. */
+export function llmProxyOrigin(raw: string | undefined): string {
+  return (raw ?? "").trim().replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
 export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
-  switch (provider) {
-    case "openrouter":
-      return process.env.OPENROUTER_API_KEY ?? null;
-    case "openai":
-      return process.env.OPENAI_API_KEY ?? null;
-    case "anthropic":
-      return process.env.ANTHROPIC_API_KEY ?? null;
-  }
+  return process.env[LLM_KEY_ENV[provider]] ?? null;
 }
 
 export function oneshotEnvReady(): boolean {

@@ -111,4 +111,19 @@ describe("init config writer", () => {
 
     expect(next.icpOneLiner).toBe("Series A infra founders");
   });
+
+  it("saves the proxy's address with the proxy provider, and keeps a saved one otherwise", () => {
+    const next = mergeInitConfig(current, {
+      llmProvider: "proxy",
+      llmBaseUrl: " http://127.0.0.1:8317 ",
+      llmModel: "claude-sonnet-5-5",
+    });
+    expect(next).toMatchObject({
+      llmProvider: "proxy",
+      llmBaseUrl: "http://127.0.0.1:8317",
+      llmModel: "claude-sonnet-5-5",
+    });
+    const kept = mergeInitConfig(next, { llmProvider: "openrouter", llmModel: "m" });
+    expect(kept.llmBaseUrl).toBe("http://127.0.0.1:8317");
+  });
 });

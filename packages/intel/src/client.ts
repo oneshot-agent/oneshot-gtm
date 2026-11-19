@@ -1,4 +1,11 @@
-import { llmApiKey, loadConfig, logEvent, type OneShotConfig } from "@oneshot-gtm/core";
+import {
+  LLM_KEY_ENV,
+  llmApiKey,
+  llmProxyOrigin,
+  loadConfig,
+  logEvent,
+  type OneShotConfig,
+} from "@oneshot-gtm/core";
 import { loadPrompt } from "./prompts.ts";
 
 export interface LlmMessage {
@@ -32,6 +39,8 @@ export interface LlmCompleteInput {
    * `cfg.llmModel`, the model every other call uses.
    */
   model?: string;
+  /** Use only the configured provider, never `llmFallback`: a check of the primary itself. */
+  noFallback?: boolean;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -201,17 +210,61 @@ function injectHumanizer(messages: LlmMessage[]): LlmMessage[] {
   return messages;
 }
 
+/** How long the fallback serves alone after the primary fails on availability. */
+const BREAKER_MS = 10 * 60_000;
+/** Longest a Retry-After may hold the breaker open. */
+const BREAKER_MAX_MS = 2 * 60 * 60_000;
+/** Primary route (provider + base URL) -> epoch ms until which it is skipped. */
+const breakerUntil = new Map<string, number>();
+
+export function _resetLlmBreakerForTests(): void {
+  breakerUntil.clear();
+}
+
+/**
+ * The primary could not serve the call at all: unreachable, rate-limited, out
+ * of credit, or refusing the key. A fallback provider can serve these; a bad
+ * request, an unknown model or a truncated answer would fail the same there.
+ */
+export function isAvailabilityFailure(err: unknown): boolean {
+  if (err instanceof LlmTimeoutError || err instanceof LlmNetworkError) return true;
+  if (!(err instanceof LlmError) || err.status === undefined) return false;
+  return [401, 402, 403, 429].includes(err.status) || err.status >= 500;
+}
+
+interface Route {
+  provider: OneShotConfig["llmProvider"];
+  model: string;
+  key: string;
+  baseUrl?: string;
+}
+
+function routeName(route: Pick<Route, "provider" | "baseUrl">): string {
+  return route.baseUrl ? `${route.provider} ${route.baseUrl}` : route.provider;
+}
+
+function requireKey(provider: OneShotConfig["llmProvider"]): string {
+  const key = llmApiKey(provider);
+  if (!key) throw new LlmError(`No ${LLM_KEY_ENV[provider]} set. Run: oneshot-gtm config llm`);
+  return key;
+}
+
 export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutput> {
   const cfg = loadConfig();
-  const key = llmApiKey(cfg.llmProvider);
-  if (!key) {
-    const envName = {
-      openrouter: "OPENROUTER_API_KEY",
-      openai: "OPENAI_API_KEY",
-      anthropic: "ANTHROPIC_API_KEY",
-    }[cfg.llmProvider];
-    throw new LlmError(`No ${envName} set. Run: oneshot-gtm config llm`);
-  }
+  const model = input.model?.trim() || cfg.llmModel;
+  const primary: Route = {
+    provider: cfg.llmProvider,
+    model,
+    key: requireKey(cfg.llmProvider),
+    baseUrl: cfg.llmProvider === "proxy" ? proxyBaseUrl(cfg.llmBaseUrl) : undefined,
+  };
+  // A fallback without its own key is no fallback: the primary's error stands.
+  const fallbackCfg =
+    cfg.llmFallback?.model?.trim() &&
+    cfg.llmFallback.provider !== cfg.llmProvider &&
+    llmApiKey(cfg.llmFallback.provider)
+      ? cfg.llmFallback
+      : null;
 
   const expanded: LlmCompleteInput = { ...input, messages: injectHumanizer(input.messages) };
 
@@ -221,11 +274,65 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   const timeoutMs =
     input.timeoutMs === undefined ? undefined : Math.max(MIN_TIMEOUT_MS, input.timeoutMs);
   const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
-  const model = input.model?.trim() || cfg.llmModel;
+  const run = (route: Route) => completeOnRoute(route, expanded, timeoutMs, maxAttempts);
 
+  if (!fallbackCfg || input.noFallback) return run(primary);
+  const fallback = (): Route => ({
+    provider: fallbackCfg.provider,
+    model: fallbackCfg.model.trim(),
+    key: requireKey(fallbackCfg.provider),
+    baseUrl: fallbackCfg.provider === "proxy" ? proxyBaseUrl(cfg.llmBaseUrl) : undefined,
+  });
+  const name = routeName(primary);
+  const skipUntil = breakerUntil.get(name) ?? 0;
+  if (Date.now() < skipUntil) {
+    const to = fallback();
+    logEvent("llm.fallback", {
+      from: primary.provider,
+      to: to.provider,
+      reason: "breaker",
+      status: null,
+      breaker_until: new Date(skipUntil).toISOString(),
+    });
+    return run(to);
+  }
+  try {
+    const out = await run(primary);
+    breakerUntil.delete(name);
+    return out;
+  } catch (err) {
+    if (!isAvailabilityFailure(err)) throw err;
+    const status = err instanceof LlmError ? (err.status ?? null) : null;
+    const retryAfterMs = err instanceof LlmError ? (err.retryAfterMs ?? 0) : 0;
+    const until = Date.now() + Math.min(Math.max(BREAKER_MS, retryAfterMs), BREAKER_MAX_MS);
+    breakerUntil.set(name, until);
+    const to = fallback();
+    logEvent(
+      "llm.fallback",
+      {
+        from: primary.provider,
+        to: to.provider,
+        reason: (err as Error).constructor.name,
+        status,
+        breaker_until: new Date(until).toISOString(),
+      },
+      "warn",
+    );
+    return run(to);
+  }
+}
+
+/** The retry loop for one provider and model. */
+async function completeOnRoute(
+  route: Route,
+  expanded: LlmCompleteInput,
+  timeoutMs: number | undefined,
+  maxAttempts: number,
+): Promise<LlmCompleteOutput> {
+  const { provider, model } = route;
   const startedAt = Date.now();
   logEvent("llm.start", {
-    provider: cfg.llmProvider,
+    provider,
     model,
     message_count: expanded.messages.length,
     max_tokens: expanded.maxTokens ?? null,
@@ -240,8 +347,8 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   for (let attempt = 1; ; attempt++) {
     try {
-      input.onAttempt?.();
-      result = await dispatch(cfg.llmProvider, model, key, expanded, timeoutMs);
+      expanded.onAttempt?.();
+      result = await dispatch(route, expanded, timeoutMs);
       attempts = attempt;
       break;
     } catch (err) {
@@ -256,7 +363,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
         retryAfterMs !== undefined &&
         retryAfterMs > MAX_RETRY_AFTER_MS;
       const ctx = {
-        provider: cfg.llmProvider,
+        provider,
         model,
         duration_ms: Date.now() - startedAt,
         error_class: (err as Error).constructor.name,
@@ -274,7 +381,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       if (overRetryBudget) {
         logEvent("llm.error", { ...ctx, retry_after_ms: retryAfterMs }, "error");
         throw new LlmError(
-          `${cfg.llmProvider} asked us to wait ${Math.round((retryAfterMs as number) / 1000)}s (Retry-After), ` +
+          `${provider} asked us to wait ${Math.round((retryAfterMs as number) / 1000)}s (Retry-After), ` +
             `longer than the ${MAX_RETRY_AFTER_MS / 1000}s retry budget — giving up instead of ` +
             `burning attempts on a guaranteed-failing retry.`,
           status ?? undefined,
@@ -287,7 +394,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   }
 
   logEvent("llm.done", {
-    provider: cfg.llmProvider,
+    provider,
     model,
     duration_ms: Date.now() - startedAt,
     response_chars: result.content.length,
@@ -296,13 +403,29 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   return result;
 }
 
+/** The proxy origin without a trailing slash or `/v1`; the request paths add `/v1/...`. */
+export function proxyBaseUrl(raw: string | undefined): string {
+  const base = llmProxyOrigin(raw);
+  if (!base)
+    throw new LlmError("No llmBaseUrl set for the proxy provider. Run: oneshot-gtm config llm");
+  return base;
+}
+
+/**
+ * Which API a proxy model speaks. CLIProxyAPI and similar proxies serve Claude
+ * models on the Anthropic messages API, which keeps the Claude sampling and
+ * effort rules; every other model goes to the OpenAI chat API.
+ */
+export function proxyShape(model: string): "anthropic" | "openai" {
+  return model.startsWith("claude-") ? "anthropic" : "openai";
+}
+
 function dispatch(
-  provider: OneShotConfig["llmProvider"],
-  model: string,
-  key: string,
+  route: Route,
   input: LlmCompleteInput,
   timeoutMs: number | undefined,
 ): Promise<LlmCompleteOutput> {
+  const { provider, model, key } = route;
   switch (provider) {
     case "openrouter": {
       const args: OpenAIArgs = {
@@ -344,6 +467,20 @@ function dispatch(
       });
     case "anthropic":
       return anthropicComplete({ key, model, input, timeoutMs });
+    case "proxy": {
+      const baseUrl = route.baseUrl ?? proxyBaseUrl(undefined);
+      if (proxyShape(model) === "anthropic") {
+        return anthropicComplete({ key, model, input, timeoutMs, baseUrl, provider: "proxy" });
+      }
+      return openaiCompatibleComplete({
+        key,
+        model,
+        baseUrl: `${baseUrl}/v1`,
+        provider: "proxy",
+        input,
+        timeoutMs,
+      });
+    }
   }
 }
 
@@ -585,6 +722,10 @@ interface AnthropicArgs {
   model: string;
   input: LlmCompleteInput;
   timeoutMs: number | undefined;
+  /** Origin of an Anthropic-shaped server other than api.anthropic.com. */
+  baseUrl?: string;
+  /** Provider name for errors and the result; default `anthropic`. */
+  provider?: string;
 }
 
 /**
@@ -619,9 +760,10 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
     .map((m) => ({ role: m.role, content: m.content }));
   const effort = anthropicEffort(args.model);
   const maxTokens = (args.input.maxTokens ?? 1024) + effort.extraMaxTokens;
+  const provider = args.provider ?? "anthropic";
 
   const data = (await postJson({
-    url: "https://api.anthropic.com/v1/messages",
+    url: `${args.baseUrl ?? "https://api.anthropic.com"}/v1/messages`,
     headers: { "x-api-key": args.key, "anthropic-version": "2023-06-01" },
     body: {
       model: args.model,
@@ -633,7 +775,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
       ...(system ? { system } : {}),
       messages,
     },
-    provider: "anthropic",
+    provider,
     timeoutMs: args.timeoutMs,
   })) as {
     content?: Array<{ type: string; text?: string }>;
@@ -646,14 +788,14 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
   // caller from parsing an empty or partial reply, and a retry gets the same no.
   if (data.stop_reason === "refusal") {
     throw new LlmError(
-      `anthropic declined the request (stop_reason=refusal, category=${data.stop_details?.category ?? "none"})`,
+      `${provider} declined the request (stop_reason=refusal, category=${data.stop_details?.category ?? "none"})`,
     );
   }
 
   if (data.stop_reason === "max_tokens" && !args.input.allowTruncation) {
     throw new LlmTruncatedError(
       truncationMessage({
-        provider: "anthropic",
+        provider,
         model: args.model,
         maxTokens,
         completionTokens: data.usage?.output_tokens,
@@ -665,7 +807,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
   // (refusal, filtered output), not something a second attempt recovers.
   if (!Array.isArray(data.content)) {
     throw new LlmError(
-      `anthropic returned no content blocks (stop_reason=${data.stop_reason ?? "none"})`,
+      `${provider} returned no content blocks (stop_reason=${data.stop_reason ?? "none"})`,
     );
   }
 
@@ -676,7 +818,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
     .join("");
   return {
     content: text,
-    provider: "anthropic",
+    provider,
     model: args.model,
     inputTokens: data.usage?.input_tokens,
     outputTokens: data.usage?.output_tokens,

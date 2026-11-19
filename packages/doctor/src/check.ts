@@ -18,6 +18,7 @@ import {
   listSendingDomains,
   listSmartleadAccounts,
   linkedInProfileReadBlocker,
+  LLM_KEY_ENV,
   llmApiKey,
   loadConfig,
   mailboxHealth,
@@ -35,6 +36,7 @@ import {
   loadGmailTokens,
   spendCeilingReason,
   type OneShotConfig,
+  llmProxyOrigin,
 } from "@oneshot-gtm/core";
 import {
   finderApprovalHealth,
@@ -42,6 +44,7 @@ import {
   testSourceRepo,
   TRIGGERS,
 } from "@oneshot-gtm/find";
+import { listLlmModels } from "./llm-models.ts";
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
@@ -941,6 +944,89 @@ async function calendarIdentityCheck(
   }
 }
 
+const LLM_PROBE_TIMEOUT_MS = 5_000;
+/** Doctor runs on page loads; one probe a minute per proxy and key is enough. */
+const LLM_PROBE_TTL_MS = 60_000;
+let llmProbeCache: {
+  key: string;
+  at: number;
+  out: Awaited<ReturnType<typeof listLlmModels>>;
+} | null = null;
+
+export function resetLlmProbeCacheForTests(): void {
+  llmProbeCache = null;
+}
+
+/**
+ * The proxy and the fallback. A proxy needs its address and key, then must
+ * answer `/v1/models`. A proxy that does not answer is a warn when a fallback
+ * with a key would take the calls, else a fail.
+ */
+async function llmRouteChecks(cfg: OneShotConfig): Promise<CheckResult[]> {
+  const out: CheckResult[] = [];
+  const fb = cfg.llmFallback?.model?.trim() ? cfg.llmFallback : null;
+  const fbUsable = !!fb && fb.provider !== cfg.llmProvider && !!llmApiKey(fb.provider);
+  if (fb) {
+    out.push({
+      name: "llm fallback",
+      group: "install",
+      severity: fbUsable ? "ok" : "warn",
+      message: fbUsable
+        ? `${fb.provider} / ${fb.model}`
+        : fb.provider === cfg.llmProvider
+          ? `same provider as the main one (${fb.provider}); it is never used`
+          : `${LLM_KEY_ENV[fb.provider]} not set; the fallback is never used`,
+      ...(fbUsable ? {} : { hint: "oneshot-gtm config llm" }),
+    });
+  }
+  const proxyUsed = cfg.llmProvider === "proxy" || (fbUsable && fb?.provider === "proxy");
+  if (!proxyUsed) return out;
+  const base = llmProxyOrigin(cfg.llmBaseUrl ?? "");
+  const key = llmApiKey("proxy") ?? "";
+  const primary = cfg.llmProvider === "proxy";
+  const down: CheckSeverity = primary && !fbUsable ? "fail" : "warn";
+  if (!base || !key) {
+    out.push({
+      name: "llm proxy",
+      group: "install",
+      severity: primary ? "fail" : "warn",
+      message: !base ? "no proxy address (llmBaseUrl) set" : "LLM_PROXY_API_KEY not set",
+      hint: "oneshot-gtm config llm",
+    });
+    return out;
+  }
+  const cacheKey = JSON.stringify([base, key]);
+  const cached =
+    llmProbeCache?.key === cacheKey && Date.now() - llmProbeCache.at < LLM_PROBE_TTL_MS
+      ? llmProbeCache.out
+      : null;
+  const probe = cached ?? (await listLlmModels(base, key, LLM_PROBE_TIMEOUT_MS));
+  if (!cached) llmProbeCache = { key: cacheKey, at: Date.now(), out: probe };
+  if (probe.ok) {
+    out.push({
+      name: "llm proxy",
+      group: "install",
+      severity: "ok",
+      message: `${base} · ${probe.models.length} model${probe.models.length === 1 ? "" : "s"}`,
+    });
+    return out;
+  }
+  out.push({
+    name: "llm proxy",
+    group: "install",
+    severity: down,
+    message:
+      down === "warn" && primary
+        ? `${probe.message}; calls go to the fallback (${fb!.provider})`
+        : probe.message,
+    hint:
+      probe.failure === "auth"
+        ? "check LLM_PROXY_API_KEY matches a key the proxy accepts (oneshot-gtm config llm)"
+        : "start the proxy, or fix its address with oneshot-gtm config llm",
+  });
+  return out;
+}
+
 export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promise<CheckResult[]> {
   const cfg = loadConfig();
   const results: CheckResult[] = [];
@@ -966,13 +1052,8 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
     ...(cfg.founderName && cfg.productOneLiner ? {} : { hint: "run: oneshot-gtm config founder" }),
   });
 
-  const llmEnv = {
-    openrouter: "OPENROUTER_API_KEY",
-    openai: "OPENAI_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-  }[cfg.llmProvider];
-
-  const llmSrc = secretSource(llmEnv as never);
+  const llmEnv = LLM_KEY_ENV[cfg.llmProvider];
+  const llmSrc = secretSource(llmEnv);
   results.push({
     name: `llm key (${cfg.llmProvider})`,
     group: "install",
@@ -980,6 +1061,7 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
     message: llmApiKey(cfg.llmProvider) ? `set (${llmSrc ?? "?"})` : `${llmEnv} not set`,
     ...(llmApiKey(cfg.llmProvider) ? {} : { hint: `oneshot-gtm config keys` }),
   });
+  results.push(...(await llmRouteChecks(cfg)));
 
   const gh = githubTokenCheck();
   if (gh) results.push(gh);

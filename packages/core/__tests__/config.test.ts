@@ -65,10 +65,18 @@ describe("llmApiKey", () => {
     expect(llmApiKey("anthropic")).toBe("sk-ant-xyz");
   });
 
+  it("returns the proxy key when provider=proxy, never another provider's", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-xyz";
+    expect(llmApiKey("proxy")).toBeNull();
+    process.env.LLM_PROXY_API_KEY = "proxy-xyz";
+    expect(llmApiKey("proxy")).toBe("proxy-xyz");
+  });
+
   it("returns null when the matching env var is unset", () => {
     expect(llmApiKey("openrouter")).toBeNull();
     expect(llmApiKey("openai")).toBeNull();
     expect(llmApiKey("anthropic")).toBeNull();
+    expect(llmApiKey("proxy")).toBeNull();
   });
 });
 

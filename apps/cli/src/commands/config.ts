@@ -4,13 +4,18 @@ import {
   dailySpendStatus,
   DEFAULT_LINKEDIN_INVITE_TIMEOUT_DAYS,
   MAX_CALL_STEP_DAYS,
+  LLM_KEY_ENV,
+  LLM_PROVIDERS,
+  llmApiKey,
   loadConfig,
   saveConfig,
   saveSecrets,
   secretsPath,
   isSlackWebhookUrl,
   twilioKeysFromEnv,
+  type OneShotConfig,
 } from "@oneshot-gtm/core";
+import { listLlmModels } from "@oneshot-gtm/doctor";
 import {
   TRIGGERS,
   checkReadiness,
@@ -27,41 +32,189 @@ import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { loadVoiceCorpus, voiceCorpusPrompt } from "./_voice-corpus.ts";
+import { isHttpUrl } from "./init.ts";
 import { c, header, note, ok } from "../output.ts";
 
-export async function configLlm(): Promise<void> {
+type LlmProviderName = OneShotConfig["llmProvider"];
+
+const PROVIDER_TITLES: Record<LlmProviderName, string> = {
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  proxy: "Your own proxy (CLIProxyAPI or similar)",
+};
+
+/** How long `config llm` waits for the proxy's model list. */
+const MODEL_LIST_TIMEOUT_MS = 5_000;
+const OTHER_MODEL = "\u0000other";
+
+export interface ConfigLlmOptions {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  fallbackProvider?: string;
+  fallbackModel?: string;
+  /** False from `--no-fallback`. */
+  fallback?: boolean;
+}
+
+function parseProvider(value: string, flag: string): LlmProviderName {
+  const v = value.trim().toLowerCase();
+  if ((LLM_PROVIDERS as readonly string[]).includes(v)) return v as LlmProviderName;
+  throw new Error(`${flag} must be one of ${LLM_PROVIDERS.join(", ")}`);
+}
+
+/**
+ * `config llm`: the provider, its model, the proxy's address and key when the
+ * provider is `proxy`, and an optional fallback. A flag answers its question;
+ * with any flag given, only what is still missing is asked.
+ */
+export async function configLlm(opts: ConfigLlmOptions = {}): Promise<void> {
   header("Configure LLM provider");
   const cfg = loadConfig();
-  const answers = await prompts(
-    [
-      {
-        type: "select",
-        name: "llmProvider",
-        message: "Provider",
-        choices: [
-          { title: "OpenRouter", value: "openrouter" },
-          { title: "OpenAI", value: "openai" },
-          { title: "Anthropic", value: "anthropic" },
-        ],
-        initial: cfg.llmProvider === "openai" ? 1 : cfg.llmProvider === "anthropic" ? 2 : 0,
-      },
-      {
+  const flagged =
+    opts.provider !== undefined ||
+    opts.model !== undefined ||
+    opts.baseUrl !== undefined ||
+    opts.fallbackProvider !== undefined ||
+    opts.fallbackModel !== undefined ||
+    opts.fallback === false;
+  const ask = async <T>(q: Omit<prompts.PromptObject, "name">): Promise<T> =>
+    (await prompts({ ...q, name: "v" }, { onCancel: () => process.exit(0) }))["v"] as T;
+
+  let baseUrl = cfg.llmBaseUrl;
+  const secrets: Record<string, string> = {};
+  const proxyKey = () => secrets["LLM_PROXY_API_KEY"] ?? llmApiKey("proxy") ?? "";
+  const setUpProxy = async (): Promise<void> => {
+    if (opts.baseUrl !== undefined) {
+      if (!isHttpUrl(opts.baseUrl))
+        throw new Error("--base-url must be an http:// or https:// URL with no query or fragment");
+      baseUrl = opts.baseUrl.trim();
+    } else if (!flagged || !baseUrl) {
+      baseUrl = (
+        await ask<string>({
+          type: "text",
+          message: "Proxy address, e.g. http://127.0.0.1:8317",
+          initial: baseUrl ?? "",
+          validate: (v: string) => (isHttpUrl(v) ? true : "an http:// or https:// URL"),
+        })
+      ).trim();
+    }
+    if (flagged && llmApiKey("proxy")) return;
+    const saved = !!llmApiKey("proxy");
+    const key = await ask<string | undefined>({
+      type: "password",
+      message: `LLM_PROXY_API_KEY (${saved ? "empty = keep the saved one" : "a key from the proxy's config"})`,
+    });
+    if (key?.trim()) secrets["LLM_PROXY_API_KEY"] = key.trim();
+  };
+  const askModel = async (provider: LlmProviderName, initial: string): Promise<string> => {
+    if (provider === "proxy" && baseUrl) {
+      const listed = await listLlmModels(baseUrl, proxyKey(), MODEL_LIST_TIMEOUT_MS);
+      if (listed.ok && listed.models.length > 0) {
+        const picked = await ask<string>({
+          type: "select",
+          message: `Model on the proxy (${listed.models.length} listed)`,
+          choices: [
+            ...listed.models.map((m) => ({ title: m, value: m })),
+            { title: "Other (type it)", value: OTHER_MODEL },
+          ],
+          initial: Math.max(0, listed.models.indexOf(initial)),
+        });
+        if (picked !== OTHER_MODEL) return picked;
+      } else if (!listed.ok) {
+        note(c.dim(`could not list the proxy's models: ${listed.message}`));
+      }
+    }
+    return (
+      await ask<string>({
         type: "text",
-        name: "llmModel",
-        message: (_, values) => `Model name for ${values["llmProvider"]}`,
-        initial: cfg.llmModel,
-      },
-    ],
-    { onCancel: () => process.exit(0) },
-  );
+        message: `Model name for ${provider}`,
+        initial,
+        validate: (v: string) => (v.trim() ? true : "required"),
+      })
+    ).trim();
+  };
+
+  const provider =
+    opts.provider !== undefined
+      ? parseProvider(opts.provider, "--provider")
+      : await ask<LlmProviderName>({
+          type: "select",
+          message: "Provider",
+          choices: LLM_PROVIDERS.map((p) => ({ title: PROVIDER_TITLES[p], value: p })),
+          initial: Math.max(0, LLM_PROVIDERS.indexOf(cfg.llmProvider)),
+        });
+  if (provider === "proxy") await setUpProxy();
+  const model =
+    opts.model?.trim() ||
+    (await askModel(provider, provider === cfg.llmProvider ? cfg.llmModel : ""));
+
+  let fallback = cfg.llmFallback ?? null;
+  if (opts.fallback === false) {
+    fallback = null;
+  } else if (opts.fallbackProvider !== undefined) {
+    const fp = parseProvider(opts.fallbackProvider, "--fallback-provider");
+    if (fp === provider) throw new Error("--fallback-provider must differ from the main provider");
+    if (fp === "proxy" && provider !== "proxy") await setUpProxy();
+    fallback = {
+      provider: fp,
+      model:
+        opts.fallbackModel?.trim() ||
+        (await askModel(fp, fp === fallback?.provider ? fallback.model : "")),
+    };
+  } else if (opts.fallbackModel !== undefined) {
+    if (!fallback) throw new Error("--fallback-model needs --fallback-provider");
+    if (!opts.fallbackModel.trim()) throw new Error("--fallback-model is blank");
+    fallback = { ...fallback, model: opts.fallbackModel.trim() };
+  } else if (!flagged) {
+    const others = LLM_PROVIDERS.filter((p) => p !== provider);
+    const fp = await ask<LlmProviderName | "">({
+      type: "select",
+      message: "Fallback when the main provider is down (optional)",
+      choices: [
+        { title: "None", value: "" },
+        ...others.map((p) => ({ title: PROVIDER_TITLES[p], value: p })),
+      ],
+      initial: fallback ? Math.max(0, others.indexOf(fallback.provider) + 1) : 0,
+    });
+    if (!fp) {
+      fallback = null;
+    } else {
+      if (fp === "proxy") await setUpProxy();
+      fallback = {
+        provider: fp,
+        model: await askModel(fp, fp === fallback?.provider ? fallback.model : ""),
+      };
+    }
+  }
+  if (fallback?.provider === provider)
+    throw new Error(
+      `the saved fallback is also ${provider}: pass --fallback-provider with another one, or --no-fallback`,
+    );
+
+  const { llmFallback: _old, ...rest } = cfg;
+  void _old;
+  if (Object.keys(secrets).length > 0) saveSecrets(secrets);
   saveConfig({
-    ...cfg,
-    llmProvider: answers["llmProvider"] ?? cfg.llmProvider,
-    llmModel: answers["llmModel"] ?? cfg.llmModel,
+    ...rest,
+    llmProvider: provider,
+    llmModel: model,
+    ...(baseUrl ? { llmBaseUrl: baseUrl } : {}),
+    ...(fallback ? { llmFallback: fallback } : {}),
   });
   ok(
-    `provider=${c.cyan(answers["llmProvider"] ?? cfg.llmProvider)} model=${c.cyan(answers["llmModel"] ?? cfg.llmModel)}`,
+    `provider=${c.cyan(provider)} model=${c.cyan(model)}${provider === "proxy" ? ` base=${c.cyan(baseUrl ?? "")}` : ""}`,
   );
+  if (fallback) {
+    ok(`fallback=${c.cyan(fallback.provider)} model=${c.cyan(fallback.model)}`);
+    if (fallback.provider !== "proxy" && !llmApiKey(fallback.provider))
+      note(
+        c.yellow(
+          `${LLM_KEY_ENV[fallback.provider]} is not set, so the fallback is never used. Run: oneshot-gtm config keys`,
+        ),
+      );
+  }
 }
 
 export async function configFounder(): Promise<void> {
@@ -758,11 +911,7 @@ export async function configKeys(): Promise<void> {
   header("Configure API keys");
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);
   const cfg = loadConfig();
-  const llmEnvName = {
-    openrouter: "OPENROUTER_API_KEY",
-    openai: "OPENAI_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-  }[cfg.llmProvider];
+  const llmEnvName = LLM_KEY_ENV[cfg.llmProvider];
 
   const answers = await prompts(
     [

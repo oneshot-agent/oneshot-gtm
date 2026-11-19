@@ -1,8 +1,16 @@
 import { randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { configDir, DEFAULT_LLM_MODEL, demoMode, llmApiKey, loadConfig } from "@oneshot-gtm/core";
-import { complete } from "@oneshot-gtm/intel";
+import {
+  configDir,
+  DEFAULT_LLM_MODEL,
+  demoMode,
+  LLM_PROVIDERS,
+  llmApiKey,
+  loadConfig,
+  type OneShotConfig,
+} from "@oneshot-gtm/core";
+import { complete, proxyBaseUrl } from "@oneshot-gtm/intel";
 import { normalizeWebsite, type OnboardingStatus } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -37,7 +45,12 @@ export function aiFingerprint(): string {
   const state = readState();
   const salt = state.fingerprintSalt ?? randomBytes(16).toString("hex");
   if (!state.fingerprintSalt) writeState({ ...state, fingerprintSalt: salt });
-  const input = JSON.stringify([cfg.llmProvider, cfg.llmModel, llmApiKey(cfg.llmProvider)]);
+  const input = JSON.stringify([
+    cfg.llmProvider,
+    cfg.llmModel,
+    llmApiKey(cfg.llmProvider),
+    ...(cfg.llmProvider === "proxy" ? [cfg.llmBaseUrl ?? null] : []),
+  ]);
   if (fingerprintCache?.input === input && fingerprintCache.salt === salt)
     return fingerprintCache.fingerprint;
   const fingerprint = scryptSync(input, salt, 32).toString("hex");
@@ -56,13 +69,12 @@ export function onboardingStatus(): OnboardingStatus {
     productOneLiner: cfg.productOneLiner?.trim() ?? "",
     icpOneLiner: cfg.icpOneLiner?.trim() ?? "",
   };
-  const credentials = {
-    openrouter: !!llmApiKey("openrouter")?.trim(),
-    openai: !!llmApiKey("openai")?.trim(),
-    anthropic: !!llmApiKey("anthropic")?.trim(),
-  };
+  const credentials = Object.fromEntries(
+    LLM_PROVIDERS.map((p) => [p, !!llmApiKey(p)?.trim()]),
+  ) as Record<OneShotConfig["llmProvider"], boolean>;
   const aiVerified =
     credentials[cfg.llmProvider] &&
+    (cfg.llmProvider !== "proxy" || !!cfg.llmBaseUrl?.trim()) &&
     !!cfg.llmModel.trim() &&
     state.verification?.fingerprint === aiFingerprint();
   const businessMissing = [
@@ -128,6 +140,9 @@ export async function verifyOnboardingAI(req: Request): Promise<Response> {
   const fingerprint = aiFingerprint();
   const revision = readState().revision;
   const cfg = loadConfig();
+  const proxy = cfg.llmProvider === "proxy";
+  if (proxy && !cfg.llmBaseUrl?.trim())
+    return jsonResponse({ error: "Add the proxy's address, then save and test again." }, 400, req);
   if (!llmApiKey(cfg.llmProvider)?.trim())
     return jsonResponse(
       { error: "Add an API key for the selected provider, then save and test again." },
@@ -143,6 +158,7 @@ export async function verifyOnboardingAI(req: Request): Promise<Response> {
       maxTokens: 32,
       maxAttempts: 1,
       timeoutMs: 20_000,
+      noFallback: true,
       allowTruncation: true,
     });
     if (fingerprint !== aiFingerprint() || revision !== readState().revision)
@@ -156,8 +172,9 @@ export async function verifyOnboardingAI(req: Request): Promise<Response> {
   } catch (error) {
     // Never return provider response bodies: they can echo credentials.
     const e = error as { status?: number; name?: string };
-    const message =
-      e.status === 401 || e.status === 403
+    const message = proxy
+      ? proxyFailure(e, cfg.llmBaseUrl)
+      : e.status === 401 || e.status === 403
         ? "The provider rejected the API key. Check the key and its permissions."
         : e.status === 400 || e.status === 404
           ? "The provider could not use this model. Check the model ID and your access, or restore the default."
@@ -168,4 +185,27 @@ export async function verifyOnboardingAI(req: Request): Promise<Response> {
               : "Could not verify the connection. Check your provider, model, key, and network, then try again.";
     return jsonResponse({ error: message }, 502, req);
   }
+}
+
+/** The verify error for a proxy, naming its address (without any user:pass in it). */
+function proxyFailure(e: { status?: number; name?: string }, baseUrl: string | undefined): string {
+  let proxy = "The proxy";
+  try {
+    const url = new URL(proxyBaseUrl(baseUrl));
+    proxy = `The proxy at ${url.origin}${url.pathname.replace(/\/$/, "")}`;
+  } catch {
+    // an address that does not parse is named as just "the proxy"
+  }
+  if (e.status === 401 || e.status === 403)
+    return `${proxy} rejected the key. Check LLM_PROXY_API_KEY matches a key the proxy accepts.`;
+  if (e.status === 400 || e.status === 404)
+    return `${proxy} could not use this model. Pick a model the proxy lists.`;
+  if (e.status === 402 || e.status === 429)
+    return `${proxy} is out of quota or rate-limited. Try again later.`;
+  if (e.name === "LlmTimeoutError")
+    return `${proxy} did not answer within 20 seconds. Check it is running, then try again.`;
+  if (e.name === "LlmNetworkError") return `${proxy} is unreachable. Check it is running.`;
+  if (e.status !== undefined && e.status >= 500)
+    return `${proxy} failed (${e.status}). Check its logs and that its accounts are signed in.`;
+  return `Could not verify the connection. Check the proxy's address, key and model, then try again.`;
 }

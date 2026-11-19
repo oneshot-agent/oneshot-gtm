@@ -1,5 +1,7 @@
 import { join, relative } from "node:path";
 import {
+  LLM_KEY_ENV,
+  LLM_PROVIDERS,
   llmApiKey,
   loadConfig,
   oneshotEnvReady,
@@ -101,15 +103,24 @@ export async function runInit(): Promise<void> {
           { title: "OpenRouter (recommended — one key, swap models)", value: "openrouter" },
           { title: "OpenAI", value: "openai" },
           { title: "Anthropic", value: "anthropic" },
+          { title: "Your own proxy (CLIProxyAPI or similar)", value: "proxy" },
         ],
-        initial: cfg.llmProvider === "openai" ? 1 : cfg.llmProvider === "anthropic" ? 2 : 0,
+        initial: Math.max(0, LLM_PROVIDERS.indexOf(cfg.llmProvider)),
       },
       {
-        type: (prev) =>
-          prev === "openrouter" || prev === "openai" || prev === "anthropic" ? "text" : null,
+        type: (prev) => (prev === "proxy" ? "text" : null),
+        name: "llmBaseUrl",
+        message: "Proxy address, e.g. http://127.0.0.1:8317",
+        initial: cfg.llmBaseUrl ?? "",
+        validate: (s: string) => (isHttpUrl(s) ? true : "an http:// or https:// URL"),
+      },
+      {
+        type: (_, values) =>
+          (LLM_PROVIDERS as readonly string[]).includes(values["llmProvider"]) ? "text" : null,
         name: "llmModel",
         message: (_, values) => `Model name for ${values["llmProvider"]}`,
         initial: (_, values) => defaultModel(values["llmProvider"]),
+        validate: (s: string) => (s.trim() ? true : "required"),
       },
       {
         type: "confirm",
@@ -134,7 +145,7 @@ export async function runInit(): Promise<void> {
     `${c.dim("Skip any prompt with empty input — set them later with:")} ${c.cyan("oneshot-gtm config keys")}\n\n`,
   );
 
-  const llmEnvName = envForProvider(provider);
+  const llmEnvName = LLM_KEY_ENV[provider as OneShotConfig["llmProvider"]] ?? "LLM_API_KEY";
   const llmAlreadySet = Boolean(llmApiKey(provider));
   const oneShotAlreadySet = oneshotEnvReady();
 
@@ -233,6 +244,9 @@ export function mergeInitConfig(
     ...cfg,
     llmProvider: provider,
     llmModel: (answers["llmModel"] as string | undefined) ?? cfg.llmModel,
+    ...(typeof answers["llmBaseUrl"] === "string" && answers["llmBaseUrl"].trim()
+      ? { llmBaseUrl: answers["llmBaseUrl"].trim() }
+      : {}),
     telemetryEnabled: (answers["telemetryEnabled"] as boolean | undefined) ?? cfg.telemetryEnabled,
     founderName: normalizeOptionalAnswer(
       answers["founderName"] as string | undefined,
@@ -316,15 +330,14 @@ function defaultModel(provider: string): string {
   }
 }
 
-function envForProvider(provider: string): string {
-  switch (provider) {
-    case "openrouter":
-      return "OPENROUTER_API_KEY";
-    case "openai":
-      return "OPENAI_API_KEY";
-    case "anthropic":
-      return "ANTHROPIC_API_KEY";
-    default:
-      return "LLM_API_KEY";
+/** An http: or https: URL with no query or fragment, as /setup accepts for the proxy. */
+export function isHttpUrl(value: string): boolean {
+  const raw = value.trim();
+  if (!raw || /[?#]/.test(raw)) return false;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
   }
 }
