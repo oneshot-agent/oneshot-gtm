@@ -76,6 +76,8 @@ export interface LlmCompleteOutput {
 export class LlmError extends Error {
   public status?: number;
   public retryAfterMs?: number;
+  /** Billed before this failure (a cut-off try): a retry that answers adds it to its cost. */
+  public spentUsd?: number;
 
   constructor(message: string, status?: number, retryAfterMs?: number) {
     super(message);
@@ -357,14 +359,16 @@ async function completeOnRoute(
   // discard a paid completion and resend the prompt.
   let result: LlmCompleteOutput | undefined;
   let attempts = 0;
+  let spentUsd = 0;
 
   for (let attempt = 1; ; attempt++) {
     try {
       expanded.onAttempt?.();
-      result = await dispatch(route, expanded, timeoutMs);
+      result = plusCost(await dispatch(route, expanded, timeoutMs), spentUsd);
       attempts = attempt;
       break;
     } catch (err) {
+      if (err instanceof LlmError && err.spentUsd) spentUsd += err.spentUsd;
       const status = err instanceof LlmError ? (err.status ?? null) : null;
       const retryAfterMs = err instanceof LlmError ? err.retryAfterMs : undefined;
       // Reject Retry-After above the wait budget only if another retry is
@@ -754,6 +758,12 @@ function reasoningRetryAllowance(
   return doubled > extra ? doubled : undefined;
 }
 
+function plusCost(out: LlmCompleteOutput, spentUsd: number): LlmCompleteOutput {
+  return spentUsd > 0 && out.costUsd !== undefined
+    ? { ...out, costUsd: out.costUsd + spentUsd }
+    : out;
+}
+
 function usableCost(cost: unknown): number | undefined {
   return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
 }
@@ -814,16 +824,20 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     const retryAllowance = reasoningRetryAllowance(args, maxTokens, reasoningTokens);
     if (retryAllowance !== undefined) {
       args.input.onAttempt?.();
-      const out = await openaiCompatibleComplete({
-        ...args,
-        extraMaxTokens: retryAllowance,
-        reasoningRetried: true,
-      });
-      // The cut-off try was billed too.
-      const first = usableCost(data.usage?.cost);
-      return first === undefined || out.costUsd === undefined
-        ? out
-        : { ...out, costUsd: out.costUsd + first };
+      const first = usableCost(data.usage?.cost) ?? 0;
+      try {
+        return plusCost(
+          await openaiCompatibleComplete({
+            ...args,
+            extraMaxTokens: retryAllowance,
+            reasoningRetried: true,
+          }),
+          first,
+        );
+      } catch (err) {
+        if (err instanceof LlmError && first > 0) err.spentUsd = (err.spentUsd ?? 0) + first;
+        throw err;
+      }
     }
     throw new LlmTruncatedError(
       truncationMessage({

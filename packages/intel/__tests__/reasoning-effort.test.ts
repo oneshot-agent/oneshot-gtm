@@ -262,6 +262,29 @@ describe("llmReasoningEffort set", () => {
     expect(onAttempt).toHaveBeenCalledTimes(2);
   });
 
+  it("a cut-off try's cost survives a resend that fails and is retried", async () => {
+    vi.useFakeTimers();
+    try {
+      state.cfg["llmReasoningEffort"] = "medium";
+      const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+      let calls = 0;
+      stubFetch((_url, body) => {
+        calls++;
+        if (calls === 2) return rejection(503, "upstream down");
+        return body["max_tokens"] === first && calls === 1
+          ? cutOff(body, first - 3, 0.01)
+          : { ...ok(), json: okCost(0.02) };
+      });
+      const pending = complete({ messages: msgs, maxTokens: 500, maxAttempts: 2 });
+      await vi.runAllTimersAsync();
+      const out = await pending;
+      expect(calls).toBe(3);
+      expect(out.costUsd).toBeCloseTo(0.03);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
     const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
