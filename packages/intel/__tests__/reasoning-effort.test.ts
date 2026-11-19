@@ -16,9 +16,11 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const {
   complete,
+  LlmError,
   LlmTruncatedError,
   MANDATORY_REASONING_ALLOWANCE_TOKENS,
   REASONING_ALLOWANCE_TOKENS,
+  REASONING_RETRY_MAX_TOKENS,
   _resetLlmBreakerForTests,
 } = await import("../src/client.ts");
 
@@ -41,6 +43,13 @@ function ok(text = '{"ok":true}') {
       }),
   };
 }
+function okCost(cost: number) {
+  return () =>
+    Promise.resolve({
+      choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, cost },
+    });
+}
 function claudeOk() {
   return {
     ok: true,
@@ -56,6 +65,25 @@ function rejection(status: number, message: string) {
     status,
     headers: new Headers(),
     text: () => Promise.resolve(JSON.stringify({ error: { message } })),
+  };
+}
+
+/** A reply cut off at the request's max_tokens, `reasoning` of it spent reasoning. */
+function cutOff(body: Body, reasoning: number, cost?: number) {
+  const max = body["max_tokens"] as number;
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: () =>
+      Promise.resolve({
+        choices: [{ message: { content: "" }, finish_reason: "length" }],
+        usage: {
+          completion_tokens: max,
+          completion_tokens_details: { reasoning_tokens: reasoning },
+          ...(cost === undefined ? {} : { cost }),
+        },
+      }),
   };
 }
 
@@ -104,7 +132,7 @@ describe("llmReasoningEffort unset", () => {
     });
   });
 
-  it("a mandatory model gets low effort and the 1536-token allowance", async () => {
+  it("a mandatory model gets low effort and the low allowance", async () => {
     state.cfg["llmModel"] = SEEDED;
     const fn = stubFetch(mandatory);
     await complete({ messages: msgs, maxTokens: 500, temperature: 0.2 });
@@ -128,13 +156,15 @@ describe("llmReasoningEffort unset", () => {
 });
 
 describe("llmReasoningEffort set", () => {
-  it("keeps low at 1536 and scales the allowance with the effort", () => {
+  it("scales the allowance with the effort; a mandatory model with none gets low's", () => {
     expect(REASONING_ALLOWANCE_TOKENS).toEqual({
-      low: 1536,
-      medium: 4096,
-      high: 8192,
-      xhigh: 16384,
+      low: 8192,
+      medium: 16384,
+      high: 32768,
+      xhigh: 49152,
     });
+    expect(MANDATORY_REASONING_ALLOWANCE_TOKENS).toBe(REASONING_ALLOWANCE_TOKENS.low);
+    expect(REASONING_RETRY_MAX_TOKENS).toBe(65536);
   });
 
   it("medium on a mandatory model: effort medium, the medium allowance on top of maxTokens", async () => {
@@ -204,26 +234,185 @@ describe("llmReasoningEffort set", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("a cut-off answer from reasoning is the clear truncation error", async () => {
+  it("reasoning that eats the budget: one retry with the allowance doubled", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
-    stubFetch(() => ({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "" }, finish_reason: "length" }],
-          usage: {
-            completion_tokens: 4596,
-            completion_tokens_details: { reasoning_tokens: 4590 },
-          },
-        }),
-    }));
-    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(LlmTruncatedError);
-    expect((err as Error).message).toContain(
-      `truncated at max_tokens=${500 + REASONING_ALLOWANCE_TOKENS.medium} (4590/4596 tokens were reasoning)`,
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first
+        ? cutOff(body, first - 3, 0.01)
+        : { ...ok(), json: okCost(0.02) },
     );
+    const out = await complete({ messages: msgs, maxTokens: 500 });
+    expect(out.content).toBe('{"ok":true}');
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body.reasoning).toEqual({ effort: "medium" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * REASONING_ALLOWANCE_TOKENS.medium);
+    // Both tries were billed.
+    expect(out.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("the resend is outside maxAttempts but still reaches the accounting hook", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 3) : ok(),
+    );
+    const onAttempt = vi.fn();
+    await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1, onAttempt });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(onAttempt).toHaveBeenCalledTimes(2);
+  });
+
+  it("a cut-off try's cost survives a resend that fails and is retried", async () => {
+    vi.useFakeTimers();
+    try {
+      state.cfg["llmReasoningEffort"] = "medium";
+      const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+      let calls = 0;
+      stubFetch((_url, body) => {
+        calls++;
+        if (calls === 2) return rejection(503, "upstream down");
+        return body["max_tokens"] === first && calls === 1
+          ? cutOff(body, first - 3, 0.01)
+          : { ...ok(), json: okCost(0.02) };
+      });
+      const pending = complete({ messages: msgs, maxTokens: 500, maxAttempts: 2 });
+      await vi.runAllTimersAsync();
+      const out = await pending;
+      expect(calls).toBe(3);
+      expect(out.costUsd).toBeCloseTo(0.03);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("every failed attempt's cut-off cost is on the final error", async () => {
+    vi.useFakeTimers();
+    try {
+      state.cfg["llmReasoningEffort"] = "medium";
+      let calls = 0;
+      stubFetch((_url, body) => {
+        calls++;
+        return calls % 2 === 1
+          ? cutOff(body, (body["max_tokens"] as number) - 3, 0.01)
+          : rejection(503, "down");
+      });
+      const pending = complete({ messages: msgs, maxTokens: 500, maxAttempts: 2 }).catch(
+        (e: unknown) => e,
+      );
+      await vi.runAllTimersAsync();
+      const err = await pending;
+      expect(calls).toBe(4);
+      expect(err).toBeInstanceOf(LlmError);
+      expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.02);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the primary's cut-off cost is added to the fallback's answer", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "oa-key");
+    state.cfg = {
+      ...state.cfg,
+      llmReasoningEffort: "medium",
+      llmFallback: { provider: "openai", model: "gpt-test" },
+    };
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((url, body) => {
+      if (!url.startsWith(OR)) return { ...ok(), json: okCost(0.02) };
+      return body["max_tokens"] === first ? cutOff(body, first - 3, 0.01) : rejection(503, "down");
+    });
+    const out = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(out.provider).toBe("openai");
+    expect(out.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("both cut-off tries' costs are on the second cut-off's error", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    stubFetch((_url, body) =>
+      cutOff(body, (body["max_tokens"] as number) - 3, body["max_tokens"] === first ? 0.01 : 0.02),
+    );
+    const err = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.03);
+  });
+
+  it("a fallback that fails too carries the primary's cut-off cost on its error", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "oa-key");
+    state.cfg = {
+      ...state.cfg,
+      llmReasoningEffort: "medium",
+      llmFallback: { provider: "openai", model: "gpt-test" },
+    };
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((url, body) => {
+      if (!url.startsWith(OR)) return cutOff(body, 0, 0.02);
+      return body["max_tokens"] === first ? cutOff(body, first - 3, 0.01) : rejection(503, "down");
+    });
+    const err = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 }).catch(
+      (e: unknown) => e,
+    );
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.03);
+  });
+
+  it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
+    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    const retried = 500 + 2 * REASONING_ALLOWANCE_TOKENS.medium;
+    expect((err as Error).message).toContain(
+      `truncated at max_tokens=${retried} (${retried - 3}/${retried} tokens were reasoning)`,
+    );
+  });
+
+  it("an answer that overflows on its own is not retried", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const fn = stubFetch((_url, body) => cutOff(body, 4590));
+    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    const max = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    expect((err as Error).message).toContain(
+      `truncated at max_tokens=${max} (4590/${max} tokens were reasoning)`,
+    );
+  });
+
+  it("the retry's whole max_tokens is capped, and no room under the cap means no retry", async () => {
+    state.cfg["llmReasoningEffort"] = "xhigh";
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body["max_tokens"]).toBe(REASONING_RETRY_MAX_TOKENS);
+
+    await expect(complete({ messages: msgs, maxTokens: 20000 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("unset, mandatory model: the low allowance doubles once", async () => {
+    state.cfg["llmModel"] = SEEDED;
+    const first = 500 + MANDATORY_REASONING_ALLOWANCE_TOKENS;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 31) : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body.reasoning).toEqual({ effort: "low" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+
+  it("unset, reasoning switched off: a cut-off is not retried", async () => {
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sent(fn, 0).body.reasoning).toEqual({ enabled: false });
   });
 
   it("the OpenRouter fallback of another primary keeps today's request", async () => {
@@ -297,6 +486,29 @@ describe("llmReasoningEffort on the proxy", () => {
     expect(sent(fn, 0).body["reasoning_effort"]).toBe("high");
     expect(sent(fn, 0).body.reasoning).toBeUndefined();
     expect(sent(fn, 0).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
+  });
+
+  it("reasoning that eats the budget: one retry at the same effort, allowance doubled", async () => {
+    state.cfg["llmReasoningEffort"] = "low";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.low;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 3) : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).url).toBe(`${PROXY}/v1/chat/completions`);
+    expect(sent(fn, 1).body["reasoning_effort"]).toBe("low");
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * REASONING_ALLOWANCE_TOKENS.low);
+
+    const twice = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(twice).toHaveBeenCalledTimes(2);
+  });
+
+  it("unset: no allowance, so a cut-off is not retried", async () => {
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("a 400 about the effort sends today's request, and the route remembers it", async () => {
