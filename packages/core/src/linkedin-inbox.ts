@@ -15,6 +15,7 @@ import { listWorkspaces } from "./workspaces.ts";
 import { configDir, loadConfig } from "./config.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 import { Ledger, openLedgerDatabase } from "./ledger.ts";
+import { hasChannelEventIntent } from "./contact-optout.ts";
 import { classifyReply } from "./reply-classify.ts";
 import { logEvent } from "./events.ts";
 import type { InboxEmail } from "./oneshot.ts";
@@ -919,15 +920,35 @@ export class LinkedInInboxStore {
     messageId: string,
     now = Date.now(),
     claim: number | null = null,
+    /** The text that failed: an edit since frees the claim without charging an attempt. */
+    text: string | null = null,
   ) {
     if (claim != null) {
+      const same = `(? IS NULL OR EXISTS (SELECT 1 FROM messages WHERE account_key=? AND id=?
+        AND coalesce(json_extract(data,'$.text'), '') = ?))`;
       this.db
         .query(
-          `UPDATE message_intents SET attempts=attempts+1, claimed_until=?+(attempts+1)*?
+          `UPDATE message_intents SET attempts=attempts+(CASE WHEN ${same} THEN 1 ELSE 0 END),
+             claimed_until=CASE WHEN ${same} THEN ?+(attempts+1)*? ELSE NULL END
            WHERE account_key=? AND message_id=? AND intent IS NULL
              AND claimed_until=? AND claimed_until>?`,
         )
-        .run(now, LABEL_RETRY_BACKOFF_MS, accountKey, messageId, claim, now);
+        .run(
+          text,
+          accountKey,
+          messageId,
+          text,
+          text,
+          accountKey,
+          messageId,
+          text,
+          now,
+          LABEL_RETRY_BACKOFF_MS,
+          accountKey,
+          messageId,
+          claim,
+          now,
+        );
       return;
     }
     this.db
@@ -1144,11 +1165,12 @@ export class LinkedInInboxStore {
           intent: string;
           review: number;
           sent_at: string | null;
+          conversation_id: string | null;
         },
         string[]
       >(
         `SELECT d.account_key, d.message_id, d.workspace, d.prospect_id, mi.intent, mi.review,
-                json_extract(m.data,'$.sent_at') AS sent_at
+                json_extract(m.data,'$.sent_at') AS sent_at, m.conversation_id
            FROM deliveries d
            JOIN message_intents mi ON mi.account_key = d.account_key AND mi.message_id = d.message_id
            LEFT JOIN messages m ON m.account_key = d.account_key AND m.id = d.message_id
@@ -1166,11 +1188,34 @@ export class LinkedInInboxStore {
     );
     const homes = new Map(replyWorkspaces().map((w) => [w.name, w.home]));
     const handles = new LinkedInDeliveryHandles();
+    const finish = (d: (typeof pending)[number]) =>
+      this.db
+        .query(
+          `INSERT OR IGNORE INTO label_copies SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM message_intents
+             WHERE account_key=? AND message_id=? AND intent=?)`,
+        )
+        .run(
+          d.account_key,
+          d.message_id,
+          d.workspace,
+          d.prospect_id,
+          d.account_key,
+          d.message_id,
+          d.intent,
+        );
     try {
       for (const d of pending) {
         // A workspace no longer registered keeps its copy pending.
         const home = homes.get(d.workspace);
         if (!home) continue;
+        // Only the workspace that owns the thread now takes its labels.
+        const owner = d.conversation_id
+          ? this.threadForConversation(d.account_key, d.conversation_id)?.owner
+          : null;
+        if (owner && owner.workspace !== d.workspace) {
+          finish(d);
+          continue;
+        }
         try {
           const optOut = replyIntentMeta(d.intent)?.optOut === true;
           // An opt-out with nothing to stop it stays pending for a caller that can.
@@ -1185,25 +1230,39 @@ export class LinkedInInboxStore {
             const ledger = handles.ledger(home);
             const intent = { intent: d.intent, intentReview: d.review === 1 };
             for (const key of targets) {
-              const labelled = key.startsWith("row:")
-                ? ledger.setChannelEventIntent({
-                    id: Number(key.slice(4)),
-                    prospectId: d.prospect_id,
-                    ...intent,
-                  })
-                : key.startsWith("ext:")
-                  ? ledger.setLinkedInReplyIntent({
-                      source: "oneshot-linkedin",
-                      externalEventId: key.slice(4),
+              const rowId = key.startsWith("row:") ? Number(key.slice(4)) : null;
+              const labelled =
+                rowId != null
+                  ? ledger.setChannelEventIntent({
+                      id: rowId,
                       prospectId: d.prospect_id,
                       ...intent,
-                    }).length > 0
-                  : !optOut ||
-                    ledger.recordLinkedInOptOut({
-                      prospectId: d.prospect_id,
-                      externalEventId: `${key.slice(7)}:opt-out:${d.prospect_id}`,
-                      occurredAt: d.sent_at ?? new Date().toISOString(),
-                    });
+                    }) ||
+                    // An imported row deleted since is retired once another target stands in.
+                    (targets.length > 1 &&
+                      !handles
+                        .database(home)
+                        .query("SELECT 1 FROM channel_events WHERE id=?")
+                        .get(rowId) &&
+                      this.db
+                        .query(
+                          "DELETE FROM delivery_targets WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=? AND event_key=?",
+                        )
+                        .run(d.account_key, d.message_id, d.workspace, d.prospect_id, key).changes >
+                        0)
+                  : key.startsWith("ext:")
+                    ? ledger.setLinkedInReplyIntent({
+                        source: "oneshot-linkedin",
+                        externalEventId: key.slice(4),
+                        prospectId: d.prospect_id,
+                        ...intent,
+                      }).length > 0
+                    : !optOut ||
+                      ledger.recordLinkedInOptOut({
+                        prospectId: d.prospect_id,
+                        externalEventId: `${key.slice(7)}:opt-out:${d.prospect_id}`,
+                        occurredAt: d.sent_at ?? new Date().toISOString(),
+                      });
               if (!labelled) done = false;
             }
             const cadencesStopped =
@@ -1214,10 +1273,23 @@ export class LinkedInInboxStore {
               cadencesStopped,
             });
           }
-          if (done)
-            this.db
-              .query("INSERT OR IGNORE INTO label_copies VALUES(?,?,?,?)")
-              .run(d.account_key, d.message_id, d.workspace, d.prospect_id);
+          // Finished only while the label read is still the stored one; a
+          // label replaced meanwhile reopens the copy, so the newer one lands.
+          if (done) finish(d);
+          this.db
+            .query(
+              `DELETE FROM label_copies WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=?
+                 AND NOT EXISTS (SELECT 1 FROM message_intents WHERE account_key=? AND message_id=? AND intent=?)`,
+            )
+            .run(
+              d.account_key,
+              d.message_id,
+              d.workspace,
+              d.prospect_id,
+              d.account_key,
+              d.message_id,
+              d.intent,
+            );
         } catch (err) {
           out.errors.push(err instanceof Error ? err : new Error(String(err)));
         }
@@ -1247,6 +1319,7 @@ export class LinkedInInboxStore {
           ...matches.map((m) => m.home),
         ])) {
           const db = handles.database(home);
+          const labelled = hasChannelEventIntent(db);
           db.transaction(() => {
             for (const r of redirects) {
               const oldId = `${r.account_key}:${r.canonical_id}`,
@@ -1264,10 +1337,28 @@ export class LinkedInInboxStore {
                 db.query(
                   "UPDATE channel_events SET external_event_id=? WHERE source='oneshot-linkedin' AND external_event_id=?",
                 ).run(oldId, duplicateId);
-              else
+              else {
+                // The duplicate's unsubscribe moves onto the kept row first:
+                // the opt-out must outlive the row that carried it.
+                if (labelled)
+                  db.query(
+                    `UPDATE channel_events SET intent='unsubscribe', intent_review=0
+                      WHERE source='oneshot-linkedin' AND external_event_id=?
+                        AND coalesce(intent,'') <> 'unsubscribe'
+                        AND EXISTS (SELECT 1 FROM channel_events WHERE source='oneshot-linkedin'
+                          AND external_event_id=? AND prospect_id=? AND occurred_at=? AND body IS ?
+                          AND intent='unsubscribe')`,
+                  ).run(
+                    oldId,
+                    duplicateId,
+                    original.prospect_id,
+                    original.occurred_at,
+                    original.body,
+                  );
                 db.query(
                   "DELETE FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=? AND prospect_id=? AND occurred_at=? AND body IS ?",
                 ).run(duplicateId, original.prospect_id, original.occurred_at, original.body);
+              }
             }
           }).immediate();
         }
@@ -1344,10 +1435,20 @@ export class LinkedInInboxStore {
           this.db
             .query("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)")
             .run(t.accountKey, m.id, match.workspace, match.prospectId);
-          for (const key of targets)
-            this.db
-              .query("INSERT OR IGNORE INTO delivery_targets VALUES(?,?,?,?,?)")
-              .run(t.accountKey, m.id, match.workspace, match.prospectId, key);
+          // A new target reopens a finished copy, so it gets the label too.
+          this.db.transaction(() => {
+            let added = 0;
+            for (const key of targets)
+              added += this.db
+                .query("INSERT OR IGNORE INTO delivery_targets VALUES(?,?,?,?,?)")
+                .run(t.accountKey, m.id, match.workspace, match.prospectId, key).changes;
+            if (added)
+              this.db
+                .query(
+                  "DELETE FROM label_copies WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=?",
+                )
+                .run(t.accountKey, m.id, match.workspace, match.prospectId);
+          })();
         }
       }
     }
@@ -1359,6 +1460,8 @@ function legacyLinkedInReplyEvents(ledger: Ledger, prospectId: number, m: Linked
     .listChannelEventsForProspect(prospectId)
     .filter(
       (e) =>
+        e.channel === "linkedin" &&
+        e.event_type === "reply" &&
         !NATIVE_LINKEDIN_REPLY_SOURCES.has(e.source) &&
         Date.parse(e.occurred_at) === Date.parse(m.sent_at) &&
         (e.body ?? "").trim() === (m.text ?? "").trim(),
@@ -1636,9 +1739,9 @@ export async function labelLinkedInReplyBatch(opts: {
   };
   // Best effort: a locked database must not throw away the batch's results.
   // The claim lapses either way, so the message is picked up again.
-  const recordFailure = (accountKey: string, messageId: string, claim: number | null) => {
+  const recordFailure = (m: LinkedInMessage, accountKey: string, claim: number | null) => {
     try {
-      store.recordMessageIntentFailure(accountKey, messageId, Date.now(), claim);
+      store.recordMessageIntentFailure(accountKey, m.id, Date.now(), claim, m.text ?? "");
     } catch (err) {
       logEvent(
         "linkedin.reply.failure_record_failed",
@@ -1685,7 +1788,7 @@ export async function labelLinkedInReplyBatch(opts: {
         opts.classifyTimeoutMs ?? LABEL_CLASSIFY_TIMEOUT_MS,
       );
     } catch (err) {
-      if (!opts.dryRun) recordFailure(accountKey, m.id, claim);
+      if (!opts.dryRun) recordFailure(m, accountKey, claim);
       out.failed++;
       logEvent(
         "linkedin.reply.triage_failed",
@@ -1718,7 +1821,7 @@ export async function labelLinkedInReplyBatch(opts: {
       const message_120 = ((err as Error)?.message ?? "").slice(0, 120);
       // The label row itself was not written: a failure, not a label.
       if (!store.messageIntent(accountKey, m.id)?.intent) {
-        recordFailure(accountKey, m.id, claim);
+        recordFailure(m, accountKey, claim);
         out.failed++;
         logEvent("linkedin.reply.label_store_failed", { message_120 }, "warn");
         continue;

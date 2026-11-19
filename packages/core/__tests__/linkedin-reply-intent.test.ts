@@ -253,6 +253,22 @@ describe("message labels in the shared store", () => {
     ]);
   });
 
+  it("a failure on text edited meanwhile frees the claim without charging an attempt", () => {
+    store.saveMessages("account", [message("redo")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const text = message("redo").text;
+    const claim = store.claimMessageIntent("account", "redo", now);
+    store.saveMessages("account", [
+      message("redo", { text: "Please stop messaging me." }),
+    ] as never);
+    store.recordMessageIntentFailure("account", "redo", now + 60_000, claim, text);
+    expect(
+      store.db
+        .query("SELECT attempts, claimed_until FROM message_intents WHERE message_id='redo'")
+        .get(),
+    ).toEqual({ attempts: 0, claimed_until: null });
+  });
+
   it("a claimed failure for a row merged away meanwhile does not revive it", () => {
     store.saveMessages("account", [message("merged")] as never);
     const now = Date.parse("2026-11-18T12:00:00Z");
@@ -388,6 +404,114 @@ describe("labels reach the workspace ledger", () => {
         .query("SELECT count(*) AS n FROM label_copies WHERE message_id='moved' AND prospect_id=?")
         .get(owner),
     ).toEqual({ n: 1 });
+  });
+
+  it("an imported reply is never matched to a call's row", () => {
+    const { prospectId, deliver } = seedThread([
+      message("blank", { text: "", sent_at: "2026-11-05T10:00:00Z" }),
+    ]);
+    raw(ledger)
+      .query(
+        `INSERT INTO channel_events (source, external_event_id, prospect_id, channel, event_type, occurred_at)
+         VALUES ('call', ?, ?, 'call', 'reply', '2026-11-05T10:00:00Z')`,
+      )
+      .run(randomUUID(), prospectId);
+    deliver();
+    expect(eventIntent("blank")).not.toBeNull();
+  });
+
+  it("a target added on replay reopens a finished copy", () => {
+    const text = "Thanks, send me the details.";
+    const first = seedThread([message("both", { text })]);
+    first.deliver();
+    store.setMessageIntent("account", "both", label("meeting"));
+    const copies = () =>
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='both'").get();
+    expect(copies()).toEqual({ n: 1 });
+    ledger.recordLinkedInReply({
+      prospectId: first.prospectId,
+      source: "other-tool",
+      externalEventId: `other-tool:${randomUUID()}`,
+      occurredAt: "2026-11-01T10:00:00Z",
+      body: text,
+    });
+    first.deliver();
+    expect(copies()).toEqual({ n: 0 });
+    store.copyLabels(["account"]);
+    expect(copies()).toEqual({ n: 1 });
+    expect(
+      raw(ledger)
+        .query("SELECT intent FROM channel_events WHERE source='other-tool' AND prospect_id=?")
+        .get(first.prospectId),
+    ).toEqual({ intent: "meeting" });
+  });
+
+  it("an imported row deleted since is retired once the reply has its own row", () => {
+    const text = "Not for us, thanks.";
+    const first = seedThread([message("gone-row", { text })]);
+    ledger.recordLinkedInReply({
+      prospectId: first.prospectId,
+      source: "other-tool",
+      externalEventId: `other-tool:${randomUUID()}`,
+      occurredAt: "2026-11-01T10:00:00Z",
+      body: text,
+    });
+    first.deliver();
+    raw(ledger)
+      .query("DELETE FROM channel_events WHERE source='other-tool' AND prospect_id=?")
+      .run(first.prospectId);
+    first.deliver();
+    store.setMessageIntent("account", "gone-row", label("not_interested"));
+    expect(eventIntent("gone-row")?.intent).toBe("not_interested");
+    expect(
+      store.db.query("SELECT event_key FROM delivery_targets WHERE message_id='gone-row'").all(),
+    ).toEqual([{ event_key: "ext:account:gone-row" }]);
+    expect(
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='gone-row'").get(),
+    ).toEqual({ n: 1 });
+  });
+
+  it("a label replaced while it was copied leaves the copy open", () => {
+    const { deliver } = seedThread([message("raced")]);
+    deliver();
+    // Another process replaces the label mid-copy.
+    const stopCadences = vi.fn(() => {
+      store.db.query("UPDATE message_intents SET intent='question' WHERE message_id='raced'").run();
+      return 0;
+    });
+    store.setMessageIntent("account", "raced", label("unsubscribe"), { stopCadences });
+    expect(
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='raced'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("a thread moved to another workspace takes no label in the one it left", () => {
+    const first = seedThread([message("left", { text: "Please stop messaging me." })]);
+    first.deliver();
+    store.assign(`linkedin:account:${first.chat}`, { workspace: "elsewhere", prospectId: 1 });
+    const stopCadences = vi.fn(() => 1);
+    expect(
+      store.setMessageIntent("account", "left", label("unsubscribe"), { stopCadences }),
+    ).toEqual([]);
+    expect(stopCadences).not.toHaveBeenCalled();
+    expect(eventIntent("left")?.intent).toBeNull();
+  });
+
+  it("a merged duplicate's unsubscribe moves onto the kept ledger row", () => {
+    const first = seedThread([message("kept")]);
+    first.deliver();
+    raw(ledger)
+      .query(
+        `INSERT INTO channel_events (source, external_event_id, prospect_id, channel, event_type, occurred_at, body, intent)
+         SELECT source, 'account:dupe-of-kept', prospect_id, channel, event_type, occurred_at, body, 'unsubscribe'
+           FROM channel_events WHERE external_event_id='account:kept'`,
+      )
+      .run();
+    store.db.query("INSERT INTO message_redirects VALUES('account','dupe-of-kept','kept')").run();
+    first.deliver();
+    expect(eventIntent("kept")?.intent).toBe("unsubscribe");
+    expect(eventIntent("dupe-of-kept")).toBeNull();
+    expect(isProspectOptedOut(raw(ledger), first.prospectId)).toBe(true);
   });
 
   it("a delivery whose ledger row took no label stays pending", () => {

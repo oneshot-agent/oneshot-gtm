@@ -6,7 +6,7 @@ function hasTable(db: Database, name: string): boolean {
 }
 
 /** Whether a ledger's `channel_events` carries reply labels (ledger migration 32). */
-function hasChannelEventIntent(db: Database): boolean {
+export function hasChannelEventIntent(db: Database): boolean {
   return (db.query("PRAGMA table_info(channel_events)").all() as Array<{ name: string }>).some(
     (c) => c.name === "intent",
   );
