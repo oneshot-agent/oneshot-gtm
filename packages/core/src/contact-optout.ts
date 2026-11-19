@@ -5,6 +5,13 @@ function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
 }
 
+/** Whether a ledger's `channel_events` carries reply labels (ledger migration 32). */
+export function hasChannelEventIntent(db: Database): boolean {
+  return (db.query("PRAGMA table_info(channel_events)").all() as Array<{ name: string }>).some(
+    (c) => c.name === "intent",
+  );
+}
+
 /** Whether prospects carry a shared person id (only a ledger in the shared registry does). */
 export function hasSharedPerson(db: Database): boolean {
   return (db.query("PRAGMA table_info(prospects)").all() as Array<{ name: string }>).some(
@@ -55,6 +62,14 @@ export function contactAllowedClause(db: Database): string {
     clauses.push(`NOT EXISTS (
     SELECT 1 FROM calls cl WHERE cl.outcome = 'do_not_contact' AND (cl.prospect_id = p.id${
       person ? ` OR cl.prospect_id IN (${SAME_PERSON_IDS})` : ""
+    }))`);
+  // A LinkedIn reply labelled `unsubscribe` (linkedin-inbox.ts copies the
+  // shared store's label onto the reply's row): every channel, like an email
+  // one. The `intent` filter is the WHERE of idx_channel_events_unsubscribe.
+  if (hasChannelEventIntent(db))
+    clauses.push(`NOT EXISTS (
+    SELECT 1 FROM channel_events ce WHERE ce.intent = 'unsubscribe' AND (ce.prospect_id = p.id${
+      person ? ` OR ce.prospect_id IN (${SAME_PERSON_IDS})` : ""
     }))`);
   // Sync may have persisted a verdict before the cadence poll consumes it.
   // A message may be linked to no row: then its address names the person.
@@ -116,6 +131,12 @@ export function contactAllowedSetClause(db: Database): string {
     if (person)
       people.push(`SELECT o.shared_person_id AS person FROM calls cl
         JOIN prospects o ON o.id = cl.prospect_id WHERE cl.outcome = 'do_not_contact'`);
+  }
+  if (hasChannelEventIntent(db)) {
+    ids.push(`SELECT prospect_id AS id FROM channel_events WHERE intent = 'unsubscribe'`);
+    if (person)
+      people.push(`SELECT o.shared_person_id AS person FROM channel_events ce
+        JOIN prospects o ON o.id = ce.prospect_id WHERE ce.intent = 'unsubscribe'`);
   }
   if (hasTable(db, "mailbox_messages")) {
     const said = `direction = 'inbound' AND json_extract(data, '$.kind') = 'unsubscribe'`;

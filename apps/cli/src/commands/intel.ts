@@ -6,7 +6,14 @@ import {
   weeklyReview,
   type LlmMessage,
 } from "@oneshot-gtm/intel";
-import { getLedger, loadConfig } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  getLinkedInInboxStore,
+  labelLinkedInReplyBatch,
+  loadConfig,
+  workspaceLinkedInAccountKeys,
+  type LinkedInInboxStore,
+} from "@oneshot-gtm/core";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
 import { bail, box, c, header, note, ok, warn } from "../output.ts";
@@ -129,6 +136,85 @@ export interface BackfillIntentOptions {
   dryRun?: boolean;
   /** Let a re-label replace an existing `unsubscribe`. Off by default: an opt-out is never silently undone. */
   allowUnsubscribeDowngrade?: boolean;
+  /** Label this workspace's LinkedIn replies instead of email ones. */
+  linkedin?: boolean;
+  /** With `linkedin`: also retry replies whose label failed every attempt. */
+  retryFailed?: boolean;
+  /** Tests only: the shared LinkedIn inbox store. */
+  linkedinStore?: LinkedInInboxStore;
+}
+
+/** How many LinkedIn replies one pass of `--linkedin` labels before reading the next. */
+const LINKEDIN_BACKFILL_BATCH = 25;
+
+/**
+ * `backfill-intent --linkedin`: label this workspace's unlabelled LinkedIn
+ * replies in batches until none is left (or `limit` are done), under the
+ * server pass's claim, so each is paid for once. It stores labels only: the
+ * workspace server's next pass copies them to the workspaces and applies an
+ * `unsubscribe`, so one process writes those. A dry run classifies (still
+ * paid) one batch of up to `limit` (default 200) and writes nothing.
+ */
+async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void> {
+  if (opts.reclassify || opts.sinceDays != null)
+    bail("--linkedin labels unlabelled replies only: drop --reclassify and --since.");
+  const store = opts.linkedinStore ?? getLinkedInInboxStore();
+  const accountKeys = workspaceLinkedInAccountKeys(store);
+  if (opts.retryFailed && !opts.dryRun) store.resetExhaustedReplies(accountKeys);
+  const nothingLeft = () => {
+    const exhausted = opts.retryFailed && !opts.dryRun ? 0 : store.exhaustedReplyCount(accountKeys);
+    note(
+      exhausted > 0
+        ? `Nothing to backfill — ${exhausted} LinkedIn repl${exhausted === 1 ? "y" : "ies"} failed every retry; --retry-failed tries again.`
+        : "Nothing to backfill — every LinkedIn reply already has a label.",
+    );
+  };
+  const print = (labels: Array<{ messageId: string; intent: string; review: boolean }>) => {
+    for (const l of labels)
+      process.stdout.write(
+        `  …${l.messageId.slice(-8)}  (none) → ${l.intent}${l.review ? c.yellow(" check") : ""}\n`,
+      );
+  };
+  if (opts.dryRun) {
+    const out = await labelLinkedInReplyBatch({
+      classify: (email) => classifyReplyIntent(email),
+      limit: opts.limit ?? 200,
+      store,
+      dryRun: true,
+      ...(opts.retryFailed ? { includeExhausted: true } : {}),
+    });
+    print(out.labels);
+    if (out.checked === 0) nothingLeft();
+    else ok(`would label ${out.labels.length}, ${out.failed} failed.`);
+    return;
+  }
+  const total = { labelled: 0, failed: 0, skipped: 0, costMicros: 0 };
+  while (opts.limit == null || total.labelled + total.failed < opts.limit) {
+    const left = opts.limit == null ? Infinity : opts.limit - total.labelled - total.failed;
+    const out = await labelLinkedInReplyBatch({
+      classify: (email) => classifyReplyIntent(email),
+      limit: Math.min(LINKEDIN_BACKFILL_BATCH, left),
+      store,
+      copy: false,
+    });
+    print(out.labels);
+    total.labelled += out.labelled;
+    total.failed += out.failed;
+    total.skipped += out.skipped;
+    total.costMicros += out.costMicros;
+    // Nothing left, or only messages another caller holds right now.
+    if (out.checked === 0 || out.labelled + out.failed === 0) break;
+  }
+  if (total.labelled + total.failed + total.skipped === 0) return nothingLeft();
+  const cost =
+    total.costMicros > 0 ? `, $${(total.costMicros / 1_000_000).toFixed(4)} classifier cost` : "";
+  ok(
+    `labelled ${total.labelled} LinkedIn repl${total.labelled === 1 ? "y" : "ies"}` +
+      (total.failed > 0 ? `, ${total.failed} failed (retried later)` : "") +
+      (total.skipped > 0 ? `, ${total.skipped} already being labelled` : "") +
+      cost +
+      ". The workspace server copies them to the workspaces and applies unsubscribes on its next pass.",
+  );
 }
 
 /**
@@ -144,8 +230,10 @@ export interface BackfillIntentOptions {
  */
 export async function commandIntelBackfillIntent(opts: BackfillIntentOptions = {}): Promise<void> {
   header(
-    `intel backfill-intent${opts.reclassify ? " --reclassify" : ""}${opts.dryRun ? " (dry run)" : ""}`,
+    `intel backfill-intent${opts.linkedin ? " --linkedin" : ""}${opts.reclassify ? " --reclassify" : ""}${opts.dryRun ? " (dry run)" : ""}`,
   );
+  if (opts.linkedin) return backfillLinkedInIntent(opts);
+  if (opts.retryFailed) bail("--retry-failed applies to --linkedin only.");
   const ledger = getLedger();
   const sinceIso =
     opts.sinceDays != null

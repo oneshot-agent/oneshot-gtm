@@ -158,6 +158,8 @@ Invite, message, breakup is built for strangers. Someone mid-conversation with y
 
 Replies shows LinkedIn conversations beside email. Drafts are grounded in the prospect's research and may link only to pages in your product brief. The composer says so in words when a draft links elsewhere, or when the options say nearly the same thing.
 
+LinkedIn replies get the same [reply labels](./sending.md#replies) as email. Replies can filter by label and shows each conversation's label in the list. A LinkedIn reply labelled `unsubscribe` stops the person's cadences in the workspace that owns the conversation and opts them out on every channel, as an email one does, including a reply first imported from another tool. If that stop fails, the next labelling pass retries it. `intel backfill-intent --linkedin` labels older replies; the workspace server applies those labels, including an `unsubscribe`, on its next labelling pass. `--retry-failed` retries ones whose label failed every attempt.
+
 A reply whose payment OneShot refuses is marked not sent, and Send is offered again. It usually means the sending wallet is empty.
 
 What Replies learns from your edits is a proposal you approve; see [learning](./learning.md).

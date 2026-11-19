@@ -483,6 +483,7 @@ function buildConversations(
         messageId: r.message_id,
         replyKind: (r.kind as ReplyKind | null) ?? "human",
         intent: (r.intent as ReplyIntent | null) ?? null,
+        intentReview: r.intent != null && r.intent_review === 1,
       });
     }
     for (const key of threadKeys) {

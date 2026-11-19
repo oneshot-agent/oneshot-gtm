@@ -1903,6 +1903,8 @@ export type ConversationItem =
       replyKind: InboundReplyKind;
       /** Sentiment classification (issue #480); null = not yet triaged. */
       intent: ReplyIntent | null;
+      /** The label was under the workspace's confidence floor: shown for checking. */
+      intentReview?: boolean;
     }
   | {
       /** A manual reply the founder sent from /inbox (inbox_sent). */

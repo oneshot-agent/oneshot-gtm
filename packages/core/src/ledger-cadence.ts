@@ -1227,6 +1227,10 @@ export function recordLinkedInReply(
     occurredAt: string;
     /** The message text, when the channel supplies one. Feeds the composer. */
     body?: string | null;
+    /** The reply's label (REPLY_INTENTS), when the inbox store already has one. */
+    intent?: string | null;
+    /** The label fell under the classifier's confidence floor. */
+    intentReview?: boolean;
   },
 ): {
   duplicate: boolean;
@@ -1237,19 +1241,32 @@ export function recordLinkedInReply(
   return db.transaction(() => {
     const existing = db
       .query(`SELECT * FROM channel_events WHERE source = ? AND external_event_id = ?`)
-      .get(input.source, input.externalEventId) as ChannelEventRecord | null;
+      .get(input.source, input.externalEventId) as
+      | (ChannelEventRecord & { intent: string | null })
+      | null;
     // Replay must suppress newly enrolled cadences even when the event already exists.
     const prospectId = existing?.prospect_id ?? input.prospectId;
+    const intent = input.intent ?? null;
+    const review = intent ? (input.intentReview ? 1 : 0) : null;
     if (!existing) {
       db.prepare(`INSERT INTO channel_events
-        (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
-        VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`).run(
+        (source, external_event_id, prospect_id, channel, event_type, occurred_at, body,
+         intent, intent_review)
+        VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?, ?, ?)`).run(
         input.source,
         input.externalEventId,
         prospectId,
         input.occurredAt,
         input.body?.trim() || null,
+        intent,
+        review,
       );
+    } else if (intent && existing.intent == null) {
+      // A label that landed after this row was written (every sync replays
+      // delivery): fill it in. A row that has a label keeps it.
+      db.prepare(
+        `UPDATE channel_events SET intent = ?, intent_review = ? WHERE id = ? AND intent IS NULL`,
+      ).run(intent, review, existing.id);
     }
     const suppressed = suppressCadencesForReply(db, drafts, prospectId, input.accountKey);
     // Analytics: the reply is credited to the LinkedIn message it answers, as
@@ -1265,6 +1282,75 @@ export function recordLinkedInReply(
     }
     return { duplicate: !!existing, prospectId, ...suppressed };
   })();
+}
+
+/**
+ * Label recorded LinkedIn replies after the fact: the shared inbox store
+ * labels a message once, possibly after it was delivered here. Returns the
+ * prospects whose row it labelled.
+ */
+export function setLinkedInReplyIntent(
+  db: Database,
+  input: {
+    source: string;
+    externalEventId: string;
+    intent: string;
+    intentReview?: boolean;
+    /** Only this prospect's row. */
+    prospectId?: number;
+  },
+): number[] {
+  return (
+    db
+      .query(
+        `UPDATE channel_events SET intent = ?, intent_review = ?
+          WHERE source = ? AND external_event_id = ? AND (? IS NULL OR prospect_id = ?)
+          RETURNING prospect_id`,
+      )
+      .all(
+        input.intent,
+        input.intentReview ? 1 : 0,
+        input.source,
+        input.externalEventId,
+        input.prospectId ?? null,
+        input.prospectId ?? null,
+      ) as Array<{ prospect_id: number }>
+  ).map((r) => r.prospect_id);
+}
+
+/**
+ * Label one recorded reply by its row id: a reply imported from another tool
+ * has no OneShot event id to find it by. Returns whether a row was labelled.
+ */
+export function setChannelEventIntent(
+  db: Database,
+  input: { id: number; prospectId: number; intent: string; intentReview?: boolean },
+): boolean {
+  return (
+    db
+      .query(
+        `UPDATE channel_events SET intent = ?, intent_review = ? WHERE id = ? AND prospect_id = ?`,
+      )
+      .run(input.intent, input.intentReview ? 1 : 0, input.id, input.prospectId).changes > 0
+  );
+}
+
+/**
+ * A LinkedIn opt-out for a prospect who holds no reply row of their own (the
+ * thread was reassigned to them): an `opt_out` event, not a reply, so it
+ * counts in no reply stats yet blocks contact like an unsubscribe label.
+ */
+export function recordLinkedInOptOut(
+  db: Database,
+  input: { prospectId: number; externalEventId: string; occurredAt: string },
+): boolean {
+  db.prepare(
+    `INSERT INTO channel_events
+       (source, external_event_id, prospect_id, channel, event_type, occurred_at, intent, intent_review)
+     VALUES ('oneshot-linkedin', ?, ?, 'linkedin', 'opt_out', ?, 'unsubscribe', 0)
+     ON CONFLICT(source, external_event_id) DO UPDATE SET intent = 'unsubscribe'`,
+  ).run(input.externalEventId, input.prospectId, input.occurredAt);
+  return true;
 }
 
 /** Suppression is independent of inbox ownership and never creates or removes reply history. */

@@ -60,6 +60,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_channel_events_unsubscribe",
+      "sql": "CREATE INDEX idx_channel_events_unsubscribe
+          ON channel_events(prospect_id) WHERE intent = 'unsubscribe'",
+      "tbl_name": "channel_events",
+      "type": "index",
+    },
+    {
       "name": "idx_code_answers_status",
       "sql": "CREATE INDEX idx_code_answers_status ON code_answers(status, updated_at DESC)",
       "tbl_name": "code_answers",
@@ -571,7 +578,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         channel           TEXT NOT NULL,
         event_type        TEXT NOT NULL,
         occurred_at       TEXT NOT NULL,
-        created_at        TEXT NOT NULL DEFAULT (datetime('now')), body TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')), body TEXT, intent TEXT, intent_review INTEGER,
         UNIQUE(source, external_event_id),
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",

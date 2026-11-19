@@ -36,6 +36,17 @@ const message = (id: string, conversationId: string) =>
     sent_at: "2020-01-01",
     attachments: [],
   }) as unknown as LinkedInMessage;
+const label = (intent: "interested" | "meeting" | "question" | "unsubscribe") => ({
+  intent,
+  reason: null,
+  confidence: 0.9,
+  probabilities: null,
+  classifier: "decisions:test",
+  costMicros: 1,
+  review: false,
+});
+const intentRows = (key: string) =>
+  store.db.query("SELECT message_id FROM message_intents WHERE account_key=?").all(key);
 beforeEach(() => {
   store = new LinkedInInboxStore(
     join(process.env.ONESHOT_GTM_HOME!, `replacement-${crypto.randomUUID()}.sqlite`),
@@ -124,6 +135,37 @@ it("merges a replacement already captured by the other server", () => {
   expect(store.allMessages("wallet:old")).toHaveLength(1);
   expect(store.threads()[0]?.owner).toMatchObject({ manual: true, workspace: "beta" });
 });
+it("moves the replacement's labels onto the messages they are kept under", () => {
+  store.saveMessages("wallet:old", [
+    { ...message("old-second", "old-chat"), provider_message_id: "second" },
+  ]);
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: account("new"),
+    sync: null,
+    checkedAt: null,
+    error: null,
+  });
+  store.saveConversation("wallet:new", conversation("new-chat"), [], "new");
+  store.saveMessages("wallet:new", [
+    message("new-message", "new-chat"),
+    { ...message("new-second", "new-chat"), provider_message_id: "second" },
+    { ...message("new-only", "new-chat"), provider_message_id: "only" },
+  ]);
+  // The kept copy holds only a claim, or already has a label of its own.
+  store.claimMessageIntent("wallet:old", "old-message");
+  store.setMessageIntent("wallet:old", "old-second", label("meeting"));
+  store.setMessageIntent("wallet:new", "new-message", label("interested"));
+  store.setMessageIntent("wallet:new", "new-second", label("question"));
+  store.setMessageIntent("wallet:new", "new-only", label("question"));
+  store.replaceAccount("wallet:old", account("new"), []);
+  expect(store.messageIntent("wallet:old", "old-message")?.intent).toBe("interested");
+  expect(store.messageIntent("wallet:old", "old-second")?.intent).toBe("meeting");
+  expect(store.messageIntent("wallet:old", "new-only")?.intent).toBe("question");
+  expect(intentRows("wallet:new")).toEqual([]);
+});
 it("refuses to attach another person's login to the saved history", () => {
   expect(() => store.replaceAccount("wallet:old", account("new", "someone-else"), [])).toThrow(
     "does not match",
@@ -185,6 +227,78 @@ it("reconciles regenerated provider chat/message IDs by unique exact cross-conne
   );
   store.reconcileReplacementHistory("wallet:old");
   expect(store.allMessages("wallet:old")).toHaveLength(1);
+});
+
+it("a reconciled duplicate's label replaces failure state on the message it merges into", () => {
+  store.replaceAccount("wallet:old", account("new"), []);
+  store.saveConversation(
+    "wallet:old",
+    { ...conversation("new-chat"), provider_chat_id: "regenerated-chat" },
+    [],
+    "new",
+  );
+  store.saveMessages(
+    "wallet:old",
+    [{ ...message("new-message", "new-chat"), provider_message_id: "regenerated-message" }],
+    "new",
+  );
+  // The kept message failed every retry; its duplicate was labelled meanwhile.
+  for (let i = 0; i < 3; i++) store.recordMessageIntentFailure("wallet:old", "old-message");
+  store.setMessageIntent("wallet:old", "new-message", label("interested"));
+  store.reconcileReplacementHistory("wallet:old");
+  expect(store.messageIntent("wallet:old", "old-message")?.intent).toBe("interested");
+  expect(intentRows("wallet:old")).toEqual([{ message_id: "old-message" }]);
+});
+
+it("a reconciled duplicate's unsubscribe replaces the kept message's other label", () => {
+  store.replaceAccount("wallet:old", account("new"), []);
+  store.saveConversation(
+    "wallet:old",
+    { ...conversation("new-chat"), provider_chat_id: "regenerated-chat" },
+    [],
+    "new",
+  );
+  store.saveMessages(
+    "wallet:old",
+    [{ ...message("new-message", "new-chat"), provider_message_id: "regenerated-message" }],
+    "new",
+  );
+  store.setMessageIntent("wallet:old", "old-message", label("question"));
+  store.db.query("INSERT INTO label_copies VALUES('wallet:old','old-message','beta',7)").run();
+  store.setMessageIntent("wallet:old", "new-message", label("unsubscribe"));
+  store.reconcileReplacementHistory("wallet:old");
+  expect(store.messageIntent("wallet:old", "old-message")?.intent).toBe("unsubscribe");
+  // Copied to the kept message's deliveries again.
+  expect(store.db.query("SELECT count(*) AS n FROM label_copies").get()).toEqual({ n: 0 });
+});
+
+it("a replacement carries deliveries and their ledger targets to the kept message", () => {
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: account("new"),
+    sync: null,
+    checkedAt: null,
+    error: null,
+  });
+  store.saveConversation("wallet:new", conversation("new-chat"), [], "new");
+  store.saveMessages("wallet:new", [message("new-message", "new-chat")]);
+  store.setMessageIntent("wallet:new", "new-message", label("unsubscribe"));
+  store.db.query("INSERT INTO deliveries VALUES('wallet:new','new-message','beta',7)").run();
+  store.db
+    .query(
+      "INSERT INTO delivery_targets VALUES('wallet:new','new-message','beta',7,'ext:wallet:new:new-message')",
+    )
+    .run();
+  store.replaceAccount("wallet:old", account("new"), []);
+  expect(store.db.query("SELECT * FROM deliveries").all()).toEqual([
+    { account_key: "wallet:old", message_id: "old-message", workspace: "beta", prospect_id: 7 },
+  ]);
+  // The target keeps the event id the workspace ledger holds.
+  expect(store.db.query("SELECT message_id, event_key FROM delivery_targets").all()).toEqual([
+    { message_id: "old-message", event_key: "ext:wallet:new:new-message" },
+  ]);
 });
 
 it("does not collapse distinct identical messages from the same connection", () => {

@@ -89,6 +89,7 @@ import {
   DEFAULT_CALL_HOLD_DAYS,
   getSharedDb,
   memberPhoneKey,
+  type Ledger,
 } from "@oneshot-gtm/core";
 import { classifyReplyIntent, complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { readAutoReply, stopLiveCadences } from "./_auto-reply.ts";
@@ -1042,9 +1043,15 @@ interface WalkResult {
 /**
  * Stop a prospect's live cadences after an opt-out reply label (REPLY_INTENTS
  * `optOut`, i.e. `unsubscribe`). Idempotent; returns the number stopped.
+ * `ledger` is this workspace's unless given: a LinkedIn label stops the
+ * prospect in whichever workspace the reply was delivered to. `channel` is
+ * where the opt-out was said, for the sequence event.
  */
-export function stopCadencesForOptOut(prospectId: number): number {
-  const ledger = getLedger();
+export function stopCadencesForOptOut(
+  prospectId: number,
+  ledger: Ledger = getLedger(),
+  channel: "email" | "linkedin" = "email",
+): number {
   let stopped = 0;
   for (const cad of ledger.listCadencesForProspect(prospectId)) {
     if (cad.status !== "active" && cad.status !== "paused") continue;
@@ -1052,7 +1059,7 @@ export function stopCadencesForOptOut(prospectId: number): number {
       prospectId,
       playName: cad.play_name,
       stepIndex: cad.current_step,
-      channel: "email",
+      channel,
       status: "unsubscribed",
       metadata: { reason: "unsubscribe" },
     });

@@ -1,4 +1,4 @@
-import type { InboxReplyView, MailboxHealthView } from "./index.ts";
+import type { InboxReplyView, MailboxHealthView, ReplyIntent } from "./index.ts";
 
 export const REPLY_VARIANTS = ["direct", "technical", "warm"] as const;
 export type ReplyVariant = (typeof REPLY_VARIANTS)[number];
@@ -83,6 +83,14 @@ export interface ReplyThread {
   drafts: ReplyDraftSet | null;
   send: ReplySendState | null;
   email?: InboxReplyView;
+  /**
+   * The reply label of the thread's latest labelled inbound message, either
+   * channel: email from `email.intent`, LinkedIn from the shared store's
+   * message labels. Null until one is labelled.
+   */
+  intent?: ReplyIntent | null;
+  /** The label fell under the classifier's confidence floor: check it. */
+  intentReview?: boolean;
   mailboxThreadKey?: string;
   historyComplete?: boolean;
   /** Current account health, separate from historical send failures. */

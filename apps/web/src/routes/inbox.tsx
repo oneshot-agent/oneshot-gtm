@@ -24,6 +24,7 @@ import type {
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { IntentBadge } from "../components/IntentBadge.tsx";
+import { ReplyRowLabel } from "../components/ReplyRowLabel.tsx";
 import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Input } from "../components/primitives/Field.tsx";
@@ -34,7 +35,14 @@ import { ReplyOptionsComposer } from "../components/ReplyOptionsComposer.tsx";
 import { replyCompany, replyPreview } from "../lib/replyPreview.ts";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
-import { replyInTab, replyNeedsAttention, type ReplyTab } from "../lib/replies.ts";
+import {
+  replyHasLabel,
+  replyInTab,
+  replyLabelOptions,
+  replyNeedsAttention,
+  type ReplyLabelFilter,
+  type ReplyTab,
+} from "../lib/replies.ts";
 import { useReplyScroll } from "../lib/useReplyScroll.ts";
 import { linkedinUrlFor } from "../lib/payloadIdentity.ts";
 
@@ -47,12 +55,13 @@ function InboxPage() {
   const [view, setView] = useState<ReplyTab>("inbox");
   const [channel, setChannel] = useState("all");
   const [match, setMatch] = useState("matched");
+  const [label, setLabel] = useState<ReplyLabelFilter>("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
   const inbox = useQuery({ queryKey: ["replies"], queryFn: api.replies, refetchInterval: 60_000 });
   const threads = inbox.data?.threads ?? [];
-  const filtered = threads.filter(
+  const scoped = threads.filter(
     (t) =>
       (channel === "all" || t.channel === channel) &&
       (match === "all" ||
@@ -66,6 +75,7 @@ function InboxPage() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
+  const filtered = scoped.filter((t) => replyHasLabel(t, label));
   const visible = filtered.filter((t) => replyInTab(t, view));
   const refresh = useMutation({
     mutationFn: async () => {
@@ -83,7 +93,7 @@ function InboxPage() {
   });
   useEffect(() => {
     setPage(1);
-  }, [view, channel, match, search]);
+  }, [view, channel, match, label, search]);
   const attention = filtered.filter(replyNeedsAttention).length;
   const selected = visible.find((t) => t.key === expanded);
   const selectedKey = selected?.key;
@@ -97,7 +107,7 @@ function InboxPage() {
   useLayoutEffect(() => {
     queueScrollTop.current = 0;
     queueRef.current?.scrollTo({ top: 0 });
-  }, [currentPage, view, channel, match, search]);
+  }, [currentPage, view, channel, match, label, search]);
   useEffect(() => {
     const queue = queueRef.current;
     if (!queue) return;
@@ -199,6 +209,21 @@ function InboxPage() {
               </button>
             ))}
           </div>
+          <select
+            aria-label="Reply label"
+            className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
+            value={label}
+            onChange={(e) => {
+              setLabel(e.target.value as ReplyLabelFilter);
+              setExpanded(null);
+            }}
+          >
+            {replyLabelOptions(scoped, label).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.title} · {o.count}
+              </option>
+            ))}
+          </select>
           <select
             aria-label="Detailed matching filters"
             className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
@@ -318,16 +343,19 @@ function InboxPage() {
                         </strong>
                         <time>{timeAgo(t.lastActivityAt)}</time>
                       </span>
-                      <span className="replies-company">
-                        {company ? (
-                          <Pii kind="company">{company}</Pii>
-                        ) : t.channel === "email" && t.address ? (
-                          <Pii kind="email">{t.address}</Pii>
-                        ) : t.channel === "linkedin" ? (
-                          "LinkedIn"
-                        ) : (
-                          "Email"
-                        )}
+                      <span className="replies-company-line">
+                        <span className="replies-company">
+                          {company ? (
+                            <Pii kind="company">{company}</Pii>
+                          ) : t.channel === "email" && t.address ? (
+                            <Pii kind="email">{t.address}</Pii>
+                          ) : t.channel === "linkedin" ? (
+                            "LinkedIn"
+                          ) : (
+                            "Email"
+                          )}
+                        </span>
+                        <ReplyRowLabel thread={t} />
                       </span>
                       <span className="replies-snippet">
                         {lastMessage?.direction === "outbound" ? "You: " : ""}
@@ -948,13 +976,13 @@ function ThreadRow({
               {t.subject || "(No subject)"}
             </p>
           )}
-          {t.channel === "email" && t.email?.intent && (
+          {(t.intent ?? t.email?.intent) && (
             <p className="replies-intent">
               <span>Reply label:</span>{" "}
               <IntentBadge
-                intent={t.email.intent}
-                review={t.email.intentReview}
-                confidence={t.email.intentConfidence}
+                intent={t.intent ?? t.email?.intent}
+                review={t.intentReview ?? t.email?.intentReview}
+                confidence={t.email?.intentConfidence}
               />
             </p>
           )}
