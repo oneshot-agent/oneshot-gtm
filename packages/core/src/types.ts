@@ -391,6 +391,8 @@ export interface OfferWriterConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
+export type MessageOpening = "offer" | "problem";
+
 /** The pattern checks a workspace can run on every written offer; see `OneShotConfig.offerChecks`. */
 export const OFFER_CHECKS = ["awareness", "check-lead", "system-wrapper"] as const;
 
@@ -410,10 +412,29 @@ export type PriorityPriors = Record<string, PlayPriorityPriors>;
 /** How drafted email subjects are cased; see `OneShotConfig.subjectCase`. */
 export type SubjectCase = "lowercase" | "sentence" | "as-written";
 
+/** Where LLM completions go. `proxy` is a server the user runs (CLIProxyAPI or similar) at `llmBaseUrl`. */
+export type LlmProviderName = "openrouter" | "openai" | "anthropic" | "proxy";
+
+/** Second provider for a call the primary could not serve; see `OneShotConfig.llmFallback`. */
+export interface LlmFallbackConfig {
+  provider: LlmProviderName;
+  model: string;
+}
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
-  llmProvider: "openrouter" | "openai" | "anthropic";
+  llmProvider: LlmProviderName;
   llmModel: string;
+  /**
+   * Origin of the user's own proxy (`http://127.0.0.1:8317`). Read only when
+   * `llmProvider` is `proxy`; the key is `LLM_PROXY_API_KEY`.
+   */
+  llmBaseUrl?: string;
+  /**
+   * Used when the primary is unreachable, rate-limited or refuses the key:
+   * the call is sent again here on `model`. Absent or null: no fallback.
+   */
+  llmFallback?: LlmFallbackConfig | null;
   telemetryEnabled: boolean;
   founderName: string | null;
   founderEmail: string | null;
@@ -588,6 +609,12 @@ export interface OneShotConfig {
    */
   offerAnchor?: OfferAnchor;
   /**
+   * What an email that makes an offer opens on. `problem`: one line naming
+   * the reader's likely problem may come before the offer. `offer` (the
+   * default, and anything unrecognized): the offer first. Email only.
+   */
+  messageOpening?: MessageOpening;
+  /**
    * Plays that make no offer in this workspace, beyond the plays that never
    * make one (`NO_OFFER_PLAYS` in plays): their intros, follow-ups and letters
    * carry no OFFER block, no offer is written or judged for their rows, and
@@ -597,6 +624,13 @@ export interface OneShotConfig {
    * Absent or empty: every play that makes offers keeps making them.
    */
   noOfferPlays?: string[];
+  /**
+   * Plays of `noOfferPlays` whose follow-ups still make an offer: the first
+   * touch stays offer-free, the sequence behaves as an offer play's
+   * (`playMakesSequenceOffer` in plays). Names not in `noOfferPlays`, and
+   * `NO_OFFER_PLAYS`, change nothing. Absent or empty (the default): off.
+   */
+  followUpOfferPlays?: string[];
   /**
    * What an organization's members get when it offers the founder's product
    * to them (credits, setup, an extended trial), in the founder's own words.

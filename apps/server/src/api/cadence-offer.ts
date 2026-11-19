@@ -4,7 +4,7 @@ import { CLICK_RESEARCH_WAIT_MS } from "@oneshot-gtm/find";
 import {
   deriveSequenceOffer,
   offerHoldsSend,
-  playMakesOffer,
+  playMakesSequenceOffer,
   prospectOfferInput,
   sequenceOfferOf,
   sequenceOfferRecord,
@@ -93,7 +93,7 @@ export function cadenceOfferView(record: SequenceOfferRecord): CadenceOfferView 
 export function cadenceOfferFor(
   cadence: Pick<CadenceWithProspect, "prospect_id" | "play_name" | "offer_json" | "queue_id">,
 ): CadenceOfferView | undefined {
-  if (!playMakesOffer(cadence.play_name)) return undefined;
+  if (!playMakesSequenceOffer(cadence.play_name)) return undefined;
   return cadenceOfferView(sequenceOfferOf(cadence));
 }
 
@@ -201,7 +201,7 @@ export async function cadenceOfferRoute(
     return jsonResponse({ error: `cadence is already ${cadence.status}` }, 409, req);
   }
   if (cadence.sending_started_at) return jsonResponse({ error: IN_FLIGHT }, 409, req);
-  if (!playMakesOffer(playName)) {
+  if (!playMakesSequenceOffer(playName)) {
     return jsonResponse({ error: `${playName} makes no offer` }, 400, req);
   }
   const body = await readOfferEditBody(req);

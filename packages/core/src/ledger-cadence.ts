@@ -172,10 +172,13 @@ export function enrollCadence(
  * is none). `expect` is compare-and-set on the stored offer's keys (key →
  * scalar, null: absent), e.g. an approval bound to the offer the founder
  * read. The stored `close` and `closeSkip` are kept, except a close whose
- * text the new offer has. False when nothing was written.
+ * text the new offer has. A write that changes what a draft restates
+ * (`cadenceOfferKey`) drops the stored preview, its open versions closed as
+ * `regenerate`; an approval stamp keeps it. False when nothing was written.
  */
 export function setCadenceOffer(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     playName: string;
@@ -195,12 +198,11 @@ export function setCadenceOffer(
     : "json(?)";
   // A merge that leaves the text alone keeps any close: it differs by construction.
   const newText = typeof input.offer["offer"] === "string" ? input.offer["offer"] : null;
-  const r = db
-    .prepare(
-      // The rebuilt object carries `close` and `closeSkip` over; json_remove then
-      // drops each one absent (a null json_set wrote) or, for `close`, the one
-      // the new offer now makes. '$.__kept' matches nothing.
-      `UPDATE cadence_state
+  const write = db.prepare(
+    // The rebuilt object carries `close` and `closeSkip` over; json_remove then
+    // drops each one absent (a null json_set wrote) or, for `close`, the one
+    // the new offer now makes. '$.__kept' matches nothing.
+    `UPDATE cadence_state
           SET offer_json = json_remove(
                 json_set(
                   json_object(
@@ -219,17 +221,64 @@ export function setCadenceOffer(
           AND (offer_json IS NULL OR json_valid(offer_json))${
             input.merge ? "\n          AND json_type(offer_json, '$.offer') = 'object'" : ""
           }${guards.map(() => "\n          AND json_extract(offer_json, ?) IS ?").join("")}`,
+  );
+  const args = [
+    JSON.stringify(input.offer),
+    input.candidates ? JSON.stringify(input.candidates) : null,
+    input.origin ?? null,
+    newText,
+    input.prospectId,
+    input.playName,
+    ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
+  ];
+  return db
+    .transaction(() => {
+      const before = cadenceOfferKey(db, input);
+      if (write.run(...args).changes !== 1) return false;
+      if (cadenceOfferKey(db, input) === before) return true;
+      // The stored preview restates the offer this write replaced. No send
+      // holds the row (the write's own guard), so none is shipping it.
+      db.prepare(
+        `UPDATE cadence_state
+            SET next_step_draft_json = NULL, next_step_drafted_at = NULL
+          WHERE prospect_id = ? AND play_name = ?`,
+      ).run(input.prospectId, input.playName);
+      drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "regenerate");
+      return true;
+    })
+    .immediate();
+}
+
+/**
+ * What a draft restates of a cadence's stored offer (text, steps, return) as
+ * one comparable string; judge labels, approval stamps and the close are not
+ * part of it. Null when there is no such cadence.
+ */
+export function cadenceOfferKey(
+  db: Database,
+  input: { prospectId: number; playName: string },
+): string | null {
+  const row = db
+    .query(
+      `SELECT json_array(json_extract(o, '$.offer.offer'), json_extract(o, '$.offer.steps'),
+                         json_extract(o, '$.offer.return')) AS k
+         FROM (SELECT CASE WHEN json_valid(offer_json) THEN offer_json END AS o
+                 FROM cadence_state WHERE prospect_id = ? AND play_name = ?)`,
     )
-    .run(
-      JSON.stringify(input.offer),
-      input.candidates ? JSON.stringify(input.candidates) : null,
-      input.origin ?? null,
-      newText,
-      input.prospectId,
-      input.playName,
-      ...guards.flatMap(([key, value]) => [`$.offer.${key}`, value]),
-    );
-  return r.changes === 1;
+    .get(input.prospectId, input.playName) as { k: string } | null;
+  return row?.k ?? null;
+}
+
+/** `cadenceOfferKey` as it reads while `offer` is the stored offer, built by the same JSON functions. */
+export function cadenceOfferKeyOf(db: Database, offer: Record<string, unknown>): string {
+  const row = db
+    .query(
+      `SELECT json_array(json_extract(o, '$.offer'), json_extract(o, '$.steps'),
+                         json_extract(o, '$.return')) AS k
+         FROM (SELECT json(?) AS o)`,
+    )
+    .get(JSON.stringify(offer)) as { k: string };
+  return row.k;
 }
 
 /**
@@ -915,9 +964,16 @@ export function setCadenceDraft(
      * time (a send, a logged call, a stop and re-enrol): then nothing is
      * stored, so a draft never lands on the step after the one it was for.
      * `stepId` is the plan step it was written for: a settings change can
-     * replace the step at the same index of a saved plan.
+     * replace the step at the same index of a saved plan. `offerKey` is the
+     * offer it restates (`cadenceOfferKeyOf` the value drafted from): an offer
+     * replaced since refuses it.
      */
-    expect?: { currentStep: number; enrolledAt: string; stepId?: string };
+    expect?: {
+      currentStep: number;
+      enrolledAt: string;
+      stepId?: string;
+      offerKey?: string | null;
+    };
   },
 ): boolean {
   const draftedAtIso = new Date().toISOString();
@@ -951,6 +1007,11 @@ export function setCadenceDraft(
           const planned = plan ? (JSON.parse(plan.steps) as CadencePlanStep[]) : null;
           if (planned && planned[now.current_step]?.id !== input.expect.stepId) return false;
         }
+        if (
+          input.expect.offerKey !== undefined &&
+          cadenceOfferKey(db, input) !== input.expect.offerKey
+        )
+          return false;
       }
       // Seed from the preview this write replaces (a draft that predates
       // versioning) before the UPDATE erases it.

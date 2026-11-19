@@ -43,7 +43,7 @@ import {
   offerExclusionsCurrent,
   offerHoldsSend,
   offerProductHash,
-  playMakesOffer,
+  playMakesSequenceOffer,
   researchForOffer,
   type OfferResearch,
   type OfferSkip,
@@ -181,7 +181,8 @@ export function sequenceOfferRecord(input: {
  * Make `offer` the sequence's active offer, on the cadence. Replaces the
  * stored offer whole, so an approval or judge label the old one carried does
  * not survive; with `merge`, patches the stored offer key by key instead (an
- * approval stamp). `expect` guards the write on fields of the offer as
+ * approval stamp). A write that changes what a draft restates (text, steps,
+ * return) drops the stored preview written for the old offer. `expect` guards the write on fields of the offer as
  * stored (offer key → scalar, null: absent), e.g. an approval bound to the
  * offer the founder read. `offerCandidates` absent keeps the stored list.
  * Lands only while the cadence is active and holds no send, checked in the
@@ -489,7 +490,9 @@ export async function deriveSequenceOffer(input: {
       // A preview that could not be dropped is stale by its config key anyway.
     }
   };
-  if (!playMakesOffer(input.playName)) return { status: "none", record, reason: "no-play-offer" };
+  if (!playMakesSequenceOffer(input.playName, input.cfg)) {
+    return { status: "none", record, reason: "no-play-offer" };
+  }
   try {
     const cfg = input.cfg ?? loadConfig();
     if (!cfg.productBrief?.trim()) return { status: "none", record, reason: "no-brief" };
@@ -501,6 +504,7 @@ export async function deriveSequenceOffer(input: {
       dossier: person.dossier,
       playName: input.playName,
       cfg,
+      sequence: true,
       ...(thread.length > 0 ? { thread } : {}),
       ...(input.avoid && input.avoid.length > 0 ? { avoid: input.avoid } : {}),
       ...(input.onCost ? { onCost: input.onCost } : {}),
@@ -710,7 +714,9 @@ export async function ensureCloseOffer(input: {
     const read = sequenceOfferRecord(input);
     if (!read.offer) return { status: "none", reason: "no-offer" };
     const record = { ...read, offer: read.offer };
-    if (!playMakesOffer(input.playName, cfg)) return { status: "none", reason: "no-play-offer" };
+    if (!playMakesSequenceOffer(input.playName, cfg)) {
+      return { status: "none", reason: "no-play-offer" };
+    }
     const thread = sequenceThread(input.prospectId, input.playName);
     const picked = pickCloseOffer(record, cfg, thread);
     if (picked) {
@@ -733,6 +739,7 @@ export async function ensureCloseOffer(input: {
       dossier: person.dossier,
       playName: input.playName,
       cfg,
+      sequence: true,
       avoid: made,
       ...(thread.length > 0 ? { thread } : {}),
       ...(queued ? { research: { queueRowId: queued.id, source: queued.source } } : {}),

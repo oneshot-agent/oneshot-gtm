@@ -77,6 +77,18 @@ describe("draftConfigKey", () => {
     expect(seen.size).toBe(changes.length + 1);
   });
 
+  it("reads messageOpening on email only, and only `problem` changes the key", () => {
+    const linkedin: DraftSurface = { channel: "linkedin", stage: "follow_up" };
+    const intro: DraftSurface = { channel: "email", stage: "first_touch" };
+    const offer = { ...base, messageOpening: "offer" } as Cfg;
+    const problem = { ...base, messageOpening: "problem" } as Cfg;
+    expect(key(offer)).toBe(key(base));
+    expect(key(offer, intro)).toBe(key(base, intro));
+    expect(key(problem)).not.toBe(key(base));
+    expect(key(problem, intro)).not.toBe(key(base, intro));
+    expect(key(problem, linkedin)).toBe(key(base, linkedin));
+  });
+
   it("reads an unset greeting and subject case as Hi and sentence case", () => {
     const unset = { ...base, founderGreeting: undefined, subjectCase: undefined } as Cfg;
     expect(key(unset)).toBe(key(base));
@@ -117,6 +129,27 @@ describe("draftConfigKey", () => {
       key(base, EMAIL_FOLLOW_UP, "multiplier"),
     );
     expect(key(member)).toBe(key(base));
+  });
+
+  it("reads followUpOfferPlays on follow-ups only, and only for a play turned off", () => {
+    const first: DraftSurface = { channel: "email", stage: "first_touch" };
+    const linkedin: DraftSurface = { channel: "linkedin", stage: "follow_up" };
+    const off = { ...base, noOfferPlays: ["example-play"] } as Cfg;
+    const on = { ...off, followUpOfferPlays: ["example-play"] } as Cfg;
+    // First touch: the setting changes nothing, so no approved first email reads stale.
+    expect(key(on, first)).toBe(key(off, first));
+    // Follow-up: keyed as an offer play's, so a preview written offer-free is stale.
+    expect(key(on)).not.toBe(key(off));
+    expect(key(on)).toBe(key(base));
+    expect(key(on, linkedin)).toBe(key(base, linkedin));
+    // Naming a play that still makes offers, or one that never does, changes no key.
+    const unlisted = { ...base, followUpOfferPlays: ["example-play"] } as Cfg;
+    expect(key(unlisted)).toBe(key(base));
+    expect(key(unlisted, first)).toBe(key(base, first));
+    const builtIn = { ...base, followUpOfferPlays: ["community-reply"] } as Cfg;
+    expect(key(builtIn, EMAIL_FOLLOW_UP, "community-reply")).toBe(
+      key(base, EMAIL_FOLLOW_UP, "community-reply"),
+    );
   });
 
   it("changes when approved guidance for the surface changes, and not for another surface", () => {

@@ -19,6 +19,7 @@ import {
   OFFER_CHECKS,
   type LinkedInTemplates,
   type LinkedInWriter,
+  type MessageOpening,
   type OfferAnchor,
   type OfferCheck,
   type OneShotConfig,
@@ -39,6 +40,7 @@ export const SECRET_KEYS = [
   "OPENROUTER_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "LLM_PROXY_API_KEY",
   "CDP_API_KEY_ID",
   "CDP_API_KEY_SECRET",
   "CDP_WALLET_SECRET",
@@ -122,6 +124,11 @@ export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
 }
 
+/** Only the exact string `problem` turns it on; anything else reads as `offer`. */
+export function messageOpeningOf(cfg: { messageOpening?: unknown }): MessageOpening {
+  return cfg.messageOpening === "problem" ? "problem" : "offer";
+}
+
 /** Rewrite rounds after the first offer set when `offerWriter.rounds` is not set. */
 export const DEFAULT_OFFER_WRITER_ROUNDS = 3;
 /** Most rewrite rounds `offerWriter.rounds` may ask for. */
@@ -151,13 +158,8 @@ export function offerWriterOf(cfg: { offerWriter?: unknown }): {
   return { rounds, fallbackModel: raw["fallbackOnWeak"] === true && model ? model : null };
 }
 
-/**
- * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
- * blanks and repeats dropped. A hand-edited lone string counts as one entry;
- * anything else reads as none.
- */
-export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
-  const raw = cfg.noOfferPlays;
+/** A hand-edited play list: each name trimmed, blanks and repeats dropped; a lone string is one entry. */
+function playListOf(raw: unknown): string[] {
   const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
   const out: string[] = [];
   for (const entry of list) {
@@ -168,7 +170,26 @@ export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
   return out;
 }
 
-let noOfferPlaysMemo: { stamp: string; plays: string[] } | null = null;
+/**
+ * The workspace's `noOfferPlays` as plays read it: each play name trimmed,
+ * blanks and repeats dropped. A hand-edited lone string counts as one entry;
+ * anything else reads as none.
+ */
+export function noOfferPlaysOf(cfg: { noOfferPlays?: unknown }): string[] {
+  return playListOf(cfg.noOfferPlays);
+}
+
+/** The workspace's `followUpOfferPlays`, read as `noOfferPlaysOf` reads its list. */
+export function followUpOfferPlaysOf(cfg: { followUpOfferPlays?: unknown }): string[] {
+  return playListOf(cfg.followUpOfferPlays);
+}
+
+interface OfferPlayLists {
+  noOffer: string[];
+  followUpOffer: string[];
+}
+
+let offerPlaysMemo: { stamp: string; lists: OfferPlayLists } | null = null;
 
 /**
  * `noOfferPlays` from the config file as it is now, for callers with no
@@ -177,7 +198,7 @@ let noOfferPlaysMemo: { stamp: string; plays: string[] } | null = null;
  * applies on the next call without a restart and an unchanged file costs one
  * stat.
  */
-export function currentNoOfferPlays(): string[] {
+function currentOfferPlayLists(): OfferPlayLists {
   let stamp: string;
   try {
     // ctime moves on every write, even one that keeps mtime and size, and an
@@ -185,13 +206,22 @@ export function currentNoOfferPlays(): string[] {
     const st = statSync(CONFIG_PATH, { bigint: true });
     stamp = `${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}`;
   } catch {
-    noOfferPlaysMemo = null;
-    return [];
+    offerPlaysMemo = null;
+    return { noOffer: [], followUpOffer: [] };
   }
-  if (noOfferPlaysMemo?.stamp === stamp) return noOfferPlaysMemo.plays;
-  const plays = noOfferPlaysOf(readConfigOrDefault());
-  noOfferPlaysMemo = { stamp, plays };
-  return plays;
+  if (offerPlaysMemo?.stamp === stamp) return offerPlaysMemo.lists;
+  const cfg = readConfigOrDefault();
+  const lists = { noOffer: noOfferPlaysOf(cfg), followUpOffer: followUpOfferPlaysOf(cfg) };
+  offerPlaysMemo = { stamp, lists };
+  return lists;
+}
+
+export function currentNoOfferPlays(): string[] {
+  return currentOfferPlayLists().noOffer;
+}
+
+export function currentFollowUpOfferPlays(): string[] {
+  return currentOfferPlayLists().followUpOffer;
 }
 
 /** The workspace's do-not-contact list as every gate reads it. */
@@ -906,15 +936,51 @@ export function clearGmailTokenScope(identityId: string): void {
   writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
 }
 
-export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
-  switch (provider) {
-    case "openrouter":
-      return process.env.OPENROUTER_API_KEY ?? null;
-    case "openai":
-      return process.env.OPENAI_API_KEY ?? null;
-    case "anthropic":
-      return process.env.ANTHROPIC_API_KEY ?? null;
+/** The secret each LLM provider reads its key from. */
+export const LLM_KEY_ENV = {
+  openrouter: "OPENROUTER_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  proxy: "LLM_PROXY_API_KEY",
+} as const satisfies Record<OneShotConfig["llmProvider"], SecretKey>;
+
+export const LLM_PROVIDERS = Object.keys(LLM_KEY_ENV) as OneShotConfig["llmProvider"][];
+
+/** A proxy origin as the client calls it: trimmed, without a trailing slash or `/v1`. */
+export function llmProxyOrigin(raw: string | undefined): string {
+  let base = (raw ?? "").trim();
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  return base.endsWith("/v1") ? base.slice(0, -3) : base;
+}
+
+/** This machine: the only place plain http keeps the key and prompts off the network. */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * Why the proxy key must not be sent to this origin, or null. Plain http is
+ * allowed only on this machine: anywhere else the key and every prompt would
+ * cross a network in cleartext (use https, or an SSH tunnel to loopback).
+ */
+export function llmProxyOriginProblem(origin: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return "must be a URL such as http://127.0.0.1:8317";
   }
+  if (url.protocol === "https:") return null;
+  if (url.protocol !== "http:") return "must start with http:// or https://";
+  return isLoopbackHost(url.hostname)
+    ? null
+    : "must use https:// unless the proxy is on this machine (or tunnelled to it)";
+}
+
+export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
+  return process.env[LLM_KEY_ENV[provider]] ?? null;
 }
 
 export function oneshotEnvReady(): boolean {

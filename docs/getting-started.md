@@ -12,7 +12,7 @@ A new workspace opens **Onboarding**. Three screens, each saved as you finish it
 
 1. **Your business.** Your name, your site, and one sentence on what you sell and what it does for the buyer. Only the hostname is saved; the site is not scraped.
 2. **Your customer.** Buyer role, business type, the problem, and geography when it matters. This becomes your ICP. A bookkeeping firm might write: owners of independent restaurants in Austin.
-3. **Connect AI.** Pick a provider and paste its key. **Save and test connection** makes one small request to it, which the provider may bill.
+3. **Connect AI.** Pick a provider and paste its key. **Save and test connection** makes one small request to it, which the provider may bill. To use a Claude, Codex or Gemini subscription instead, see [your own LLM proxy](./llm-proxy.md).
 
 **Finish later** returns to Today; **Setup** resumes at the first unfinished step. When the page reads **Ready to plan**, choose **Plan my first motion**. Planning needs no wallet and no mailbox.
 

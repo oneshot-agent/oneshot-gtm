@@ -17,6 +17,7 @@ import {
   getLedger,
   linkedinWriterOf,
   loadConfig,
+  messageOpeningOf,
   offerExclusionsOf,
   productBriefText,
   subjectCaseOf,
@@ -24,7 +25,7 @@ import {
 } from "@oneshot-gtm/core";
 import { createHash } from "node:crypto";
 import { voiceKey } from "./_lib.ts";
-import { OFFER_PROMPT_VERSION, playMakesOffer } from "./_prospect-offer.ts";
+import { OFFER_PROMPT_VERSION, playMakesOffer, playMakesSequenceOffer } from "./_prospect-offer.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
 
@@ -90,7 +91,7 @@ function text(value: unknown): string {
  * LinkedIn copy), the founder's
  * admission, credentials, portfolio, partners and cohort, the product
  * one-liner, brief (with approved code answers) and terms, the offer
- * exclusions, whether the play makes an offer, the member offer for the
+ * exclusions, whether the play (on a follow-up, its sequence) makes an offer, the member offer for the
  * play that quotes it, the signature settings, and on LinkedIn the
  * workspace's writer and templates. Pure apart from the guidance and
  * code-answer reads (pass `ledger: null` to skip both).
@@ -118,7 +119,18 @@ export function draftConfigKey(
     productBriefText(cfg, ledger) ?? "",
     text(cfg.pilotOffer),
     offerExclusionsOf(cfg).join("\n"),
-    playMakesOffer(playName, cfg) ? "offer" : "no-offer",
+    // Spread, so an unset opening leaves every stored key as it was.
+    ...(surface.channel === "email" && messageOpeningOf(cfg) === "problem"
+      ? ["opening:problem"]
+      : []),
+    // First-touch keys never read `followUpOfferPlays`: turning it on stales no intro.
+    (
+      surface.stage === "follow_up"
+        ? playMakesSequenceOffer(playName, cfg)
+        : playMakesOffer(playName, cfg)
+    )
+      ? "offer"
+      : "no-offer",
     // The member-offer play quotes the workspace's member offer verbatim.
     playName === "multiplier" ? text(cfg.memberOffer) : "",
     text(cfg.founderName),

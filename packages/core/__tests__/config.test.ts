@@ -8,9 +8,14 @@ import {
   DEFAULT_LLM_MODEL,
   learningExpireAfterDaysOf,
   llmApiKey,
+  llmProxyOrigin,
+  llmProxyOriginProblem,
+  currentFollowUpOfferPlays,
   currentNoOfferPlays,
+  followUpOfferPlaysOf,
   loadConfig,
   noOfferPlaysOf,
+  messageOpeningOf,
   offerAnchorOf,
   offerChecksOf,
   offerExclusionsOf,
@@ -63,10 +68,18 @@ describe("llmApiKey", () => {
     expect(llmApiKey("anthropic")).toBe("sk-ant-xyz");
   });
 
+  it("returns the proxy key when provider=proxy, never another provider's", () => {
+    process.env.ANTHROPIC_API_KEY = "sk-ant-xyz";
+    expect(llmApiKey("proxy")).toBeNull();
+    process.env.LLM_PROXY_API_KEY = "proxy-xyz";
+    expect(llmApiKey("proxy")).toBe("proxy-xyz");
+  });
+
   it("returns null when the matching env var is unset", () => {
     expect(llmApiKey("openrouter")).toBeNull();
     expect(llmApiKey("openai")).toBeNull();
     expect(llmApiKey("anthropic")).toBeNull();
+    expect(llmApiKey("proxy")).toBeNull();
   });
 });
 
@@ -267,6 +280,16 @@ describe("noOfferPlaysOf", () => {
   });
 });
 
+describe("followUpOfferPlaysOf", () => {
+  it("reads the list as noOfferPlaysOf does", () => {
+    expect(
+      followUpOfferPlaysOf({ followUpOfferPlays: [" repo-interest ", "", "repo-interest", 3] }),
+    ).toEqual(["repo-interest"]);
+    expect(followUpOfferPlaysOf({ followUpOfferPlays: "luma-events" })).toEqual(["luma-events"]);
+    expect(followUpOfferPlaysOf({})).toEqual([]);
+  });
+});
+
 describe("priorityPriorsOf", () => {
   it("keeps known numeric priors per play, clamped to 0-100", () => {
     expect(
@@ -308,6 +331,18 @@ describe("currentNoOfferPlays", () => {
     writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest", "luma-events"] }));
     expect(currentNoOfferPlays()).toEqual(["repo-interest", "luma-events"]);
   });
+
+  it("reads followUpOfferPlays from the same file and stamp", () => {
+    mkdirSync(configDir(), { recursive: true });
+    writeFileSync(configFile(), JSON.stringify({ noOfferPlays: ["repo-interest"] }));
+    expect(currentFollowUpOfferPlays()).toEqual([]);
+    writeFileSync(
+      configFile(),
+      JSON.stringify({ noOfferPlays: ["repo-interest"], followUpOfferPlays: ["repo-interest"] }),
+    );
+    expect(currentNoOfferPlays()).toEqual(["repo-interest"]);
+    expect(currentFollowUpOfferPlays()).toEqual(["repo-interest"]);
+  });
 });
 
 describe("offerAnchorOf", () => {
@@ -322,6 +357,19 @@ describe("offerAnchorOf", () => {
     expect(offerAnchorOf({ offerAnchor: "prefer_product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: "product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: 3 })).toBe("either");
+  });
+});
+
+describe("messageOpeningOf", () => {
+  it("turns the problem opening on for the exact value only", () => {
+    expect(messageOpeningOf({ messageOpening: "problem" })).toBe("problem");
+  });
+
+  it("reads absent, `offer` and anything unrecognized as `offer`", () => {
+    expect(messageOpeningOf({})).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: "offer" })).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: "Problem" })).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: true })).toBe("offer");
   });
 });
 
@@ -341,5 +389,39 @@ describe("volumeGoalPerDayOf", () => {
     expect(volumeGoalPerDayOf({ volumeGoalPerDay: 40 })).toBe(40);
     for (const volumeGoalPerDay of [undefined, null, 0, -5, Number.NaN, Infinity, "40"])
       expect(volumeGoalPerDayOf({ volumeGoalPerDay })).toBeNull();
+  });
+});
+
+describe("llmProxyOriginProblem", () => {
+  it("allows https anywhere and http only on this machine", () => {
+    for (const ok of [
+      "https://proxy.example.com",
+      "http://127.0.0.1:8317",
+      "http://localhost:8317",
+      "http://[::1]:8317",
+      "http://127.8.0.1",
+      "http://proxy.localhost",
+    ]) {
+      expect(llmProxyOriginProblem(ok), ok).toBeNull();
+    }
+    for (const bad of [
+      "http://proxy.example.com:8317",
+      "http://8.8.8.8",
+      "http://192.168.1.20:8317",
+      "http://100.101.102.103:8317",
+      "http://box.tail1234.ts.net:8317",
+      "http://localhost.example.com",
+    ]) {
+      expect(llmProxyOriginProblem(bad), bad).toMatch(/https/);
+    }
+    expect(llmProxyOriginProblem("ftp://x")).toMatch(/http/);
+    expect(llmProxyOriginProblem("nope")).toMatch(/URL/);
+  });
+
+  it("strips trailing slashes and /v1", () => {
+    expect(llmProxyOrigin(" http://127.0.0.1:8317/v1/ ")).toBe("http://127.0.0.1:8317");
+    expect(llmProxyOrigin(`http://127.0.0.1:8317${"/".repeat(5000)}`)).toBe(
+      "http://127.0.0.1:8317",
+    );
   });
 });

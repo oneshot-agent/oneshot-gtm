@@ -36,6 +36,7 @@ import {
   configFounder,
   configKeys,
   configLlm,
+  type ConfigLlmOptions,
   configSlackWebhook,
   configSpendCeiling,
   configLinkedInInvites,
@@ -361,7 +362,16 @@ members
   .action(runOrFail((host: string) => commandMembersDisallowHost(host)));
 
 const config = program.command("config").description("Configure providers and profile");
-config.command("llm").description("Pick LLM provider and model").action(runOrFail(configLlm));
+config
+  .command("llm")
+  .description("Pick the LLM provider and model, a proxy's address, and an optional fallback")
+  .option("--provider <name>", "openrouter, openai, anthropic or proxy")
+  .option("--model <id>", "the model id on that provider")
+  .option("--base-url <url>", "the proxy's address, e.g. http://127.0.0.1:8317")
+  .option("--fallback-provider <name>", "the provider used when the main one is down")
+  .option("--fallback-model <id>", "the model id on the fallback provider")
+  .option("--no-fallback", "remove the fallback")
+  .action(runOrFail((opts: ConfigLlmOptions) => configLlm(opts)));
 config
   .command("founder")
   .description("Set founder name, email, product one-liner")

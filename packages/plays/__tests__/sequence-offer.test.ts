@@ -11,6 +11,8 @@ import { Ledger } from "../../core/src/ledger.ts";
 // founder's terms alone. Real ledger, stubbed models and send.
 
 let ledger: Ledger;
+/** A LinkedIn conversation exists: the connection request was accepted. */
+let linkedInConnected = false;
 const sends: SendEmailInput[] = [];
 const llm = {
   /** User messages, by system prompt. */
@@ -21,6 +23,10 @@ const llm = {
   judge: "relevant" as "relevant" | "weak" | "irrelevant",
   /** The follow-up writer ignores its OFFER (and its repair turn does too). */
   dropOffer: false,
+  /** Runs once while a follow-up is being written, before its reply. */
+  duringFollowUp: null as (() => void) | null,
+  /** A line the follow-up writer puts before the offer. */
+  lead: null as string | null,
 };
 
 const cfg: Record<string, unknown> = {
@@ -41,6 +47,11 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     getCachedNewsfeed: () => null,
     recentTouchElsewhere: () => null,
+    currentWorkspaceName: () => "alpha",
+    linkedInConversationFor: () =>
+      linkedInConnected
+        ? { conversationId: "conv-1", accountId: "acct-1", workspace: "alpha" }
+        : null,
     sendEmail: async (input: SendEmailInput) => {
       sends.push(input);
       const receiptId = ledger.recordReceipt({
@@ -89,12 +100,15 @@ vi.mock("@oneshot-gtm/intel", async () => {
       if (name === "offer-angles") return reply(JSON.stringify({ angles: [] }));
       if (name === "angle-select") return reply(JSON.stringify({ index: 1 }));
       const offer = offerLine(input.messages.find((m) => m.role === "user")?.content ?? "");
+      const during = llm.duringFollowUp;
+      llm.duringFollowUp = null;
+      during?.();
       return reply(
         JSON.stringify({
           subject: "leeds crews",
           body:
             offer && !llm.dropOffer
-              ? `I can ${offer}, start to finish. You get back the same-day jobs the depot turns away today, counted per booked job. Worth trying on one depot?\n\nFounder`
+              ? `${llm.lead ? `${llm.lead}\n\n` : ""}I can ${offer}, start to finish. You get back the same-day jobs the depot turns away today, counted per booked job. Worth trying on one depot?\n\nFounder`
               : "If it's not the right time, a one-word no helps too.\n\nFounder",
         }),
       );
@@ -103,6 +117,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 });
 
 const {
+  PREVIEW_STEP_MOVED,
   buildFollowUpEmail,
   enrollInCadence,
   previewCadenceStep,
@@ -117,6 +132,8 @@ const {
   sequenceOfferRecord,
   writeSequenceOffer,
 } = await import("../src/_sequence-offer.ts");
+const { OFFER_PROMPT_VERSION, offerBlock, offerProductHash, offerSetForDraft } =
+  await import("../src/_prospect-offer.ts");
 
 const PLAY = "seq-offer-play";
 const step = (label: string) => ({
@@ -222,7 +239,14 @@ beforeEach(() => {
   llm.offers = JSON.stringify({ offers: [good, second] });
   llm.judge = "relevant";
   llm.dropOffer = false;
+  llm.duringFollowUp = null;
+  llm.lead = null;
+  delete cfg["messageOpening"];
   delete cfg["offerExclusions"];
+  delete cfg["noOfferPlays"];
+  delete cfg["followUpOfferPlays"];
+  delete cfg["linkedin"];
+  linkedInConnected = false;
 });
 afterEach(() => ledger.close());
 
@@ -375,6 +399,57 @@ describe("a sequence that started before prospect offers", () => {
   });
 });
 
+describe("a preview and the offer it restates", () => {
+  const at = (id: number) => ({ prospectId: id, playName: PLAY });
+  const founders = { ...second, editedBy: "founder" };
+  const replaceOffer = (id: number): boolean =>
+    writeSequenceOffer({ record: sequenceOfferRecord(at(id)), offer: founders });
+
+  it("is gone once the offer is replaced: Send has nothing to ship, and the next preview restates the new one", async () => {
+    const { id } = preOfferSequence();
+    expect((await preview(id)).body.startsWith(`I can ${good.offer}`)).toBe(true);
+    expect(replaceOffer(id)).toBe(true);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    await expect(sendCadenceStep(at(id))).rejects.toThrow(/no persisted preview/);
+    expect(sends).toHaveLength(0);
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
+
+  it("is kept when the founder approves the offer it restates", async () => {
+    const { id } = preOfferSequence();
+    const first = await preview(id);
+    const record = sequenceOfferRecord(at(id));
+    expect(writeSequenceOffer({ record, offer: { weakApprovedAt: "now" }, merge: true })).toBe(
+      true,
+    );
+    expect(ledger.getCadenceDraft(at(id))?.body).toBe(first.body);
+  });
+
+  it("is not stored when the offer is replaced while it is being written", async () => {
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer(at(id));
+    let replaced = false;
+    llm.duringFollowUp = () => {
+      replaced = replaceOffer(id);
+    };
+    await expect(previewCadenceStep(at(id))).rejects.toThrow(PREVIEW_STEP_MOVED);
+    expect(replaced).toBe(true);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
+
+  it("is not stored when the offer is replaced after it was read for the draft and before the draft starts", async () => {
+    const { id } = preOfferSequence();
+    await deriveSequenceOffer(at(id));
+    // Runs up to the offer read, then yields: the replacement lands in between.
+    const drafting = previewCadenceStep(at(id));
+    expect(replaceOffer(id)).toBe(true);
+    await expect(drafting).rejects.toThrow(PREVIEW_STEP_MOVED);
+    expect(ledger.getCadenceDraft(at(id))).toBeNull();
+    expect((await preview(id)).body.startsWith(`I can ${second.offer}`)).toBe(true);
+  });
+});
+
 describe("a sequence that can't get an offer", () => {
   it("when the judge passes no offer in any round, is held no-offer with the skip, never a weak offer", async () => {
     for (const label of ["irrelevant", "weak"] as const) {
@@ -403,6 +478,161 @@ describe("a sequence that can't get an offer", () => {
     } finally {
       cfg.productBrief = brief;
     }
+  });
+});
+
+// A play the workspace turned off (`noOfferPlays`) whose follow-ups still
+// make an offer (`followUpOfferPlays`): the first touch stays offer-free, the
+// sequence behaves as an offer play's.
+describe("a play whose follow-ups alone make an offer", () => {
+  const rowTarget = {
+    name: "Dana Lee",
+    company: "Northside Plumbing",
+    signal: "opened a second depot in Leeds",
+  };
+
+  it("without the setting, writes no offer and drafts the follow-up without one", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    const { id } = preOfferSequence();
+    const out = await preview(id);
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+    expect(llm.inputs.get("seq-followup")![0]).not.toContain("OFFER (");
+    expect(out.flags).toEqual([]);
+    expect(cadenceOffer(id)).toBeNull();
+    const run = await runCadenceStepForProspect({ prospectId: id, playName: PLAY, dryRun: true });
+    expect(run.note ?? "").not.toContain("held:");
+  });
+
+  it("writes the sequence's offer at the first follow-up and restates it, the first touch offer-free", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    cfg["followUpOfferPlays"] = [PLAY];
+    // The first touch: no offer looked up or written, no OFFER block.
+    expect(await offerSetForDraft({ target: rowTarget, playName: PLAY })).toBeNull();
+    expect(offerBlock(good, cfg as never, PLAY)).toBeNull();
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+
+    const { id } = preOfferSequence();
+    const out = await preview(id);
+    expect(llm.inputs.get("prospect-offer")).toHaveLength(1);
+    expect(cadenceOffer(id)).toMatchObject({ offer: { offer: good.offer }, origin: "derived" });
+    expect(llm.inputs.get("seq-followup")![0]).toContain(`: ${good.offer}`);
+    expect(out.body.startsWith(`I can ${good.offer}`)).toBe(true);
+    expect(out.flags).toEqual([]);
+
+    // The next follow-up restates the same offer, writing no other.
+    await sendCadenceStep({ prospectId: id, playName: PLAY });
+    llm.offers = JSON.stringify({ offers: [second] });
+    await preview(id);
+    expect(llm.inputs.get("prospect-offer")).toHaveLength(1);
+    expect(llm.inputs.get("seq-followup")!.at(-1)).toContain(`: ${good.offer}`);
+  });
+
+  it("holds a follow-up no offer can be written for, as an offer play's", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    cfg["followUpOfferPlays"] = [PLAY];
+    const { id } = preOfferSequence();
+    const run = await runCadenceStepForProspect({ prospectId: id, playName: PLAY, dryRun: true });
+    expect(run).toMatchObject({
+      action: "skipped",
+      note: "held: no-offer — preview it on /cadences",
+    });
+    llm.offers = JSON.stringify({ skip: true, why: "nothing to go on" });
+    expect((await preview(id)).flags).toEqual(["no-offer"]);
+  });
+});
+
+// A LinkedIn-first sequence: the connection request was the first touch.
+describe("a LinkedIn sequence of a play whose follow-ups alone make an offer", () => {
+  function linkedInSequence(opts: { offer?: Record<string, unknown> } = {}): number {
+    const email = `dana${++n}@northside.example`;
+    const id = ledger.upsertProspect({
+      name: "Dana Lee",
+      email,
+      company: "Northside Plumbing",
+      linkedin_url: `https://www.linkedin.com/in/dana-${n}`,
+    });
+    const rowId = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: {
+        name: "Dana Lee",
+        email,
+        company: "Northside Plumbing",
+        signal: "opened a second depot in Leeds",
+      },
+      dedupeKey: `k-${email}`,
+      source: "find:test",
+    })!;
+    ledger.setQueueStatus({ id: rowId, status: "sent" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 0,
+      channel: "linkedin",
+      status: "sent",
+      metadata: { note: "saw the Leeds depot", body: "saw the Leeds depot" },
+    });
+    enrollInCadence({
+      prospectId: id,
+      playName: PLAY,
+      channel: "linkedin",
+      queueId: rowId,
+      ...(opts.offer ? { offer: opts.offer as never, offerOrigin: "derived" as const } : {}),
+    });
+    linkedInConnected = true;
+    cfg["linkedin"] = { writer: "model" };
+    return id;
+  }
+  /** Every model input that was handed an OFFER line. */
+  const offered = () =>
+    [...llm.inputs.entries()]
+      .filter(([name]) => !name.startsWith("prospect-offer") && name !== "offer-angles")
+      .flatMap(([, inputs]) => inputs)
+      .filter((input) => input.includes("OFFER ("));
+
+  it("writes the sequence's offer at the first message and the message makes it", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    cfg["followUpOfferPlays"] = [PLAY];
+    const id = linkedInSequence();
+    const out = await previewCadenceStep({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({ subject: "LinkedIn message" });
+    expect(llm.inputs.get("prospect-offer")).toHaveLength(1);
+    expect(cadenceOffer(id)).toMatchObject({ offer: { offer: good.offer }, origin: "derived" });
+    expect(offered().at(-1)).toContain(`: ${good.offer}`);
+  });
+
+  it("drafts the message without one when none can be written, never holding it", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    cfg["followUpOfferPlays"] = [PLAY];
+    llm.offers = JSON.stringify({ skip: true, why: "nothing to go on" });
+    const id = linkedInSequence();
+    const out = await previewCadenceStep({ prospectId: id, playName: PLAY });
+    expect(out).toMatchObject({ subject: "LinkedIn message" });
+    expect("flags" in out && out.flags).not.toContain("no-offer");
+    expect(offered()).toEqual([]);
+  });
+
+  it("writes none without the setting, nor for an offer play enrolled without one", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    await previewCadenceStep({ prospectId: linkedInSequence(), playName: PLAY });
+    delete cfg["noOfferPlays"];
+    await previewCadenceStep({ prospectId: linkedInSequence(), playName: PLAY });
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+    expect(offered()).toEqual([]);
+  });
+
+  it("keeps an offer the sequence already has", async () => {
+    cfg["noOfferPlays"] = [PLAY];
+    cfg["followUpOfferPlays"] = [PLAY];
+    const id = linkedInSequence({
+      offer: {
+        ...second,
+        version: OFFER_PROMPT_VERSION,
+        productHash: offerProductHash(cfg as never),
+      },
+    });
+    await previewCadenceStep({ prospectId: id, playName: PLAY });
+    expect(llm.inputs.get("prospect-offer")).toBeUndefined();
+    expect(offered().at(-1)).toContain(`: ${second.offer}`);
   });
 });
 
@@ -835,5 +1065,27 @@ describe("the close offer", () => {
     expect(cadenceOffer(id)).not.toHaveProperty("close");
     expect(write(good.offer)).toBe(true);
     expect(cadenceOffer(id)!["close"]).toMatchObject({ offer: second.offer });
+  });
+});
+
+describe("messageOpening on an email follow-up", () => {
+  const lead = "I'd bet same-day jobs get turned away at a depot with no crew free.";
+
+  it("unset: no OPENING line, and a problem line before the offer is flagged", async () => {
+    const { id } = preOfferSequence();
+    llm.lead = lead;
+    const out = await preview(id);
+    expect(llm.inputs.get("seq-followup")![0]).not.toContain("OPENING:");
+    expect(out.flags).toContain("opens-without-offer");
+  });
+
+  it("problem: the input carries OPENING: problem, and one problem line before the offer passes", async () => {
+    cfg["messageOpening"] = "problem";
+    const { id } = preOfferSequence();
+    llm.lead = lead;
+    const out = await preview(id);
+    expect(llm.inputs.get("seq-followup")![0]).toContain("\nOPENING: problem\n");
+    expect(out.body.startsWith(lead)).toBe(true);
+    expect(out.flags).toEqual([]);
   });
 });

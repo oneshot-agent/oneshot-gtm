@@ -132,6 +132,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       getCadenceDraft: (input: { prospectId: number; playName: string }) =>
         persistedDrafts.get(k(input.prospectId, input.playName)) ?? null,
+      cadenceOfferKey: () => "[null,null,null]",
+      cadenceOfferKeyOf: () => "[null,null,null]",
       clearCadenceDraft: (input: { prospectId: number; playName: string }) => {
         persistedDrafts.delete(k(input.prospectId, input.playName));
       },

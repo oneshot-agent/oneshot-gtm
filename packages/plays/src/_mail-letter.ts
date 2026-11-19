@@ -3,7 +3,7 @@ import { complete } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, sequenceOffer } from "./_cadence.ts";
 import { hardBanFlags } from "./_lib.ts";
 import { enrolledMemberOffer } from "./_member-offer.ts";
-import { playMakesOffer } from "./_prospect-offer.ts";
+import { playMakesSequenceOffer } from "./_prospect-offer.ts";
 
 export async function generateMailLetter(prospectId: number, playName: string): Promise<string> {
   const ledger = getLedger();
@@ -23,7 +23,7 @@ export async function generateMailLetter(prospectId: number, playName: string): 
   // The letter makes the same offer as every other touch of the sequence.
   const offer = memberOffer
     ? { offer: memberOffer, steps: "" }
-    : playMakesOffer(playName)
+    : playMakesSequenceOffer(playName, cfg)
       ? sequenceOffer(prospect, playName)
       : null;
   const offerTerms = memberOffer || cfg.pilotOffer?.trim() || "";
