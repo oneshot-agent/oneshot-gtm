@@ -10,6 +10,7 @@ import {
   llmApiKey,
   llmProxyOrigin,
   llmProxyOriginProblem,
+  llmReasoningEffortOf,
   currentFollowUpOfferPlays,
   currentNoOfferPlays,
   followUpOfferPlaysOf,
@@ -357,6 +358,18 @@ describe("offerAnchorOf", () => {
     expect(offerAnchorOf({ offerAnchor: "prefer_product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: "product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: 3 })).toBe("either");
+  });
+});
+
+describe("llmReasoningEffortOf", () => {
+  it("reads the four efforts, and anything else as unset", () => {
+    for (const effort of ["low", "medium", "high", "xhigh"]) {
+      expect(llmReasoningEffortOf({ llmReasoningEffort: effort })).toBe(effort);
+    }
+    expect(llmReasoningEffortOf({})).toBeUndefined();
+    expect(llmReasoningEffortOf({ llmReasoningEffort: "Medium" })).toBeUndefined();
+    expect(llmReasoningEffortOf({ llmReasoningEffort: "minimal" })).toBeUndefined();
+    expect(llmReasoningEffortOf({ llmReasoningEffort: 2 })).toBeUndefined();
   });
 });
 

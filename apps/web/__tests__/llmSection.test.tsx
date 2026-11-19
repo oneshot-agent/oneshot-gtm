@@ -72,6 +72,18 @@ describe("LlmSection", () => {
     expect(fallback).toContain('value="proxy"');
   });
 
+  it("shows the reasoning effort for OpenRouter and the proxy, with the saved value selected", () => {
+    const html = render(cfg({ llmReasoningEffort: "medium" }));
+    expect(html).toContain("Reasoning effort");
+    expect(html).toContain('<option value="medium" selected="">medium</option>');
+    expect(render(cfg({ llmProvider: "openai", llmModel: "gpt-4o" }))).not.toContain(
+      "Reasoning effort",
+    );
+    expect(
+      render(cfg({ llmProvider: "proxy", llmModel: "m", llmBaseUrl: "http://127.0.0.1:8317" })),
+    ).toContain("Reasoning effort");
+  });
+
   it("shows the fallback model and the endpoint when the fallback is the proxy", () => {
     const html = render(
       cfg({
@@ -188,6 +200,22 @@ describe("LLM section request", () => {
     expect(fallbackAfterPicking("proxy", fallback)).toEqual({ llmFallback: null });
     expect(fallbackAfterPicking("openai", fallback)).toEqual({});
     expect(fallbackAfterPicking("proxy", undefined)).toEqual({});
+  });
+
+  it("sends the reasoning effort on OpenRouter or the proxy, blank as null, and drops it elsewhere", () => {
+    expect(llmSectionValues(cfg({ llmReasoningEffort: "high" })).reasoningEffort).toBe("high");
+    expect(base.reasoningEffort).toBe("");
+    const medium = { ...base, reasoningEffort: "medium" as const };
+    expect(llmSectionRequest(medium, { reasoningEffort: "medium" })).toEqual({
+      llmReasoningEffort: "medium",
+    });
+    expect(llmSectionRequest(base, { reasoningEffort: "" })).toEqual({ llmReasoningEffort: null });
+    const viaProxy = { ...medium, llmProvider: "proxy" as const };
+    expect(llmSectionRequest(viaProxy, { reasoningEffort: "medium" })).toEqual({
+      llmReasoningEffort: "medium",
+    });
+    const hosted = { ...medium, llmProvider: "openai" as const };
+    expect(llmSectionRequest(hosted, { reasoningEffort: "medium" })).toEqual({});
   });
 
   it("sends llmFallback whole when either of its fields changed", () => {

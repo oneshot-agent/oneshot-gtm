@@ -549,6 +549,7 @@ export interface PlayDescriptor {
 }
 
 export type LlmProvider = "openrouter" | "openai" | "anthropic" | "proxy";
+export type LlmReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
@@ -737,6 +738,8 @@ export interface SetupRequest {
   llmBaseUrl?: string | null;
   /** Provider and model for calls the primary can't serve. Null clears it. */
   llmFallback?: { provider: LlmProvider; model: string } | null;
+  /** Reasoning effort on OpenRouter or the proxy. `undefined` = leave unchanged; `null` = clear (default); anything else is a 400. */
+  llmReasoningEffort?: LlmReasoningEffort | null;
   telemetryEnabled?: boolean;
   walletMode?: WalletMode;
   /**

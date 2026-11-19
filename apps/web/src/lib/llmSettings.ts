@@ -1,8 +1,14 @@
-import type { LlmProvider, SetupRequest } from "@oneshot-gtm/shared-types";
+import type { LlmProvider, LlmReasoningEffort, SetupRequest } from "@oneshot-gtm/shared-types";
 import type { SetupCfg } from "../components/setup/types.ts";
 import { validateRequired } from "./setupValidation.ts";
 
 export const LLM_PROVIDERS: readonly LlmProvider[] = ["openrouter", "openai", "anthropic", "proxy"];
+export const LLM_REASONING_EFFORTS: readonly LlmReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
 
 /** The LLM section's draft, flattened to primitives. A blank fallback provider is "None". */
 export type LlmSectionValues = {
@@ -11,12 +17,17 @@ export type LlmSectionValues = {
   llmBaseUrl: string;
   fallbackProvider: LlmProvider | "";
   fallbackModel: string;
+  /** OpenRouter reasoning effort; blank is the default. */
+  reasoningEffort: LlmReasoningEffort | "";
   /** LLM_PROXY_API_KEY, typed here so Load models can use it before it is saved. Never echoed. */
   proxyKey: string;
 };
 
 export function llmSectionValues(
-  cfg: Pick<SetupCfg, "llmProvider" | "llmModel" | "llmBaseUrl" | "llmFallback">,
+  cfg: Pick<
+    SetupCfg,
+    "llmProvider" | "llmModel" | "llmBaseUrl" | "llmFallback" | "llmReasoningEffort"
+  >,
 ): LlmSectionValues {
   return {
     llmProvider: cfg.llmProvider,
@@ -24,6 +35,7 @@ export function llmSectionValues(
     llmBaseUrl: cfg.llmBaseUrl ?? "",
     fallbackProvider: cfg.llmFallback?.provider ?? "",
     fallbackModel: cfg.llmFallback?.model ?? "",
+    reasoningEffort: cfg.llmReasoningEffort ?? "",
     proxyKey: "",
   };
 }
@@ -33,9 +45,15 @@ export function usesProxy(v: Pick<LlmSectionValues, "llmProvider" | "fallbackPro
   return v.llmProvider === "proxy" || v.fallbackProvider === "proxy";
 }
 
+/** Whether the main provider reads `llmReasoningEffort`. */
+export function takesReasoningEffort(v: Pick<LlmSectionValues, "llmProvider">): boolean {
+  return v.llmProvider === "openrouter" || v.llmProvider === "proxy";
+}
+
 /**
  * `llmFallback` goes out whole whenever either of its fields changed, read from the latest values.
- * An endpoint edit is left out once neither route uses the proxy: the field is hidden then.
+ * An endpoint edit is left out once neither route uses the proxy, and an effort edit once the
+ * provider does not read it: those fields are hidden then.
  */
 export function llmSectionRequest(
   values: LlmSectionValues,
@@ -46,6 +64,8 @@ export function llmSectionRequest(
   if (sent.llmModel !== undefined) req.llmModel = sent.llmModel.trim();
   if (sent.llmBaseUrl !== undefined && usesProxy(values))
     req.llmBaseUrl = sent.llmBaseUrl.trim() || null;
+  if (sent.reasoningEffort !== undefined && takesReasoningEffort(values))
+    req.llmReasoningEffort = sent.reasoningEffort || null;
   if (sent.fallbackProvider !== undefined || sent.fallbackModel !== undefined) {
     req.llmFallback = values.fallbackProvider
       ? { provider: values.fallbackProvider, model: values.fallbackModel.trim() }

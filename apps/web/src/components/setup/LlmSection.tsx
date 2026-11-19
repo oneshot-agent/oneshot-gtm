@@ -1,11 +1,13 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
-import type { LlmProvider } from "@oneshot-gtm/shared-types";
+import type { LlmProvider, LlmReasoningEffort } from "@oneshot-gtm/shared-types";
 import { Field, Input, Select } from "../primitives/Field.tsx";
 import {
   LLM_PROVIDERS,
+  LLM_REASONING_EFFORTS,
   llmSectionErrors,
   llmSectionRequest,
   llmSectionValues,
+  takesReasoningEffort,
   usesProxy,
 } from "../../lib/llmSettings.ts";
 import { KeyStatusLine } from "./KeyStatusLine.tsx";
@@ -102,6 +104,24 @@ export function LlmSection({ cfg, sources, onDirtyChange }: SectionProps) {
               placeholder={LLM_DEFAULTS[v.llmProvider]}
               spellCheck={false}
             />
+          </Field>
+        )}
+        {takesReasoningEffort(v) && (
+          <Field
+            label="Reasoning effort"
+            hint="Default sends no effort setting, except for models that need one. Higher reasons longer and costs more."
+          >
+            <Select
+              value={v.reasoningEffort}
+              onChange={(e) => s.set("reasoningEffort", e.target.value as LlmReasoningEffort | "")}
+            >
+              <option value="">Default</option>
+              {LLM_REASONING_EFFORTS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </Select>
           </Field>
         )}
         {usesProxy(v) && (

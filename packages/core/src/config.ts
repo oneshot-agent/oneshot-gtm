@@ -16,9 +16,11 @@ import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
 import {
   LINKEDIN_TEMPLATE_SLOTS,
+  LLM_REASONING_EFFORTS,
   OFFER_CHECKS,
   type LinkedInTemplates,
   type LinkedInWriter,
+  type LlmReasoningEffort,
   type MessageOpening,
   type OfferAnchor,
   type OfferCheck,
@@ -127,6 +129,13 @@ export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
 /** Only the exact string `problem` turns it on; anything else reads as `offer`. */
 export function messageOpeningOf(cfg: { messageOpening?: unknown }): MessageOpening {
   return cfg.messageOpening === "problem" ? "problem" : "offer";
+}
+
+/** One of `LLM_REASONING_EFFORTS`; anything else is undefined, the default behaviour. */
+export function llmReasoningEffortOf(cfg: {
+  llmReasoningEffort?: unknown;
+}): LlmReasoningEffort | undefined {
+  return LLM_REASONING_EFFORTS.find((e) => e === cfg.llmReasoningEffort);
 }
 
 /** Rewrite rounds after the first offer set when `offerWriter.rounds` is not set. */

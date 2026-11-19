@@ -22,6 +22,10 @@ The key is saved as `LLM_PROXY_API_KEY` in the workspace's `.env`.
 
 Under **If this provider is down, use…**, pick a second provider and a model, for example OpenRouter with its key in Credentials. When the proxy is unreachable, times out, is rate-limited or refuses the key, the call goes to the fallback, and the fallback serves alone for about 10 minutes (longer if the proxy sent `Retry-After`, up to two hours). A bad request or an unknown model does not fail over: it would fail the same way there.
 
+## Reasoning effort
+
+With the proxy or OpenRouter as the provider, **Reasoning effort** (`llmReasoningEffort`: `low`, `medium`, `high` or `xhigh`; or `POST /api/setup`, `null` clears it) sets how hard the model reasons. Through the proxy, chat models get `reasoning_effort` and Claude Sonnet 5.5 gets it as `output_config.effort` in place of `low`; other Claude models are unchanged. If the proxy answers 400 about reasoning or effort, the call goes again as it would with the setting unset. On OpenRouter every model reasons at that effort, including models that could have it off. Each call gets extra tokens on top of its answer budget as room to reason: 1,536 at low, 4,096 at medium, 8,192 at high, 16,384 at xhigh. Unused tokens are not billed. This is headroom, not a reserve: on models where OpenRouter turns the effort into a share of the whole token limit, `high` and `xhigh` can still use part of a large answer budget, and an answer cut off that way is reported as truncated, naming the reasoning tokens. On OpenRouter, a model that refuses the effort is asked at `low`, then with no effort. Unset: requests are as before (on OpenRouter, reasoning off where the model allows it, else `low`). The fallback provider and the Anthropic API ignore it.
+
 ## What still needs OpenRouter
 
 The decisions engine (`engine: "decisions"` on the reply classifier or the offer judge) uses OpenRouter's decisions API and `OPENROUTER_API_KEY`, whatever the provider is.
