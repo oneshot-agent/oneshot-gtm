@@ -32,7 +32,7 @@ Proxy calls report no cost.
 
 ## Running it on another machine
 
-Keep the proxy off the public internet. Reach it over an SSH tunnel (`ssh -N -L 8317:127.0.0.1:8317 <host>`, then use `http://127.0.0.1:8317`) or a private network. A plain `http://` address is accepted only on this machine or a private network (10.x, 172.16–31.x, 192.168.x, 100.64–127.x, `.local`, `.internal`, `.ts.net`); anywhere else use `https://`. The key is never sent through a redirect.
+Keep the proxy off the public internet. Reach it over an SSH tunnel (`ssh -N -L 8317:127.0.0.1:8317 <host>`, then use `http://127.0.0.1:8317`) or serve it over https. A plain `http://` address is accepted only on this machine (`localhost`, `127.x`, `::1`); anything else needs `https://` or a tunnel to a local port. The key is never sent through a redirect.
 
 ## Terms
 

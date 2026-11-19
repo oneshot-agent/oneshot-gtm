@@ -947,27 +947,17 @@ export function llmProxyOrigin(raw: string | undefined): string {
   return base.endsWith("/v1") ? base.slice(0, -3) : base;
 }
 
-/** Loopback, a private range, or a private-network name: plain http stays off the internet. */
-function isPrivateHost(hostname: string): boolean {
+/** This machine: the only place plain http keeps the key and prompts off the network. */
+function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-  if (host === "localhost" || host === "::1" || /^f[cd][0-9a-f]{2}:/.test(host)) return true;
-  if ([".localhost", ".local", ".internal", ".ts.net"].some((s) => host.endsWith(s))) return true;
-  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
-  if (!ip) return false;
-  const [a, b] = [Number(ip[1]), Number(ip[2])];
-  return (
-    a === 127 ||
-    a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 100 && b >= 64 && b <= 127)
-  );
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 /**
  * Why the proxy key must not be sent to this origin, or null. Plain http is
- * allowed only on this machine or a private network: anywhere else the key
- * and every prompt would cross the internet in cleartext.
+ * allowed only on this machine: anywhere else the key and every prompt would
+ * cross a network in cleartext (use https, or an SSH tunnel to loopback).
  */
 export function llmProxyOriginProblem(origin: string): string | null {
   let url: URL;
@@ -978,9 +968,9 @@ export function llmProxyOriginProblem(origin: string): string | null {
   }
   if (url.protocol === "https:") return null;
   if (url.protocol !== "http:") return "must start with http:// or https://";
-  return isPrivateHost(url.hostname)
+  return isLoopbackHost(url.hostname)
     ? null
-    : "must use https:// unless the proxy is on this machine or a private network";
+    : "must use https:// unless the proxy is on this machine (or tunnelled to it)";
 }
 
 export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {

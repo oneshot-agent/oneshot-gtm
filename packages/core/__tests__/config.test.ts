@@ -379,22 +379,25 @@ describe("volumeGoalPerDayOf", () => {
 });
 
 describe("llmProxyOriginProblem", () => {
-  it("allows https anywhere and http only on this machine or a private network", () => {
+  it("allows https anywhere and http only on this machine", () => {
     for (const ok of [
       "https://proxy.example.com",
       "http://127.0.0.1:8317",
       "http://localhost:8317",
       "http://[::1]:8317",
-      "http://10.0.0.5:8317",
-      "http://172.20.1.1",
-      "http://192.168.1.20:8317",
-      "http://100.101.102.103:8317",
-      "http://box.tail1234.ts.net:8317",
-      "http://proxy.internal",
+      "http://127.8.0.1",
+      "http://proxy.localhost",
     ]) {
       expect(llmProxyOriginProblem(ok), ok).toBeNull();
     }
-    for (const bad of ["http://proxy.example.com:8317", "http://8.8.8.8", "http://172.32.0.1"]) {
+    for (const bad of [
+      "http://proxy.example.com:8317",
+      "http://8.8.8.8",
+      "http://192.168.1.20:8317",
+      "http://100.101.102.103:8317",
+      "http://box.tail1234.ts.net:8317",
+      "http://localhost.example.com",
+    ]) {
       expect(llmProxyOriginProblem(bad), bad).toMatch(/https/);
     }
     expect(llmProxyOriginProblem("ftp://x")).toMatch(/http/);

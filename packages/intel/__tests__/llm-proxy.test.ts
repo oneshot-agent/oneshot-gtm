@@ -117,7 +117,7 @@ describe("proxy provider", () => {
     expect(() => proxyBaseUrl("  ")).toThrow(/llmBaseUrl/);
     expect(() => proxyBaseUrl("http://proxy.example.com:8317")).toThrow(/https/);
     expect(proxyBaseUrl("https://proxy.example.com")).toBe("https://proxy.example.com");
-    expect(proxyBaseUrl("http://192.168.1.20:8317")).toBe("http://192.168.1.20:8317");
+    expect(() => proxyBaseUrl("http://192.168.1.20:8317")).toThrow(/https/);
     expect(proxyShape("claude-opus-5-5")).toBe("anthropic");
     expect(proxyShape("gemini-3.8-flash")).toBe("openai");
   });
