@@ -96,7 +96,7 @@ describe("proxy provider", () => {
     expect(sent.headers["x-api-key"]).toBe("proxy-key");
     expect(sent.body["temperature"]).toBeUndefined();
     expect(sent.body["output_config"]).toEqual({ effort: "low" });
-    expect(sent.body["max_tokens"]).toBe(100 + 1536);
+    expect(sent.body["max_tokens"]).toBe(100 + 8192);
     expect(out).toMatchObject({ content: "ok", provider: "proxy", model: "claude-sonnet-5-5" });
   });
 

@@ -517,27 +517,25 @@ function dispatch(
 }
 
 /**
- * Extra tokens for mandatory reasoning, preserving maxTokens as the answer
- * budget. Gemini-3.8-flash at medium effort used 481 reasoning tokens for an
- * approximately 200-token answer. Leave headroom: unused tokens are not billed.
+ * Reasoning headroom per effort on top of maxTokens: Gemini 4 Neon reasons
+ * 2,000 to 5,000+ tokens before a 500-token draft. Unused tokens are not billed.
  */
-export const MANDATORY_REASONING_ALLOWANCE_TOKENS = 1536;
+export const REASONING_ALLOWANCE_TOKENS: Readonly<Record<LlmReasoningEffort, number>> = {
+  low: 8192,
+  medium: 16384,
+  high: 32768,
+  xhigh: 49152,
+};
+
+/** Extra tokens for a reasoning-mandatory model with no effort chosen: the `low` allowance. */
+export const MANDATORY_REASONING_ALLOWANCE_TOKENS = REASONING_ALLOWANCE_TOKENS.low;
 /** Every reasoning-mandatory model on OpenRouter accepts `low`; not all accept `minimal`. */
 export const MANDATORY_REASONING_EFFORT = "low";
 
-/**
- * Reasoning headroom per `llmReasoningEffort`, added to the caller's maxTokens.
- * Not a reserve for the answer: where OpenRouter turns effort into a share of
- * max_tokens (most of it at xhigh), reasoning can still take part of a large
- * answer budget, and a cut-off answer is an LlmTruncatedError naming the
- * reasoning tokens. Unused tokens are not billed.
- */
-export const REASONING_ALLOWANCE_TOKENS: Readonly<Record<LlmReasoningEffort, number>> = {
-  low: MANDATORY_REASONING_ALLOWANCE_TOKENS,
-  medium: 4096,
-  high: 8192,
-  xhigh: 16384,
-};
+/** Below this reasoning share of max_tokens the answer overflowed, which more room won't fix. */
+const REASONING_BOUND_SHARE = 0.9;
+/** The retry's whole max_tokens never goes past this: 65,536 is a common output ceiling. */
+export const REASONING_RETRY_MAX_TOKENS = 65536;
 
 /**
  * Cache mandatory-reasoning models discovered from provider 400s and seed known
@@ -737,6 +735,24 @@ interface OpenAIArgs {
    * "tokens of answer I want" has to be topped up or the answer never starts.
    */
   extraMaxTokens?: number;
+  reasoningRetried?: boolean;
+}
+
+/** The doubled allowance for the one retry a reasoning-bound cut-off gets, or undefined. */
+function reasoningRetryAllowance(
+  args: OpenAIArgs,
+  maxTokens: number,
+  reasoningTokens: number | undefined,
+): number | undefined {
+  const extra = args.extraMaxTokens ?? 0;
+  if (args.reasoningRetried || extra <= 0 || !reasoningTokens) return undefined;
+  if (reasoningTokens < maxTokens * REASONING_BOUND_SHARE) return undefined;
+  const doubled = Math.min(extra * 2, REASONING_RETRY_MAX_TOKENS - (maxTokens - extra));
+  return doubled > extra ? doubled : undefined;
+}
+
+function usableCost(cost: unknown): number | undefined {
+  return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : undefined;
 }
 
 async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOutput> {
@@ -791,13 +807,27 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
   // of it, and truncated JSON silently degrades to an empty object four layers
   // up (empty subject/body on a draft). Fail loudly at the source instead.
   if (choice.finish_reason === "length" && !args.input.allowTruncation) {
+    const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens;
+    const retryAllowance = reasoningRetryAllowance(args, maxTokens, reasoningTokens);
+    if (retryAllowance !== undefined) {
+      const out = await openaiCompatibleComplete({
+        ...args,
+        extraMaxTokens: retryAllowance,
+        reasoningRetried: true,
+      });
+      // The cut-off try was billed too.
+      const first = usableCost(data.usage?.cost);
+      return first === undefined || out.costUsd === undefined
+        ? out
+        : { ...out, costUsd: out.costUsd + first };
+    }
     throw new LlmTruncatedError(
       truncationMessage({
         provider: args.provider,
         model: args.model,
         maxTokens,
         completionTokens: data.usage?.completion_tokens,
-        reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens,
+        reasoningTokens,
       }),
     );
   }
@@ -812,15 +842,12 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     );
   }
 
+  const costUsd = usableCost(data.usage?.cost);
   return {
     content,
     provider: args.provider,
     model: args.model,
-    ...(typeof data.usage?.cost === "number" &&
-    Number.isFinite(data.usage.cost) &&
-    data.usage.cost >= 0
-      ? { costUsd: data.usage.cost }
-      : {}),
+    ...(costUsd === undefined ? {} : { costUsd }),
     inputTokens: data.usage?.prompt_tokens,
     outputTokens: data.usage?.completion_tokens,
   };
@@ -916,6 +943,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
     );
   }
 
+  // No reasoning retry: Messages usage does not count thinking tokens apart.
   if (data.stop_reason === "max_tokens" && !args.input.allowTruncation) {
     throw new LlmTruncatedError(
       truncationMessage({

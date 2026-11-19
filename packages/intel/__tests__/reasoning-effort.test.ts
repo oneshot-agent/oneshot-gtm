@@ -19,6 +19,7 @@ const {
   LlmTruncatedError,
   MANDATORY_REASONING_ALLOWANCE_TOKENS,
   REASONING_ALLOWANCE_TOKENS,
+  REASONING_RETRY_MAX_TOKENS,
   _resetLlmBreakerForTests,
 } = await import("../src/client.ts");
 
@@ -41,6 +42,13 @@ function ok(text = '{"ok":true}') {
       }),
   };
 }
+function okCost(cost: number) {
+  return () =>
+    Promise.resolve({
+      choices: [{ message: { content: '{"ok":true}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, cost },
+    });
+}
 function claudeOk() {
   return {
     ok: true,
@@ -56,6 +64,25 @@ function rejection(status: number, message: string) {
     status,
     headers: new Headers(),
     text: () => Promise.resolve(JSON.stringify({ error: { message } })),
+  };
+}
+
+/** A reply cut off at the request's max_tokens, `reasoning` of it spent reasoning. */
+function cutOff(body: Body, reasoning: number, cost?: number) {
+  const max = body["max_tokens"] as number;
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: () =>
+      Promise.resolve({
+        choices: [{ message: { content: "" }, finish_reason: "length" }],
+        usage: {
+          completion_tokens: max,
+          completion_tokens_details: { reasoning_tokens: reasoning },
+          ...(cost === undefined ? {} : { cost }),
+        },
+      }),
   };
 }
 
@@ -104,7 +131,7 @@ describe("llmReasoningEffort unset", () => {
     });
   });
 
-  it("a mandatory model gets low effort and the 1536-token allowance", async () => {
+  it("a mandatory model gets low effort and the low allowance", async () => {
     state.cfg["llmModel"] = SEEDED;
     const fn = stubFetch(mandatory);
     await complete({ messages: msgs, maxTokens: 500, temperature: 0.2 });
@@ -128,13 +155,15 @@ describe("llmReasoningEffort unset", () => {
 });
 
 describe("llmReasoningEffort set", () => {
-  it("keeps low at 1536 and scales the allowance with the effort", () => {
+  it("scales the allowance with the effort; a mandatory model with none gets low's", () => {
     expect(REASONING_ALLOWANCE_TOKENS).toEqual({
-      low: 1536,
-      medium: 4096,
-      high: 8192,
-      xhigh: 16384,
+      low: 8192,
+      medium: 16384,
+      high: 32768,
+      xhigh: 49152,
     });
+    expect(MANDATORY_REASONING_ALLOWANCE_TOKENS).toBe(REASONING_ALLOWANCE_TOKENS.low);
+    expect(REASONING_RETRY_MAX_TOKENS).toBe(65536);
   });
 
   it("medium on a mandatory model: effort medium, the medium allowance on top of maxTokens", async () => {
@@ -204,26 +233,75 @@ describe("llmReasoningEffort set", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("a cut-off answer from reasoning is the clear truncation error", async () => {
+  it("reasoning that eats the budget: one retry with the allowance doubled", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
-    stubFetch(() => ({
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "" }, finish_reason: "length" }],
-          usage: {
-            completion_tokens: 4596,
-            completion_tokens_details: { reasoning_tokens: 4590 },
-          },
-        }),
-    }));
-    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(LlmTruncatedError);
-    expect((err as Error).message).toContain(
-      `truncated at max_tokens=${500 + REASONING_ALLOWANCE_TOKENS.medium} (4590/4596 tokens were reasoning)`,
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first
+        ? cutOff(body, first - 3, 0.01)
+        : { ...ok(), json: okCost(0.02) },
     );
+    const out = await complete({ messages: msgs, maxTokens: 500 });
+    expect(out.content).toBe('{"ok":true}');
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body.reasoning).toEqual({ effort: "medium" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * REASONING_ALLOWANCE_TOKENS.medium);
+    // Both tries were billed.
+    expect(out.costUsd).toBeCloseTo(0.03);
+  });
+
+  it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
+    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    const retried = 500 + 2 * REASONING_ALLOWANCE_TOKENS.medium;
+    expect((err as Error).message).toContain(
+      `truncated at max_tokens=${retried} (${retried - 3}/${retried} tokens were reasoning)`,
+    );
+  });
+
+  it("an answer that overflows on its own is not retried", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const fn = stubFetch((_url, body) => cutOff(body, 4590));
+    const err = await complete({ messages: msgs, maxTokens: 500 }).catch((e: unknown) => e);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    const max = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    expect((err as Error).message).toContain(
+      `truncated at max_tokens=${max} (4590/${max} tokens were reasoning)`,
+    );
+  });
+
+  it("the retry's whole max_tokens is capped, and no room under the cap means no retry", async () => {
+    state.cfg["llmReasoningEffort"] = "xhigh";
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body["max_tokens"]).toBe(REASONING_RETRY_MAX_TOKENS);
+
+    await expect(complete({ messages: msgs, maxTokens: 20000 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("unset, mandatory model: the low allowance doubles once", async () => {
+    state.cfg["llmModel"] = SEEDED;
+    const first = 500 + MANDATORY_REASONING_ALLOWANCE_TOKENS;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 31) : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).body.reasoning).toEqual({ effort: "low" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * MANDATORY_REASONING_ALLOWANCE_TOKENS);
+  });
+
+  it("unset, reasoning switched off: a cut-off is not retried", async () => {
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(sent(fn, 0).body.reasoning).toEqual({ enabled: false });
   });
 
   it("the OpenRouter fallback of another primary keeps today's request", async () => {
@@ -297,6 +375,29 @@ describe("llmReasoningEffort on the proxy", () => {
     expect(sent(fn, 0).body["reasoning_effort"]).toBe("high");
     expect(sent(fn, 0).body.reasoning).toBeUndefined();
     expect(sent(fn, 0).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
+  });
+
+  it("reasoning that eats the budget: one retry at the same effort, allowance doubled", async () => {
+    state.cfg["llmReasoningEffort"] = "low";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.low;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 3) : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(sent(fn, 1).url).toBe(`${PROXY}/v1/chat/completions`);
+    expect(sent(fn, 1).body["reasoning_effort"]).toBe("low");
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + 2 * REASONING_ALLOWANCE_TOKENS.low);
+
+    const twice = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(twice).toHaveBeenCalledTimes(2);
+  });
+
+  it("unset: no allowance, so a cut-off is not retried", async () => {
+    const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 1));
+    await expect(complete({ messages: msgs, maxTokens: 500 })).rejects.toThrow(LlmTruncatedError);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   it("a 400 about the effort sends today's request, and the route remembers it", async () => {
