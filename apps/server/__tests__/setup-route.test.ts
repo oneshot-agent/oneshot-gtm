@@ -887,6 +887,28 @@ describe("POST /api/setup — llmBaseUrl and llmFallback", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("llmReasoningEffort: saved as given, absent keeps, null clears, an unknown value refused", async () => {
+    expect(await post({ llmReasoningEffort: "medium" })).toEqual({ status: 200 });
+    expect(savedCfg().llmReasoningEffort).toBe("medium");
+    current = { ...current, llmReasoningEffort: "medium" };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().llmReasoningEffort).toBe("medium");
+    saveConfigMock.mockClear();
+    expect(await post({ llmReasoningEffort: "xhigh" })).toEqual({ status: 200 });
+    expect(savedCfg().llmReasoningEffort).toBe("xhigh");
+    saveConfigMock.mockClear();
+    expect(await post({ llmReasoningEffort: null })).toEqual({ status: 200 });
+    expect("llmReasoningEffort" in savedCfg()).toBe(false);
+    saveConfigMock.mockClear();
+    for (const llmReasoningEffort of ["minimal", "Medium", "", 2, { effort: "low" }]) {
+      const res = await post({ llmReasoningEffort });
+      expect(res.status).toBe(400);
+      expect(res.error).toMatch(/llmReasoningEffort/);
+    }
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a fallback on the main provider, an unknown provider, or a blank or long model", async () => {
     for (const llmFallback of [
       { provider: "openrouter", model: "m" },

@@ -97,6 +97,7 @@ import type {
   RunTriggerResult,
   SenderIdentityView,
   LlmProvider,
+  LlmReasoningEffort,
   SetupRequest,
   SmartleadAccountView,
   SpendByPlay,
@@ -473,6 +474,7 @@ export const api = {
         /** The proxy origin; absent until a proxy is set up. */
         llmBaseUrl?: string | null;
         llmFallback?: { provider: LlmProvider; model: string } | null;
+        llmReasoningEffort?: LlmReasoningEffort;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
         slackWebhookUrl: string | null;

@@ -43,6 +43,8 @@ import {
   MAX_CALL_STEP_DAYS,
   llmProxyOrigin,
   llmProxyOriginProblem,
+  llmReasoningEffortOf,
+  LLM_REASONING_EFFORTS,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -693,9 +695,14 @@ export function mergeSetupConfig(
     calls: _calls,
     llmBaseUrl: _llmBaseUrl,
     llmFallback: _llmFallback,
+    llmReasoningEffort: _reasoningEffort,
     ...kept
   } = current;
   const llm = mergeLlm(body, current, llmProvider);
+  const llmReasoningEffort = mergeLlmReasoningEffort(
+    body.llmReasoningEffort,
+    current.llmReasoningEffort,
+  );
   const linkedin = mergeLinkedIn(body.linkedin, current.linkedin);
   const calls = mergeCalls(body.calls, current.calls);
   const offerExclusions = mergeOfferExclusions(body.offerExclusions, current.offerExclusions);
@@ -729,6 +736,7 @@ export function mergeSetupConfig(
     llmModel: body.llmModel ?? current.llmModel,
     ...(llm.llmBaseUrl ? { llmBaseUrl: llm.llmBaseUrl } : {}),
     ...(llm.llmFallback ? { llmFallback: llm.llmFallback } : {}),
+    ...(llmReasoningEffort ? { llmReasoningEffort } : {}),
     telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
     founderName: mergeString(body.founderName, current.founderName),
     founderEmail: mergeString(body.founderEmail, current.founderEmail),
@@ -1329,6 +1337,22 @@ export function mergeMessageOpening(
     throw new SetupValidationError(`messageOpening must be one of ${MESSAGE_OPENINGS.join(", ")}`);
   }
   return incoming as OneShotConfig["messageOpening"];
+}
+
+/** Same shape as `mergeMessageOpening`: a misspelling is a 400, not a silent default. */
+export function mergeLlmReasoningEffort(
+  incoming: SetupRequest["llmReasoningEffort"],
+  current: OneShotConfig["llmReasoningEffort"],
+): OneShotConfig["llmReasoningEffort"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  const effort = llmReasoningEffortOf({ llmReasoningEffort: incoming });
+  if (!effort) {
+    throw new SetupValidationError(
+      `llmReasoningEffort must be one of ${LLM_REASONING_EFFORTS.join(", ")}, or null to clear it`,
+    );
+  }
+  return effort;
 }
 
 const MAX_FOLLOW_UP_OFFER_PLAYS = 50;

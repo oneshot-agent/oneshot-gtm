@@ -3,8 +3,10 @@ import {
   llmApiKey,
   llmProxyOrigin,
   llmProxyOriginProblem,
+  llmReasoningEffortOf,
   loadConfig,
   logEvent,
+  type LlmReasoningEffort,
   type OneShotConfig,
 } from "@oneshot-gtm/core";
 import { loadPrompt } from "./prompts.ts";
@@ -238,6 +240,8 @@ interface Route {
   model: string;
   key: string;
   baseUrl?: string;
+  /** `llmReasoningEffort`, on the primary route only; read by the openrouter dispatch. */
+  reasoningEffort?: LlmReasoningEffort;
 }
 
 function routeName(route: Pick<Route, "provider" | "baseUrl">): string {
@@ -258,6 +262,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     model,
     key: requireKey(cfg.llmProvider),
     baseUrl: cfg.llmProvider === "proxy" ? proxyBaseUrl(cfg.llmBaseUrl) : undefined,
+    reasoningEffort: llmReasoningEffortOf(cfg),
   };
   // A fallback without its own key is no fallback: the primary's error stands.
   const fallbackCfg =
@@ -447,6 +452,7 @@ function dispatch(
           "X-Title": "oneshot-gtm",
         },
       };
+      if (route.reasoningEffort) return completeAtEffort(args, route.reasoningEffort);
       // OpenRouter counts reasoning against max_tokens. Disable it for callers'
       // small JSON budgets. Models that require reasoning reject that switch
       // with a 400; use low effort plus extra tokens so maxTokens remains an
@@ -501,6 +507,17 @@ export const MANDATORY_REASONING_ALLOWANCE_TOKENS = 1536;
 export const MANDATORY_REASONING_EFFORT = "low";
 
 /**
+ * Extra tokens per `llmReasoningEffort`, on top of the caller's maxTokens so it
+ * stays the answer budget. Unused tokens are not billed.
+ */
+export const REASONING_ALLOWANCE_TOKENS: Readonly<Record<LlmReasoningEffort, number>> = {
+  low: MANDATORY_REASONING_ALLOWANCE_TOKENS,
+  medium: 4096,
+  high: 8192,
+  xhigh: 16384,
+};
+
+/**
  * Cache mandatory-reasoning models discovered from provider 400s and seed known
  * families to avoid that first rejection. Unlisted models are still detected;
  * seeds that later allow reasoning to be disabled only waste token headroom.
@@ -531,6 +548,45 @@ function completeWithMandatoryReasoning(args: OpenAIArgs): Promise<LlmCompleteOu
       throw err;
     },
   );
+}
+
+/** Model + chosen effort -> the effort that model answered at; null is no effort parameter. */
+const settledEffort = new Map<string, string | null>();
+
+/**
+ * The workspace's effort, for every OpenRouter model. A 400 about reasoning or
+ * effort steps down to `low`, then to no reasoning parameter, each keeping the
+ * chosen effort's allowance. The step that answered is remembered per model.
+ */
+async function completeAtEffort(
+  args: OpenAIArgs,
+  effort: LlmReasoningEffort,
+): Promise<LlmCompleteOutput> {
+  const raised = { ...args, extraMaxTokens: REASONING_ALLOWANCE_TOKENS[effort] };
+  const key = `${args.model}\n${effort}`;
+  const settled = settledEffort.get(key);
+  const efforts =
+    settled === undefined
+      ? [...new Set([effort, MANDATORY_REASONING_EFFORT])]
+      : settled
+        ? [settled]
+        : [];
+  for (const reasoningEffort of efforts) {
+    try {
+      const out = await openaiCompatibleComplete({ ...raised, reasoningEffort });
+      settledEffort.set(key, reasoningEffort);
+      return out;
+    } catch (err) {
+      if (!isEffortRejection(err)) throw err;
+    }
+  }
+  const out = await openaiCompatibleComplete(raised);
+  settledEffort.set(key, null);
+  return out;
+}
+
+function isEffortRejection(err: unknown): boolean {
+  return err instanceof LlmError && err.status === 400 && /reasoning|effort/i.test(err.message);
 }
 
 /** A 400 whose body talks about reasoning: the model cannot have it switched off. */
@@ -749,6 +805,7 @@ const ANTHROPIC_NO_SAMPLING = /^claude-(sonnet-5|opus-5|opus-4-[78]|haiku-5|fabl
  * max_tokens. Sonnet 4.6 did not think, so callers size maxTokens for the
  * answer alone. Low effort keeps thinking short or skipped, and the same
  * allowance the OpenRouter path adds keeps maxTokens an answer budget.
+ * `llmReasoningEffort` is OpenRouter-only and does not change this.
  */
 function anthropicEffort(model: string): {
   extra: { output_config?: { effort: string } };

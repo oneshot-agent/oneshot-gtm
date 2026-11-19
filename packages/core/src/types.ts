@@ -421,6 +421,10 @@ export interface LlmFallbackConfig {
   model: string;
 }
 
+/** OpenRouter reasoning efforts a workspace may pick; see `OneShotConfig.llmReasoningEffort`. */
+export const LLM_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+export type LlmReasoningEffort = (typeof LLM_REASONING_EFFORTS)[number];
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: LlmProviderName;
@@ -435,6 +439,15 @@ export interface OneShotConfig {
    * the call is sent again here on `model`. Absent or null: no fallback.
    */
   llmFallback?: LlmFallbackConfig | null;
+  /**
+   * Reasoning effort on OpenRouter when it is `llmProvider`. Every model then
+   * reasons at this effort, ones that could have it off too, with the effort's
+   * allowance added to each call's maxTokens. A model that refuses the effort
+   * is asked at `low`, then with no effort. Unset: reasoning off where the
+   * model allows it, else `low`. `llmFallback`, `proxy` and the Anthropic API
+   * ignore it.
+   */
+  llmReasoningEffort?: LlmReasoningEffort;
   telemetryEnabled: boolean;
   founderName: string | null;
   founderEmail: string | null;

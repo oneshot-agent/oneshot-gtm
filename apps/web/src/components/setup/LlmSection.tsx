@@ -1,8 +1,9 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
-import type { LlmProvider } from "@oneshot-gtm/shared-types";
+import type { LlmProvider, LlmReasoningEffort } from "@oneshot-gtm/shared-types";
 import { Field, Input, Select } from "../primitives/Field.tsx";
 import {
   LLM_PROVIDERS,
+  LLM_REASONING_EFFORTS,
   llmSectionErrors,
   llmSectionRequest,
   llmSectionValues,
@@ -102,6 +103,24 @@ export function LlmSection({ cfg, sources, onDirtyChange }: SectionProps) {
               placeholder={LLM_DEFAULTS[v.llmProvider]}
               spellCheck={false}
             />
+          </Field>
+        )}
+        {v.llmProvider === "openrouter" && (
+          <Field
+            label="Reasoning effort"
+            hint="Default: off where the model allows it, else low. Higher reasons longer and costs more."
+          >
+            <Select
+              value={v.reasoningEffort}
+              onChange={(e) => s.set("reasoningEffort", e.target.value as LlmReasoningEffort | "")}
+            >
+              <option value="">Default</option>
+              {LLM_REASONING_EFFORTS.map((effort) => (
+                <option key={effort} value={effort}>
+                  {effort}
+                </option>
+              ))}
+            </Select>
           </Field>
         )}
         {usesProxy(v) && (

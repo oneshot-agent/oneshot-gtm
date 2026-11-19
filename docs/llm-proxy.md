@@ -22,6 +22,10 @@ The key is saved as `LLM_PROXY_API_KEY` in the workspace's `.env`.
 
 Under **If this provider is down, use…**, pick a second provider and a model, for example OpenRouter with its key in Credentials. When the proxy is unreachable, times out, is rate-limited or refuses the key, the call goes to the fallback, and the fallback serves alone for about 10 minutes (longer if the proxy sent `Retry-After`, up to two hours). A bad request or an unknown model does not fail over: it would fail the same way there.
 
+## Reasoning effort on OpenRouter
+
+With OpenRouter as the provider, **Reasoning effort** (`llmReasoningEffort`: `low`, `medium`, `high` or `xhigh`; or `POST /api/setup`, `null` clears it) makes every model reason at that effort, including models that could have it off. Each call gets extra tokens on top of its answer budget: 1,536 at low, 4,096 at medium, 8,192 at high, 16,384 at xhigh. Unused tokens are not billed. A model that refuses the effort is asked at `low`, then with no effort. Unset: reasoning is off where the model allows it, else `low`. The fallback provider, the proxy and the Anthropic API ignore it.
+
 ## What still needs OpenRouter
 
 The decisions engine (`engine: "decisions"` on the reply classifier or the offer judge) uses OpenRouter's decisions API and `OPENROUTER_API_KEY`, whatever the provider is.
