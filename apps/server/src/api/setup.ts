@@ -683,6 +683,7 @@ export function mergeSetupConfig(
     offerRules: _rules,
     offerChecks: _checks,
     offerAnchor: _anchor,
+    messageOpening: _opening,
     followUpOfferPlays: _followUpOfferPlays,
     linkedin: _linkedin,
     calls: _calls,
@@ -694,6 +695,7 @@ export function mergeSetupConfig(
   const offerRules = mergeOfferRules(body.offerRules, current.offerRules);
   const offerChecks = mergeOfferChecks(body.offerChecks, current.offerChecks);
   const offerAnchor = mergeOfferAnchor(body.offerAnchor, current.offerAnchor);
+  const messageOpening = mergeMessageOpening(body.messageOpening, current.messageOpening);
   const followUpOfferPlays = mergeFollowUpOfferPlays(
     body.followUpOfferPlays,
     current.followUpOfferPlays,
@@ -711,6 +713,7 @@ export function mergeSetupConfig(
     ...(offerRules ? { offerRules } : {}),
     ...(offerChecks ? { offerChecks } : {}),
     ...(offerAnchor ? { offerAnchor } : {}),
+    ...(messageOpening ? { messageOpening } : {}),
     ...(followUpOfferPlays ? { followUpOfferPlays } : {}),
     ...(linkedin ? { linkedin } : {}),
     ...(calls ? { calls } : {}),
@@ -1218,6 +1221,28 @@ export function mergeOfferAnchor(
     throw new SetupValidationError(`offerAnchor must be one of ${OFFER_ANCHORS.join(", ")}`);
   }
   return incoming as OneShotConfig["offerAnchor"];
+}
+
+const MESSAGE_OPENINGS: ReadonlyArray<NonNullable<OneShotConfig["messageOpening"]>> = [
+  "offer",
+  "problem",
+];
+
+/**
+ * `messageOpening` merge, the same shape as `mergeOfferAnchor`: `undefined`
+ * keeps the stored value, `null` clears it (back to `offer`), anything
+ * outside `MESSAGE_OPENINGS` is a 400.
+ */
+export function mergeMessageOpening(
+  incoming: SetupRequest["messageOpening"],
+  current: OneShotConfig["messageOpening"],
+): OneShotConfig["messageOpening"] {
+  if (incoming === undefined) return current;
+  if (incoming === null) return undefined;
+  if (!MESSAGE_OPENINGS.includes(incoming as NonNullable<OneShotConfig["messageOpening"]>)) {
+    throw new SetupValidationError(`messageOpening must be one of ${MESSAGE_OPENINGS.join(", ")}`);
+  }
+  return incoming as OneShotConfig["messageOpening"];
 }
 
 const MAX_FOLLOW_UP_OFFER_PLAYS = 50;

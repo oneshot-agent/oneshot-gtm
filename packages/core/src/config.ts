@@ -19,6 +19,7 @@ import {
   OFFER_CHECKS,
   type LinkedInTemplates,
   type LinkedInWriter,
+  type MessageOpening,
   type OfferAnchor,
   type OfferCheck,
   type OneShotConfig,
@@ -120,6 +121,15 @@ function plainEntries(raw: unknown): string[] {
  */
 export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
+}
+
+/**
+ * The workspace's `messageOpening` as the drafters and the opening lint read
+ * it. Only the exact string `problem` turns it on; absent, misspelled or any
+ * other value reads as `offer`, the behaviour from before the setting existed.
+ */
+export function messageOpeningOf(cfg: { messageOpening?: unknown }): MessageOpening {
+  return cfg.messageOpening === "problem" ? "problem" : "offer";
 }
 
 /** Rewrite rounds after the first offer set when `offerWriter.rounds` is not set. */

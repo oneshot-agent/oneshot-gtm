@@ -17,6 +17,7 @@ import {
   getLedger,
   linkedinWriterOf,
   loadConfig,
+  messageOpeningOf,
   offerExclusionsOf,
   productBriefText,
   subjectCaseOf,
@@ -90,8 +91,8 @@ function text(value: unknown): string {
  * LinkedIn copy), the founder's
  * admission, credentials, portfolio, partners and cohort, the product
  * one-liner, brief (with approved code answers) and terms, the offer
- * exclusions, whether the play (on a follow-up, its sequence) makes an offer, the member offer for the
- * play that quotes it, the signature settings, and on LinkedIn the
+ * exclusions, an email's `messageOpening`, whether the play (on a follow-up,
+ * its sequence) makes an offer, the member offer for the play that quotes it, the signature settings, and on LinkedIn the
  * workspace's writer and templates. Pure apart from the guidance and
  * code-answer reads (pass `ledger: null` to skip both).
  */
@@ -118,6 +119,11 @@ export function draftConfigKey(
     productBriefText(cfg, ledger) ?? "",
     text(cfg.pilotOffer),
     offerExclusionsOf(cfg).join("\n"),
+    // Only an email reads the opening, and only `problem` changes it. Spread, so an
+    // unset opening adds no part and every stored key stays as it was.
+    ...(surface.channel === "email" && messageOpeningOf(cfg) === "problem"
+      ? ["opening:problem"]
+      : []),
     // First-touch keys never read `followUpOfferPlays`: turning it on stales no intro.
     (
       surface.stage === "follow_up"

@@ -663,6 +663,13 @@ export interface SetupRequest {
    */
   offerAnchor?: "prefer-product" | "either" | null;
   /**
+   * What an email that makes an offer opens on: `problem` lets it open with
+   * one line naming the reader's problem before the offer, `offer` opens on
+   * the offer. `undefined` = leave unchanged; `null` = clear (back to
+   * `offer`); anything else is a 400.
+   */
+  messageOpening?: "offer" | "problem" | null;
+  /**
    * Plays of `noOfferPlays` whose follow-ups still make an offer. `undefined`
    * = leave unchanged; `null` or `[]` = clear (off); a non-play-name is a 400.
    */

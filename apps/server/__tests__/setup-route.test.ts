@@ -601,6 +601,26 @@ describe("POST /api/setup — offerJudge", () => {
     expect(saveConfigMock).not.toHaveBeenCalled();
   });
 
+  it("messageOpening: saved as given, absent keeps, null clears, an unknown value refused", async () => {
+    expect(await post({ messageOpening: "problem" })).toEqual({ status: 200 });
+    expect(savedCfg().messageOpening).toBe("problem");
+    current = { ...current, messageOpening: "problem" };
+    saveConfigMock.mockClear();
+    expect(await post({ founderName: "Janet" })).toEqual({ status: 200 });
+    expect(savedCfg().messageOpening).toBe("problem");
+    saveConfigMock.mockClear();
+    expect(await post({ messageOpening: "offer" })).toEqual({ status: 200 });
+    expect(savedCfg().messageOpening).toBe("offer");
+    saveConfigMock.mockClear();
+    expect(await post({ messageOpening: null })).toEqual({ status: 200 });
+    expect(savedCfg().messageOpening).toBeUndefined();
+    saveConfigMock.mockClear();
+    const res = await post({ messageOpening: "problem-first" });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/messageOpening/);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+  });
+
   it("followUpOfferPlays: trimmed and saved, absent keeps, null or empty clears, a non-name refused", async () => {
     expect(
       await post({ followUpOfferPlays: [" repo-interest ", "repo-interest", "", "luma-events"] }),

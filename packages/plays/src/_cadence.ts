@@ -114,6 +114,7 @@ import {
   playMakesOffer,
   playMakesSequenceOffer,
   type ProspectOffer,
+  withOpeningLine,
 } from "./_prospect-offer.ts";
 import {
   deriveSequenceOffer,
@@ -3684,7 +3685,11 @@ export function buildFollowUpEmail(opts: {
     // may be behind them by the time this step sends.
     const demoDay = prospectDemoDay(ctx.prospect, opts.playName);
     const demoDayText = demoDayLine(demoDay);
-    const offerLines = offerBlock(introOffer, ctx.cfg, opts.playName, { sequence: true });
+    const offerLines = withOpeningLine(
+      offerBlock(introOffer, ctx.cfg, opts.playName, { sequence: true }),
+      introOffer,
+      ctx.cfg,
+    );
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,

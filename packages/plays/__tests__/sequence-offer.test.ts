@@ -25,6 +25,8 @@ const llm = {
   dropOffer: false,
   /** Runs once while a follow-up is being written, before its reply. */
   duringFollowUp: null as (() => void) | null,
+  /** A line the follow-up writer puts before the offer. */
+  lead: null as string | null,
 };
 
 const cfg: Record<string, unknown> = {
@@ -106,7 +108,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
           subject: "leeds crews",
           body:
             offer && !llm.dropOffer
-              ? `I can ${offer}, start to finish. You get back the same-day jobs the depot turns away today, counted per booked job. Worth trying on one depot?\n\nFounder`
+              ? `${llm.lead ? `${llm.lead}\n\n` : ""}I can ${offer}, start to finish. You get back the same-day jobs the depot turns away today, counted per booked job. Worth trying on one depot?\n\nFounder`
               : "If it's not the right time, a one-word no helps too.\n\nFounder",
         }),
       );
@@ -238,6 +240,8 @@ beforeEach(() => {
   llm.judge = "relevant";
   llm.dropOffer = false;
   llm.duringFollowUp = null;
+  llm.lead = null;
+  delete cfg["messageOpening"];
   delete cfg["offerExclusions"];
   delete cfg["noOfferPlays"];
   delete cfg["followUpOfferPlays"];
@@ -1061,5 +1065,27 @@ describe("the close offer", () => {
     expect(cadenceOffer(id)).not.toHaveProperty("close");
     expect(write(good.offer)).toBe(true);
     expect(cadenceOffer(id)!["close"]).toMatchObject({ offer: second.offer });
+  });
+});
+
+describe("messageOpening on an email follow-up", () => {
+  const lead = "I'd bet same-day jobs get turned away at a depot with no crew free.";
+
+  it("unset: no OPENING line, and a problem line before the offer is flagged", async () => {
+    const { id } = preOfferSequence();
+    llm.lead = lead;
+    const out = await preview(id);
+    expect(llm.inputs.get("seq-followup")![0]).not.toContain("OPENING:");
+    expect(out.flags).toContain("opens-without-offer");
+  });
+
+  it("problem: the input carries OPENING: problem, and one problem line before the offer passes", async () => {
+    cfg["messageOpening"] = "problem";
+    const { id } = preOfferSequence();
+    llm.lead = lead;
+    const out = await preview(id);
+    expect(llm.inputs.get("seq-followup")![0]).toContain("\nOPENING: problem\n");
+    expect(out.body.startsWith(lead)).toBe(true);
+    expect(out.flags).toEqual([]);
   });
 });
