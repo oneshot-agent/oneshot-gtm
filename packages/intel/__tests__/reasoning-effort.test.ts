@@ -250,6 +250,18 @@ describe("llmReasoningEffort set", () => {
     expect(out.costUsd).toBeCloseTo(0.03);
   });
 
+  it("the resend is outside maxAttempts but still reaches the accounting hook", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((_url, body) =>
+      body["max_tokens"] === first ? cutOff(body, first - 3) : ok(),
+    );
+    const onAttempt = vi.fn();
+    await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1, onAttempt });
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(onAttempt).toHaveBeenCalledTimes(2);
+  });
+
   it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
     const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));

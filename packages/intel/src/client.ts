@@ -17,7 +17,10 @@ export interface LlmMessage {
 }
 
 export interface LlmCompleteInput {
-  /** Accounting hook after local preflight, immediately before each provider attempt. */
+  /**
+   * Accounting hook after local preflight, immediately before each provider
+   * attempt, including the reasoning-cutoff resend `maxAttempts` leaves out.
+   */
   onAttempt?: () => void;
   messages: LlmMessage[];
   temperature?: number;
@@ -35,7 +38,7 @@ export interface LlmCompleteInput {
    * otherwise stalls a whole 50-target drain behind one target.
    */
   timeoutMs?: number;
-  /** Total attempts including the first. Clamped to >= 1. */
+  /** Total attempts including the first, clamped to >= 1; the reasoning-cutoff resend is extra. */
   maxAttempts?: number;
   /**
    * Model for this call, on the configured provider. Absent or blank =
@@ -810,6 +813,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens;
     const retryAllowance = reasoningRetryAllowance(args, maxTokens, reasoningTokens);
     if (retryAllowance !== undefined) {
+      args.input.onAttempt?.();
       const out = await openaiCompatibleComplete({
         ...args,
         extraMaxTokens: retryAllowance,
