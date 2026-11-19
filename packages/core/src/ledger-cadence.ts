@@ -1305,6 +1305,21 @@ export function setLinkedInReplyIntent(
   ).map((r) => r.prospect_id);
 }
 
+/**
+ * Label one recorded reply by its row id: a reply imported from another tool
+ * has no OneShot event id to find it by. Returns whether a row was labelled.
+ */
+export function setChannelEventIntent(
+  db: Database,
+  input: { id: number; intent: string; intentReview?: boolean },
+): boolean {
+  return (
+    db
+      .query(`UPDATE channel_events SET intent = ?, intent_review = ? WHERE id = ?`)
+      .run(input.intent, input.intentReview ? 1 : 0, input.id).changes > 0
+  );
+}
+
 /** Suppression is independent of inbox ownership and never creates or removes reply history. */
 export function suppressCadencesForReply(
   db: Database,

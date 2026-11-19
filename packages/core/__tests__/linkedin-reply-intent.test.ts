@@ -179,24 +179,62 @@ describe("message labels in the shared store", () => {
     const second = store.claimMessageIntent("account", "slow", now + 6 * 60_000);
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
+    const at = now + 7 * 60_000;
     // The first caller finishes while the second still holds the claim: nothing is written.
-    expect(store.setMessageIntent("account", "slow", label("question"), { claim: first })).toBe(
-      null,
-    );
-    store.recordMessageIntentFailure("account", "slow", now, first);
+    expect(
+      store.setMessageIntent("account", "slow", label("question"), { claim: first, now: at }),
+    ).toBe(null);
+    store.recordMessageIntentFailure("account", "slow", at, first);
     expect(store.messageIntent("account", "slow")).toBeNull();
-    expect(store.setMessageIntent("account", "slow", label("meeting"), { claim: second })).toEqual(
-      [],
-    );
-    expect(store.setMessageIntent("account", "slow", label("question"), { claim: first })).toBe(
-      null,
-    );
+    expect(
+      store.setMessageIntent("account", "slow", label("meeting"), { claim: second, now: at }),
+    ).toEqual([]);
+    expect(
+      store.setMessageIntent("account", "slow", label("question"), { claim: first, now: at }),
+    ).toBe(null);
     // Nor does a write without a claim replace a stored label.
     expect(store.setMessageIntent("account", "slow", label("unsubscribe"))).toBe(null);
     expect(store.messageIntent("account", "slow")?.intent).toBe("meeting");
     expect(
       store.db.query("SELECT attempts FROM message_intents WHERE message_id='slow'").get(),
     ).toEqual({ attempts: 0 });
+  });
+
+  it("an expired claim nobody retook writes no label and counts no failure", () => {
+    store.saveMessages("account", [message("late")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const claim = store.claimMessageIntent("account", "late", now);
+    const expired = now + 6 * 60_000;
+    expect(
+      store.setMessageIntent("account", "late", label("unsubscribe"), { claim, now: expired }),
+    ).toBe(null);
+    store.recordMessageIntentFailure("account", "late", expired, claim);
+    expect(store.messageIntent("account", "late")).toBeNull();
+    expect(
+      store.db.query("SELECT attempts FROM message_intents WHERE message_id='late'").get(),
+    ).toEqual({ attempts: 0 });
+    // Free to claim again.
+    expect(store.claimMessageIntent("account", "late", expired)).not.toBeNull();
+  });
+
+  it("a claimed failure for a row merged away meanwhile does not revive it", () => {
+    store.saveMessages("account", [message("merged")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const claim = store.claimMessageIntent("account", "merged", now);
+    store.db.query("DELETE FROM message_intents WHERE message_id='merged'").run();
+    store.recordMessageIntentFailure("account", "merged", now + 60_000, claim);
+    expect(
+      store.db.query("SELECT count(*) AS n FROM message_intents WHERE message_id='merged'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("claims only a message the store still holds", () => {
+    expect(store.claimMessageIntent("account", "never-saved")).toBeNull();
+    expect(
+      store.db
+        .query("SELECT count(*) AS n FROM message_intents WHERE message_id='never-saved'")
+        .get(),
+    ).toEqual({ n: 0 });
   });
 });
 
@@ -259,6 +297,29 @@ describe("labels reach the workspace ledger", () => {
     expect(stopped).toEqual([{ workspace, prospectId: optOut.prospectId, cadencesStopped: 1 }]);
     expect(isProspectOptedOut(raw(ledger), optOut.prospectId)).toBe(true);
     expect(isProspectOptedOut(raw(ledger), keen.prospectId)).toBe(false);
+  });
+
+  it("an unsubscribe on a reply imported from another tool labels the imported row", () => {
+    const text = "Please stop messaging me.";
+    const optOut = seedThread([message("imported", { text })]);
+    ledger.recordLinkedInReply({
+      prospectId: optOut.prospectId,
+      source: "other-tool",
+      externalEventId: `other-tool:${randomUUID()}`,
+      occurredAt: "2026-11-01T10:00:00Z",
+      body: text,
+    });
+    optOut.deliver();
+    expect(eventIntent("imported")).toBeNull();
+    const stopCadences = vi.fn(() => 0);
+    store.setMessageIntent("account", "imported", label("unsubscribe"), { stopCadences });
+    expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
+    expect(
+      raw(ledger)
+        .query("SELECT intent FROM channel_events WHERE source='other-tool' AND prospect_id=?")
+        .get(optOut.prospectId),
+    ).toEqual({ intent: "unsubscribe" });
+    expect(isProspectOptedOut(raw(ledger), optOut.prospectId)).toBe(true);
   });
 });
 
@@ -358,6 +419,86 @@ describe("labelLinkedInReplyBatch", () => {
     const out = await labelLinkedInReplyBatch({ classify, store });
     expect(out).toMatchObject({ checked: 2, labelled: 1, failed: 1 });
     expect(store.messageIntent("account", "ok")?.intent).toBe("question");
+  });
+
+  it("a reply merged away while an earlier one is classified is not claimed or paid for", async () => {
+    store.saveMessages("account", [
+      message("first", { sent_at: "2026-11-03T10:00:00Z" }),
+      message("dupe", { sent_at: "2026-11-02T10:00:00Z" }),
+    ] as never);
+    const classify = vi.fn(async () => {
+      // Reconciliation merges the later batch item into an already-labelled message.
+      store.db.query("DELETE FROM messages WHERE id='dupe'").run();
+      return label("question");
+    });
+    const out = await labelLinkedInReplyBatch({ classify, store });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ checked: 2, labelled: 1, skipped: 1 });
+    expect(
+      store.db.query("SELECT count(*) AS n FROM message_intents WHERE message_id='dupe'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("a classify call that outlives its time is a failure, and its late label is never stored", async () => {
+    store.saveMessages("account", [message("stalled")] as never);
+    let finish: ((l: LinkedInReplyLabel) => void) | undefined;
+    const out = await labelLinkedInReplyBatch({
+      classify: () => new Promise((done) => (finish = done)),
+      store,
+      classifyTimeoutMs: 10,
+    });
+    expect(out).toMatchObject({ labelled: 0, failed: 1 });
+    finish?.(label("interested"));
+    await Promise.resolve();
+    expect(store.messageIntent("account", "stalled")).toBeNull();
+    expect(
+      store.db.query("SELECT attempts FROM message_intents WHERE message_id='stalled'").get(),
+    ).toEqual({ attempts: 1 });
+  });
+
+  it("an opt-out stop that failed is retried on the next pass until it completes", async () => {
+    const optOut = seedThread([message("stop", { text: "Please stop messaging me." })]);
+    optOut.deliver();
+    const stopCadences = vi
+      .fn<(l: Ledger, prospectId: number) => number>()
+      .mockImplementationOnce(() => {
+        throw new Error("database is locked");
+      })
+      .mockImplementation(() => 2);
+    const classify = vi.fn(async () => label("unsubscribe"));
+    const first = await labelLinkedInReplyBatch({ classify, stopCadences, store });
+    expect(first).toMatchObject({ labelled: 1, cadencesStopped: 0 });
+    expect(store.messageIntent("account", "stop")?.intent).toBe("unsubscribe");
+
+    const second = await labelLinkedInReplyBatch({ classify, stopCadences, store });
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(second).toMatchObject({ checked: 0, cadencesStopped: 2 });
+    expect(stopCadences).toHaveBeenCalledTimes(2);
+    expect(stopCadences).toHaveBeenLastCalledWith(expect.any(Ledger), optOut.prospectId);
+
+    // Done: never stopped again.
+    await labelLinkedInReplyBatch({ classify, stopCadences, store });
+    expect(stopCadences).toHaveBeenCalledTimes(2);
+  });
+
+  it("an opt-out labelled before its reply was delivered stops cadences once delivered", async () => {
+    const optOut = seedThread([message("early", { text: "Please stop messaging me." })]);
+    const stopCadences = vi.fn(() => 1);
+    await labelLinkedInReplyBatch({
+      classify: async () => label("unsubscribe"),
+      stopCadences,
+      store,
+    });
+    expect(stopCadences).not.toHaveBeenCalled();
+    optOut.deliver();
+    const out = await labelLinkedInReplyBatch({
+      classify: async () => label("unsubscribe"),
+      stopCadences,
+      store,
+    });
+    expect(out.cadencesStopped).toBe(1);
+    expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
+    expect(eventIntent("early")?.intent).toBe("unsubscribe");
   });
 
   it("a dry run classifies without storing", async () => {

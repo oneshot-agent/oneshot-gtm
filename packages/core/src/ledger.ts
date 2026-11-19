@@ -82,6 +82,7 @@ import {
   clearCadenceSendError as cadClearCadenceSendError,
   recordLinkedInReply as cadRecordLinkedInReply,
   setLinkedInReplyIntent as cadSetLinkedInReplyIntent,
+  setChannelEventIntent as cadSetChannelEventIntent,
   suppressCadencesForReply,
   recordProspectReply as cadRecordProspectReply,
   recordSequenceEvent as cadRecordSequenceEvent,
@@ -1146,6 +1147,11 @@ export class Ledger {
     intentReview?: boolean;
   }): number[] {
     return cadSetLinkedInReplyIntent(this.db, input);
+  }
+
+  /** @see ledger-cadence.ts#setChannelEventIntent */
+  setChannelEventIntent(input: { id: number; intent: string; intentReview?: boolean }): boolean {
+    return cadSetChannelEventIntent(this.db, input);
   }
 
   /**
