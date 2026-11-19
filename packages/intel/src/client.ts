@@ -315,6 +315,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     return out;
   } catch (err) {
     if (!isAvailabilityFailure(err)) throw err;
+    const primarySpentUsd = err instanceof LlmError ? (err.spentUsd ?? 0) : 0;
     const status = err instanceof LlmError ? (err.status ?? null) : null;
     const retryAfterMs = err instanceof LlmError ? (err.retryAfterMs ?? 0) : 0;
     const opened = Date.now() + Math.min(Math.max(BREAKER_MS, retryAfterMs), BREAKER_MAX_MS);
@@ -333,7 +334,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       },
       "warn",
     );
-    return run(to);
+    return plusCost(await run(to), primarySpentUsd);
   }
 }
 
@@ -397,15 +398,18 @@ async function completeOnRoute(
       }
       if (overRetryBudget) {
         logEvent("llm.error", { ...ctx, retry_after_ms: retryAfterMs }, "error");
-        throw new LlmError(
+        const tooLong = new LlmError(
           `${provider} asked us to wait ${Math.round((retryAfterMs as number) / 1000)}s (Retry-After), ` +
             `longer than the ${MAX_RETRY_AFTER_MS / 1000}s retry budget — giving up instead of ` +
             `burning attempts on a guaranteed-failing retry.`,
           status ?? undefined,
           retryAfterMs,
         );
+        tooLong.spentUsd = spentUsd || undefined;
+        throw tooLong;
       }
       logEvent("llm.error", ctx, "error");
+      if (err instanceof LlmError) err.spentUsd = spentUsd || undefined;
       throw err;
     }
   }

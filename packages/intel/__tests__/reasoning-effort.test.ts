@@ -16,6 +16,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const {
   complete,
+  LlmError,
   LlmTruncatedError,
   MANDATORY_REASONING_ALLOWANCE_TOKENS,
   REASONING_ALLOWANCE_TOKENS,
@@ -283,6 +284,48 @@ describe("llmReasoningEffort set", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("every failed attempt's cut-off cost is on the final error", async () => {
+    vi.useFakeTimers();
+    try {
+      state.cfg["llmReasoningEffort"] = "medium";
+      let calls = 0;
+      stubFetch((_url, body) => {
+        calls++;
+        return calls % 2 === 1
+          ? cutOff(body, (body["max_tokens"] as number) - 3, 0.01)
+          : rejection(503, "down");
+      });
+      const pending = complete({ messages: msgs, maxTokens: 500, maxAttempts: 2 }).catch(
+        (e: unknown) => e,
+      );
+      await vi.runAllTimersAsync();
+      const err = await pending;
+      expect(calls).toBe(4);
+      expect(err).toBeInstanceOf(LlmError);
+      expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.02);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the primary's cut-off cost is added to the fallback's answer", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "oa-key");
+    state.cfg = {
+      ...state.cfg,
+      llmReasoningEffort: "medium",
+      llmFallback: { provider: "openai", model: "gpt-test" },
+    };
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((url, body) => {
+      if (!url.startsWith(OR)) return { ...ok(), json: okCost(0.02) };
+      return body["max_tokens"] === first ? cutOff(body, first - 3, 0.01) : rejection(503, "down");
+    });
+    const out = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(out.provider).toBe("openai");
+    expect(out.costUsd).toBeCloseTo(0.03);
   });
 
   it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
