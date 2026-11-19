@@ -36,7 +36,7 @@ const message = (id: string, conversationId: string) =>
     sent_at: "2020-01-01",
     attachments: [],
   }) as unknown as LinkedInMessage;
-const label = (intent: "interested" | "meeting" | "question") => ({
+const label = (intent: "interested" | "meeting" | "question" | "unsubscribe") => ({
   intent,
   reason: null,
   confidence: 0.9,
@@ -248,6 +248,57 @@ it("a reconciled duplicate's label replaces failure state on the message it merg
   store.reconcileReplacementHistory("wallet:old");
   expect(store.messageIntent("wallet:old", "old-message")?.intent).toBe("interested");
   expect(intentRows("wallet:old")).toEqual([{ message_id: "old-message" }]);
+});
+
+it("a reconciled duplicate's unsubscribe replaces the kept message's other label", () => {
+  store.replaceAccount("wallet:old", account("new"), []);
+  store.saveConversation(
+    "wallet:old",
+    { ...conversation("new-chat"), provider_chat_id: "regenerated-chat" },
+    [],
+    "new",
+  );
+  store.saveMessages(
+    "wallet:old",
+    [{ ...message("new-message", "new-chat"), provider_message_id: "regenerated-message" }],
+    "new",
+  );
+  store.setMessageIntent("wallet:old", "old-message", label("question"));
+  store.db.query("INSERT INTO label_copies VALUES('wallet:old','old-message','beta',7)").run();
+  store.setMessageIntent("wallet:old", "new-message", label("unsubscribe"));
+  store.reconcileReplacementHistory("wallet:old");
+  expect(store.messageIntent("wallet:old", "old-message")?.intent).toBe("unsubscribe");
+  // Copied to the kept message's deliveries again.
+  expect(store.db.query("SELECT count(*) AS n FROM label_copies").get()).toEqual({ n: 0 });
+});
+
+it("a replacement carries deliveries and their ledger targets to the kept message", () => {
+  store.saveAccount({
+    key: "wallet:new",
+    wallet: "wallet",
+    workspace: "alpha",
+    account: account("new"),
+    sync: null,
+    checkedAt: null,
+    error: null,
+  });
+  store.saveConversation("wallet:new", conversation("new-chat"), [], "new");
+  store.saveMessages("wallet:new", [message("new-message", "new-chat")]);
+  store.setMessageIntent("wallet:new", "new-message", label("unsubscribe"));
+  store.db.query("INSERT INTO deliveries VALUES('wallet:new','new-message','beta',7)").run();
+  store.db
+    .query(
+      "INSERT INTO delivery_targets VALUES('wallet:new','new-message','beta',7,'ext:wallet:new:new-message')",
+    )
+    .run();
+  store.replaceAccount("wallet:old", account("new"), []);
+  expect(store.db.query("SELECT * FROM deliveries").all()).toEqual([
+    { account_key: "wallet:old", message_id: "old-message", workspace: "beta", prospect_id: 7 },
+  ]);
+  // The target keeps the event id the workspace ledger holds.
+  expect(store.db.query("SELECT message_id, event_key FROM delivery_targets").all()).toEqual([
+    { message_id: "old-message", event_key: "ext:wallet:new:new-message" },
+  ]);
 });
 
 it("does not collapse distinct identical messages from the same connection", () => {

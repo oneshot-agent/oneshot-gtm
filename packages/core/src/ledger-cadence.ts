@@ -1291,17 +1291,30 @@ export function recordLinkedInReply(
  */
 export function setLinkedInReplyIntent(
   db: Database,
-  input: { source: string; externalEventId: string; intent: string; intentReview?: boolean },
+  input: {
+    source: string;
+    externalEventId: string;
+    intent: string;
+    intentReview?: boolean;
+    /** Only this prospect's row. */
+    prospectId?: number;
+  },
 ): number[] {
   return (
     db
       .query(
         `UPDATE channel_events SET intent = ?, intent_review = ?
-          WHERE source = ? AND external_event_id = ? RETURNING prospect_id`,
+          WHERE source = ? AND external_event_id = ? AND (? IS NULL OR prospect_id = ?)
+          RETURNING prospect_id`,
       )
-      .all(input.intent, input.intentReview ? 1 : 0, input.source, input.externalEventId) as Array<{
-      prospect_id: number;
-    }>
+      .all(
+        input.intent,
+        input.intentReview ? 1 : 0,
+        input.source,
+        input.externalEventId,
+        input.prospectId ?? null,
+        input.prospectId ?? null,
+      ) as Array<{ prospect_id: number }>
   ).map((r) => r.prospect_id);
 }
 
@@ -1311,12 +1324,14 @@ export function setLinkedInReplyIntent(
  */
 export function setChannelEventIntent(
   db: Database,
-  input: { id: number; intent: string; intentReview?: boolean },
+  input: { id: number; prospectId: number; intent: string; intentReview?: boolean },
 ): boolean {
   return (
     db
-      .query(`UPDATE channel_events SET intent = ?, intent_review = ? WHERE id = ?`)
-      .run(input.intent, input.intentReview ? 1 : 0, input.id).changes > 0
+      .query(
+        `UPDATE channel_events SET intent = ?, intent_review = ? WHERE id = ? AND prospect_id = ?`,
+      )
+      .run(input.intent, input.intentReview ? 1 : 0, input.id, input.prospectId).changes > 0
   );
 }
 

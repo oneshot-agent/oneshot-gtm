@@ -18,7 +18,12 @@ import { Ledger, openLedgerDatabase } from "./ledger.ts";
 import { classifyReply } from "./reply-classify.ts";
 import { logEvent } from "./events.ts";
 import type { InboxEmail } from "./oneshot.ts";
-import { isReplyIntent, replyIntentMeta, type ReplyIntent } from "@oneshot-gtm/shared-types";
+import {
+  REPLY_INTENTS,
+  isReplyIntent,
+  replyIntentMeta,
+  type ReplyIntent,
+} from "@oneshot-gtm/shared-types";
 
 /**
  * The `channel_events` sources this install writes for a LinkedIn reply: the
@@ -230,6 +235,8 @@ const LABEL_MAX_ATTEMPTS = 3;
 const LABEL_CLAIM_MS = 5 * 60_000;
 /** A classify call (retries and fallback included) is abandoned after this, inside its claim. */
 const LABEL_CLASSIFY_TIMEOUT_MS = 4 * 60_000;
+/** Labels that opt the person out: one survives a merge with any other label. */
+const OPT_OUT_INTENTS: string[] = REPLY_INTENTS.filter((i) => i.optOut).map((i) => i.label);
 /** A failed label waits this long per failure before it is paid for again. */
 const LABEL_RETRY_BACKOFF_MS = 60 * 60_000;
 
@@ -284,6 +291,7 @@ export class LinkedInInboxStore {
       CREATE TABLE IF NOT EXISTS assignments(id INTEGER PRIMARY KEY,thread_key TEXT,old_owner TEXT,new_owner TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
       CREATE TABLE IF NOT EXISTS message_intents(account_key TEXT NOT NULL,message_id TEXT NOT NULL,intent TEXT,reason TEXT,confidence REAL,probs TEXT,classifier TEXT,cost_micros INTEGER,classified_at TEXT,review INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,claimed_until INTEGER,PRIMARY KEY(account_key,message_id));
       CREATE TABLE IF NOT EXISTS label_copies(account_key TEXT,message_id TEXT,workspace TEXT,prospect_id INTEGER,PRIMARY KEY(account_key,message_id,workspace,prospect_id));
+      CREATE TABLE IF NOT EXISTS delivery_targets(account_key TEXT,message_id TEXT,workspace TEXT,prospect_id INTEGER,event_key TEXT NOT NULL,PRIMARY KEY(account_key,message_id,workspace,prospect_id,event_key));
     `);
     this.addLegacyNames();
   }
@@ -403,7 +411,10 @@ export class LinkedInInboxStore {
           this.saveConversation(accountKey, t.conversation, matches, account.id);
         const kept = this.saveMessages(accountKey, this.allMessages(discoveredKey));
         // Labels move with their messages, so none is paid for again.
-        for (const [from, to] of kept) this.moveMessageIntent(discoveredKey, from, accountKey, to);
+        for (const [from, to] of kept) {
+          this.moveMessageIntent(discoveredKey, from, accountKey, to);
+          this.moveDeliveries(discoveredKey, from, accountKey, to);
+        }
         // The source copies have now been merged by stable provider IDs in this same transaction.
         this.db.query("DELETE FROM conversations WHERE account_key=?").run(discoveredKey);
         this.db.query("DELETE FROM messages WHERE account_key=?").run(discoveredKey);
@@ -806,6 +817,12 @@ export class LinkedInInboxStore {
           this.db
             .query("DELETE FROM deliveries WHERE account_key=? AND message_id=?")
             .run(accountKey, pair.fresh.id);
+          // The duplicate's ledger event is renamed or removed on delivery,
+          // whose replay records the kept message's targets afresh.
+          for (const table of ["delivery_targets", "label_copies"])
+            this.db
+              .query(`DELETE FROM ${table} WHERE account_key=? AND message_id=?`)
+              .run(accountKey, pair.fresh.id);
           // A label follows its message, as delivery does, so it is not paid for twice.
           this.moveMessageIntent(accountKey, pair.fresh.id, accountKey, pair.old.id);
         }
@@ -835,9 +852,8 @@ export class LinkedInInboxStore {
   ): UnlabelledLinkedInReply[] {
     if (!accountKeys.length || opts.limit <= 0) return [];
     const now = opts.now ?? Date.now();
-    const rows = this.db
-      .query<{ account_key: string; data: string }, Array<string | number>>(
-        `SELECT m.account_key, m.data FROM messages m
+    const page = this.db.query<{ account_key: string; data: string }, Array<string | number>>(
+      `SELECT m.account_key, m.data FROM messages m
           LEFT JOIN message_intents mi ON mi.account_key = m.account_key AND mi.message_id = m.id
           WHERE m.account_key IN (${accountKeys.map(() => "?").join(",")})
             AND json_extract(m.data,'$.direction') = 'inbound'
@@ -845,21 +861,29 @@ export class LinkedInInboxStore {
             AND (mi.message_id IS NULL OR (mi.intent IS NULL AND (
               (mi.attempts < ? AND (mi.claimed_until IS NULL OR mi.claimed_until <= ?))
               OR (? AND mi.attempts >= ?))))
-          ORDER BY json_extract(m.data,'$.sent_at') DESC, m.id DESC`,
-      )
-      .all(
+          ORDER BY json_extract(m.data,'$.sent_at') DESC, m.id DESC
+          LIMIT ? OFFSET ?`,
+    );
+    // Read in pages: automatic replies are filtered here, after the read.
+    const size = Math.max(opts.limit * 2, 100);
+    const out: UnlabelledLinkedInReply[] = [];
+    for (let offset = 0; out.length < opts.limit; offset += size) {
+      const rows = page.all(
         ...accountKeys,
         LABEL_MAX_ATTEMPTS,
         now,
         opts.includeExhausted ? 1 : 0,
         LABEL_MAX_ATTEMPTS,
+        size,
+        offset,
       );
-    const out: UnlabelledLinkedInReply[] = [];
-    for (const r of rows) {
-      const message = JSON.parse(r.data) as LinkedInMessage;
-      if (!isHumanLinkedInReply(message)) continue;
-      out.push({ accountKey: r.account_key, message });
-      if (out.length >= opts.limit) break;
+      for (const r of rows) {
+        const message = JSON.parse(r.data) as LinkedInMessage;
+        if (!isHumanLinkedInReply(message)) continue;
+        out.push({ accountKey: r.account_key, message });
+        if (out.length >= opts.limit) break;
+      }
+      if (rows.length < size) break;
     }
     return out;
   }
@@ -868,15 +892,16 @@ export class LinkedInInboxStore {
    * servers and a CLI backfill can race), and the claim lapses on its own if
    * the winner dies mid-call. Returns the claim, which the store and failure
    * calls check, so a winner whose claim lapsed writes nothing. Only a message
-   * the store still holds can be claimed: one merged into another meanwhile
-   * is not paid for again.
+   * the store still holds, undeleted, can be claimed: one merged into another
+   * meanwhile is not paid for again.
    */
   claimMessageIntent(accountKey: string, messageId: string, now = Date.now()): number | null {
     const claim = now + LABEL_CLAIM_MS;
     const changes = this.db
       .query(
         `INSERT INTO message_intents(account_key,message_id,claimed_until)
-           SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM messages WHERE account_key=? AND id=?)
+           SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM messages WHERE account_key=? AND id=?
+             AND NOT coalesce(json_extract(data,'$.deleted'), 0))
          ON CONFLICT(account_key,message_id) DO UPDATE SET claimed_until=excluded.claimed_until
          WHERE message_intents.intent IS NULL AND message_intents.attempts < ?
            AND (message_intents.claimed_until IS NULL OR message_intents.claimed_until <= ?)`,
@@ -939,11 +964,13 @@ export class LinkedInInboxStore {
   }
   /**
    * Move a message's label row to the id its message is kept under. A stored
-   * label replaces claim or failure state there; a stored label there stays.
+   * label replaces claim or failure state there; a stored label there stays,
+   * unless the moved one is an opt-out and it is not: the opt-out must hold.
    */
   private moveMessageIntent(fromKey: string, fromId: string, toKey: string, toId: string) {
     if (fromKey === toKey && fromId === toId) return;
-    this.db
+    const optOuts = OPT_OUT_INTENTS.map(() => "?").join(",");
+    const replaced = this.db
       .query(
         `INSERT INTO message_intents
          SELECT ?,?,intent,reason,confidence,probs,classifier,cost_micros,classified_at,review,attempts,claimed_until
@@ -952,12 +979,41 @@ export class LinkedInInboxStore {
            confidence=excluded.confidence,probs=excluded.probs,classifier=excluded.classifier,
            cost_micros=excluded.cost_micros,classified_at=excluded.classified_at,review=excluded.review,
            attempts=excluded.attempts,claimed_until=excluded.claimed_until
-         WHERE message_intents.intent IS NULL AND excluded.intent IS NOT NULL`,
+         WHERE excluded.intent IS NOT NULL AND (message_intents.intent IS NULL OR
+           (excluded.intent IN (${optOuts}) AND message_intents.intent NOT IN (${optOuts})))`,
       )
-      .run(toKey, toId, fromKey, fromId);
+      .run(toKey, toId, fromKey, fromId, ...OPT_OUT_INTENTS, ...OPT_OUT_INTENTS).changes;
+    // A replaced label is copied to the kept message's deliveries again.
+    if (replaced)
+      this.db
+        .query("DELETE FROM label_copies WHERE account_key=? AND message_id=?")
+        .run(toKey, toId);
     this.db
       .query("DELETE FROM message_intents WHERE account_key=? AND message_id=?")
       .run(fromKey, fromId);
+  }
+  /**
+   * Carry a message's deliveries and their ledger targets to the id it is
+   * kept under. Targets keep their original event ids, which the ledgers
+   * still hold; the copies are redone.
+   */
+  private moveDeliveries(fromKey: string, fromId: string, toKey: string, toId: string) {
+    if (fromKey === toKey && fromId === toId) return;
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO deliveries SELECT ?,?,workspace,prospect_id FROM deliveries WHERE account_key=? AND message_id=?",
+      )
+      .run(toKey, toId, fromKey, fromId);
+    this.db
+      .query(
+        "INSERT OR IGNORE INTO delivery_targets SELECT ?,?,workspace,prospect_id,event_key FROM delivery_targets WHERE account_key=? AND message_id=?",
+      )
+      .run(toKey, toId, fromKey, fromId);
+    this.db.query("DELETE FROM label_copies WHERE account_key=? AND message_id=?").run(toKey, toId);
+    for (const table of ["deliveries", "delivery_targets", "label_copies"])
+      this.db
+        .query(`DELETE FROM ${table} WHERE account_key=? AND message_id=?`)
+        .run(fromKey, fromId);
   }
   /** A message's stored label, or null when it has none. */
   messageIntent(accountKey: string, messageId: string): StoredLinkedInReplyLabel | null {
@@ -988,12 +1044,12 @@ export class LinkedInInboxStore {
     return out;
   }
   /**
-   * Store a message's label and copy it onto the reply's row in every
-   * workspace it was delivered to; `unsubscribe` also runs `stopCadences`
-   * there (plays' stopCadencesForOptOut: core cannot import it). A stored
-   * label is never replaced, and with `claim` nothing is written unless that
-   * claim still holds (unexpired, and not retaken). Null when nothing was
-   * stored. A copy that throws stays pending for `copyLabels` to retry.
+   * Store a message's label and copy it to every workspace it was delivered
+   * to; an opt-out also runs `stopCadences` (plays' stopCadencesForOptOut:
+   * core cannot import it). A stored label is never replaced. With `claim`
+   * nothing is written unless the claim holds (unexpired, not retaken) and
+   * the message is undeleted with the classified `text`. Null when nothing
+   * was stored; a failed copy is logged and left for `copyLabels`.
    */
   setMessageIntent(
     accountKey: string,
@@ -1003,6 +1059,8 @@ export class LinkedInInboxStore {
       claim?: number | null;
       stopCadences?: ((ledger: Ledger, prospectId: number) => number) | undefined;
       now?: number;
+      /** The text the label was classified from; checked with `claim`. */
+      text?: string | null;
     } = {},
   ): LinkedInLabelDelivery[] | null {
     const claim = opts.claim ?? null;
@@ -1025,9 +1083,22 @@ export class LinkedInInboxStore {
               `UPDATE message_intents SET intent=?,reason=?,confidence=?,probs=?,classifier=?,
                  cost_micros=?,classified_at=?,review=?,claimed_until=NULL
                WHERE account_key=? AND message_id=? AND intent IS NULL
-                 AND claimed_until=? AND claimed_until>?`,
+                 AND claimed_until=? AND claimed_until>?
+                 AND EXISTS (SELECT 1 FROM messages WHERE account_key=? AND id=?
+                   AND NOT coalesce(json_extract(data,'$.deleted'), 0)
+                   AND (? IS NULL OR coalesce(json_extract(data,'$.text'), '') = ?))`,
             )
-            .run(...values, accountKey, messageId, claim, opts.now ?? Date.now()).changes
+            .run(
+              ...values,
+              accountKey,
+              messageId,
+              claim,
+              opts.now ?? Date.now(),
+              accountKey,
+              messageId,
+              opts.text ?? null,
+              opts.text ?? null,
+            ).changes
         : this.db
             .query(
               `INSERT INTO message_intents(account_key,message_id,intent,reason,confidence,probs,classifier,cost_micros,classified_at,review,claimed_until)
@@ -1044,17 +1115,15 @@ export class LinkedInInboxStore {
       messageId,
       stopCadences: opts.stopCadences,
     });
-    if (copied.errors.length) throw copied.errors[0];
+    for (const err of copied.errors) logLabelCopyFailed(err);
     return copied.deliveries;
   }
   /**
-   * Finish the copies of stored labels on these accounts (or one message's):
-   * the label onto the reply's row in each workspace it was delivered to,
-   * and for an opt-out `stopCadences` there. A delivery stays pending until
-   * both are done, so a copy that failed, or a reply delivered after it was
-   * labelled, is finished by a later pass. A reply imported from another tool
-   * (no OneShot row) gets the label on its imported row. Each delivery is
-   * tried on its own; their errors are returned, not thrown.
+   * Copy stored labels onto each delivery's ledger targets (recorded when it
+   * was delivered), and for an opt-out run `stopCadences` there. A delivery
+   * stays pending until every target took the label and the stop ran, so a
+   * later pass finishes a failed copy or a reply labelled before delivery.
+   * Errors are returned per delivery, not thrown.
    */
   copyLabels(
     accountKeys: string[],
@@ -1074,14 +1143,12 @@ export class LinkedInInboxStore {
           prospect_id: number;
           intent: string;
           review: number;
-          data: string | null;
         },
         string[]
       >(
-        `SELECT d.account_key, d.message_id, d.workspace, d.prospect_id, mi.intent, mi.review, m.data
+        `SELECT d.account_key, d.message_id, d.workspace, d.prospect_id, mi.intent, mi.review
            FROM deliveries d
            JOIN message_intents mi ON mi.account_key = d.account_key AND mi.message_id = d.message_id
-           LEFT JOIN messages m ON m.account_key = d.account_key AND m.id = d.message_id
           WHERE d.account_key IN (${accountKeys.map(() => "?").join(",")})
             ${opts.messageId != null ? "AND d.message_id = ?" : ""}
             AND mi.intent IS NOT NULL
@@ -1091,6 +1158,9 @@ export class LinkedInInboxStore {
       )
       .all(...accountKeys, ...(opts.messageId != null ? [opts.messageId] : []));
     if (!pending.length) return out;
+    const targetsOf = this.db.query<{ event_key: string }, [string, string, string, number]>(
+      "SELECT event_key FROM delivery_targets WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=?",
+    );
     const homes = new Map(replyWorkspaces().map((w) => [w.name, w.home]));
     const handles = new LinkedInDeliveryHandles();
     try {
@@ -1102,21 +1172,32 @@ export class LinkedInInboxStore {
           const optOut = replyIntentMeta(d.intent)?.optOut === true;
           // An opt-out with nothing to stop it stays pending for a caller that can.
           if (optOut && !opts.stopCadences) continue;
+          let done = true;
           if (isReplyIntent(d.intent)) {
+            const targets = targetsOf
+              .all(d.account_key, d.message_id, d.workspace, d.prospect_id)
+              .map((t) => t.event_key);
+            // Not replayed since targets were recorded: the next sync does it.
+            if (!targets.length) continue;
             const ledger = handles.ledger(home);
             const intent = { intent: d.intent, intentReview: d.review === 1 };
-            const labelled = ledger.setLinkedInReplyIntent({
-              source: "oneshot-linkedin",
-              externalEventId: `${d.account_key}:${d.message_id}`,
-              ...intent,
-            });
-            if (!labelled.length && d.data)
-              for (const e of legacyLinkedInReplyEvents(
-                ledger,
-                d.prospect_id,
-                JSON.parse(d.data) as LinkedInMessage,
-              ))
-                ledger.setChannelEventIntent({ id: e.id, ...intent });
+            for (const key of targets) {
+              const labelled = key.startsWith("row:")
+                ? ledger.setChannelEventIntent({
+                    id: Number(key.slice(4)),
+                    prospectId: d.prospect_id,
+                    ...intent,
+                  })
+                : key.startsWith("ext:")
+                  ? ledger.setLinkedInReplyIntent({
+                      source: "oneshot-linkedin",
+                      externalEventId: key.slice(4),
+                      prospectId: d.prospect_id,
+                      ...intent,
+                    }).length > 0
+                  : true;
+              if (!labelled) done = false;
+            }
             const cadencesStopped =
               optOut && opts.stopCadences ? opts.stopCadences(ledger, d.prospect_id) : 0;
             out.deliveries.push({
@@ -1125,9 +1206,10 @@ export class LinkedInInboxStore {
               cadencesStopped,
             });
           }
-          this.db
-            .query("INSERT OR IGNORE INTO label_copies VALUES(?,?,?,?)")
-            .run(d.account_key, d.message_id, d.workspace, d.prospect_id);
+          if (done)
+            this.db
+              .query("INSERT OR IGNORE INTO label_copies VALUES(?,?,?,?)")
+              .run(d.account_key, d.message_id, d.workspace, d.prospect_id);
         } catch (err) {
           out.errors.push(err instanceof Error ? err : new Error(String(err)));
         }
@@ -1212,9 +1294,13 @@ export class LinkedInInboxStore {
           match.workspace === t.owner?.workspace && match.prospectId === t.owner?.prospectId;
         // The same reply already imported from another tool: keep that
         // record and do not count the message a second time.
-        const legacy = isOwner && legacyLinkedInReplyEvents(ledger, match.prospectId, m).length > 0;
+        const imported = isOwner ? legacyLinkedInReplyEvents(ledger, match.prospectId, m) : [];
+        const legacy = imported.length > 0;
         // Always replay suppression. Delivery markers deduplicate attribution, never suppression.
         const eventId = `${t.accountKey}:${m.id}`;
+        // The ledger rows a label is copied onto: `none` when another
+        // prospect holds the event, so there is nothing to label here.
+        let targets: string[] = [];
         const existing = handles
           .database(match.home)
           .query(
@@ -1240,13 +1326,20 @@ export class LinkedInInboxStore {
           // A human LinkedIn reply is new evidence for the prospect's angle
           // (#813), exactly as a human email reply is: proposes a revision.
           if (!recorded.duplicate) triggerAngleRefresh(match.prospectId);
+          targets = [`ext:${eventId}`];
         } else {
           ledger.suppressCadencesForReply(match.prospectId, t.accountKey);
+          targets = legacy ? imported.map((e) => `row:${e.id}`) : ["none"];
         }
-        if (isOwner)
+        if (isOwner) {
           this.db
             .query("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)")
             .run(t.accountKey, m.id, match.workspace, match.prospectId);
+          for (const key of targets)
+            this.db
+              .query("INSERT OR IGNORE INTO delivery_targets VALUES(?,?,?,?,?)")
+              .run(t.accountKey, m.id, match.workspace, match.prospectId, key);
+        }
       }
     }
   }
@@ -1546,21 +1639,15 @@ export async function labelLinkedInReplyBatch(opts: {
     }
   };
   const accountKeys = workspaceLinkedInAccountKeys(store, workspace);
-  const copyFailed = (err: unknown) =>
-    logEvent(
-      "linkedin.reply.label_copy_failed",
-      { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
-      "warn",
-    );
   // Labels stored earlier whose copy or opt-out stop did not finish: a
   // workspace was locked, or the reply was delivered after it was labelled.
   if (!opts.dryRun) {
     try {
       const retried = store.copyLabels(accountKeys, { stopCadences: opts.stopCadences });
       for (const d of retried.deliveries) out.cadencesStopped += d.cadencesStopped;
-      for (const err of retried.errors) copyFailed(err);
+      for (const err of retried.errors) logLabelCopyFailed(err);
     } catch (err) {
-      copyFailed(err);
+      logLabelCopyFailed(err);
     }
   }
   const rows = store.unlabelledReplies(accountKeys, {
@@ -1609,9 +1696,10 @@ export async function labelLinkedInReplyBatch(opts: {
       const stored = store.setMessageIntent(accountKey, m.id, label, {
         claim,
         stopCadences: opts.stopCadences,
+        text: m.text ?? "",
       });
-      // The claim lapsed (another caller may have taken the message, and its
-      // label stands): nothing was stored.
+      // The claim lapsed (another caller's label stands), or the message was
+      // deleted or edited meanwhile: nothing was stored.
       if (!stored) {
         out.skipped++;
         continue;
@@ -1626,8 +1714,7 @@ export async function labelLinkedInReplyBatch(opts: {
         logEvent("linkedin.reply.label_store_failed", { message_120 }, "warn");
         continue;
       }
-      // Stored, but a workspace copy or opt-out stop failed: that delivery
-      // stays pending, and the next labelling pass retries it (copyLabels).
+      // Stored, but the copy failed outside a delivery: the next pass retries it.
       logEvent("linkedin.reply.label_copy_failed", { message_120 }, "warn");
     }
     for (const d of delivered) out.cadencesStopped += d.cadencesStopped;
@@ -1660,4 +1747,12 @@ async function withinClaim<T>(work: Promise<T>, ms: number): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function logLabelCopyFailed(err: unknown) {
+  logEvent(
+    "linkedin.reply.label_copy_failed",
+    { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+    "warn",
+  );
 }

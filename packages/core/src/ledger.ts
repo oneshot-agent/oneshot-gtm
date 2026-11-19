@@ -1145,12 +1145,18 @@ export class Ledger {
     externalEventId: string;
     intent: string;
     intentReview?: boolean;
+    prospectId?: number;
   }): number[] {
     return cadSetLinkedInReplyIntent(this.db, input);
   }
 
   /** @see ledger-cadence.ts#setChannelEventIntent */
-  setChannelEventIntent(input: { id: number; intent: string; intentReview?: boolean }): boolean {
+  setChannelEventIntent(input: {
+    id: number;
+    prospectId: number;
+    intent: string;
+    intentReview?: boolean;
+  }): boolean {
     return cadSetChannelEventIntent(this.db, input);
   }
 

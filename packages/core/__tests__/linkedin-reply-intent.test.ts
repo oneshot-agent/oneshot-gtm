@@ -83,7 +83,7 @@ function seedThread(messages: Array<ReturnType<typeof message>>) {
   const matches = [
     { workspace, home, prospectId, name: "Ada", profile: canonicalLinkedInProfileKey(url)! },
   ];
-  return { prospectId, deliver: () => store.deliverAll(store.threads(), matches) };
+  return { prospectId, chat, deliver: () => store.deliverAll(store.threads(), matches) };
 }
 
 function eventIntent(messageId: string) {
@@ -217,6 +217,42 @@ describe("message labels in the shared store", () => {
     expect(store.claimMessageIntent("account", "late", expired)).not.toBeNull();
   });
 
+  it("a claimed label is not stored once its message was deleted or edited", () => {
+    store.saveMessages("account", [message("edited"), message("deleted")] as never);
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const text = message("edited").text;
+    const edited = store.claimMessageIntent("account", "edited", now);
+    const deleted = store.claimMessageIntent("account", "deleted", now);
+    store.saveMessages("account", [
+      message("edited", { text: "Actually, not now." }),
+      message("deleted", { deleted: true }),
+    ] as never);
+    const at = { now: now + 60_000, text };
+    expect(
+      store.setMessageIntent("account", "edited", label("interested"), { claim: edited, ...at }),
+    ).toBe(null);
+    expect(
+      store.setMessageIntent("account", "deleted", label("interested"), { claim: deleted, ...at }),
+    ).toBe(null);
+    expect(store.messageIntent("account", "edited")).toBeNull();
+    expect(store.messageIntent("account", "deleted")).toBeNull();
+  });
+
+  it("pages past automatic replies to fill the batch", () => {
+    store.saveMessages("account", [
+      ...Array.from({ length: 150 }, (_, i) =>
+        message(`auto-${i}`, {
+          text: "I am currently out of the office until Monday.",
+          sent_at: `2026-11-10T10:${String(i % 60).padStart(2, "0")}:00Z`,
+        }),
+      ),
+      message("human", { sent_at: "2026-10-01T10:00:00Z" }),
+    ] as never);
+    expect(store.unlabelledReplies(["account"], { limit: 1 }).map((r) => r.message.id)).toEqual([
+      "human",
+    ]);
+  });
+
   it("a claimed failure for a row merged away meanwhile does not revive it", () => {
     store.saveMessages("account", [message("merged")] as never);
     const now = Date.parse("2026-11-18T12:00:00Z");
@@ -228,7 +264,9 @@ describe("message labels in the shared store", () => {
     ).toEqual({ n: 0 });
   });
 
-  it("claims only a message the store still holds", () => {
+  it("claims only a message the store still holds, undeleted", () => {
+    store.saveMessages("account", [message("removed", { deleted: true })] as never);
+    expect(store.claimMessageIntent("account", "removed")).toBeNull();
     expect(store.claimMessageIntent("account", "never-saved")).toBeNull();
     expect(
       store.db
@@ -311,6 +349,11 @@ describe("labels reach the workspace ledger", () => {
     });
     optOut.deliver();
     expect(eventIntent("imported")).toBeNull();
+    // Edited after delivery: the imported row is found by the id recorded then.
+    store.saveMessages("account", [
+      { ...message("imported", { text: "Please stop." }), conversation_id: optOut.chat },
+    ] as never);
+    expect(store.messages("account", optOut.chat)[0]?.text).toBe("Please stop.");
     const stopCadences = vi.fn(() => 0);
     store.setMessageIntent("account", "imported", label("unsubscribe"), { stopCadences });
     expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
@@ -320,6 +363,16 @@ describe("labels reach the workspace ledger", () => {
         .get(optOut.prospectId),
     ).toEqual({ intent: "unsubscribe" });
     expect(isProspectOptedOut(raw(ledger), optOut.prospectId)).toBe(true);
+  });
+
+  it("a delivery whose ledger row took no label stays pending", () => {
+    const { deliver } = seedThread([message("lost")]);
+    deliver();
+    raw(ledger).query("DELETE FROM channel_events WHERE external_event_id='account:lost'").run();
+    expect(store.setMessageIntent("account", "lost", label("meeting"))).toHaveLength(1);
+    expect(
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='lost'").get(),
+    ).toEqual({ n: 0 });
   });
 });
 
@@ -482,7 +535,7 @@ describe("labelLinkedInReplyBatch", () => {
   });
 
   it("an opt-out labelled before its reply was delivered stops cadences once delivered", async () => {
-    const optOut = seedThread([message("early", { text: "Please stop messaging me." })]);
+    const optOut = seedThread([message("predelivery", { text: "Please stop messaging me." })]);
     const stopCadences = vi.fn(() => 1);
     await labelLinkedInReplyBatch({
       classify: async () => label("unsubscribe"),
@@ -498,7 +551,7 @@ describe("labelLinkedInReplyBatch", () => {
     });
     expect(out.cadencesStopped).toBe(1);
     expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
-    expect(eventIntent("early")?.intent).toBe("unsubscribe");
+    expect(eventIntent("predelivery")?.intent).toBe("unsubscribe");
   });
 
   it("a dry run classifies without storing", async () => {
