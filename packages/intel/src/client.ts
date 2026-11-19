@@ -483,11 +483,12 @@ function dispatch(
     case "proxy": {
       const baseUrl = route.baseUrl ?? proxyBaseUrl(undefined);
       const effort = route.reasoningEffort;
+      const refusalKey = `proxy\n${baseUrl}\n${model}\n${effort}`;
       if (proxyShape(model) === "anthropic") {
         const claude: AnthropicArgs = { key, model, input, timeoutMs, baseUrl, provider: "proxy" };
         if (!effort || !anthropicTakesEffort(model)) return anthropicComplete(claude);
         return withEffortOrToday(
-          `proxy\n${model}\n${effort}`,
+          refusalKey,
           () => anthropicComplete({ ...claude, reasoningEffort: effort }),
           () => anthropicComplete(claude),
         );
@@ -502,7 +503,7 @@ function dispatch(
       };
       if (!effort) return openaiCompatibleComplete(chat);
       return withEffortOrToday(
-        `proxy\n${model}\n${effort}`,
+        refusalKey,
         () =>
           openaiCompatibleComplete({
             ...chat,
@@ -606,7 +607,7 @@ async function completeAtEffort(
   return out;
 }
 
-/** Proxy routes whose effort drew a 400: they get today's request from then on. */
+/** Proxy endpoint + model + effort that drew a 400: today's request from then on. */
 const effortRefused = new Set<string>();
 
 /** The proxy's effort step: a 400 about reasoning or effort falls back to today's request. */

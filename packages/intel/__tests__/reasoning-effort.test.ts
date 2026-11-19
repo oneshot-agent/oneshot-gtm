@@ -313,6 +313,24 @@ describe("llmReasoningEffort on the proxy", () => {
     expect(sent(fn, 2).body["reasoning_effort"]).toBeUndefined();
   });
 
+  it("a refusal on one endpoint does not drop the effort on another", async () => {
+    const OTHER = "http://127.0.0.1:8318";
+    state.cfg["llmReasoningEffort"] = "high";
+    const fn = stubFetch((url, body) =>
+      url.startsWith(PROXY) && body["reasoning_effort"]
+        ? rejection(400, "invalid reasoning_effort: high")
+        : ok(),
+    );
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    state.cfg["llmBaseUrl"] = OTHER;
+    await complete({ messages: msgs, maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(sent(fn, 2).url).toBe(`${OTHER}/v1/chat/completions`);
+    expect(sent(fn, 2).body["reasoning_effort"]).toBe("high");
+    expect(sent(fn, 2).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
+  });
+
   it("a 400 about something else is not retried", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
     const fn = stubFetch(() => rejection(400, "messages must not be empty"));
