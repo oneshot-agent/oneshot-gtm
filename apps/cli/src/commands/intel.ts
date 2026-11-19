@@ -14,7 +14,6 @@ import {
   workspaceLinkedInAccountKeys,
   type LinkedInInboxStore,
 } from "@oneshot-gtm/core";
-import { stopCadencesForOptOut } from "@oneshot-gtm/plays";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
 import { bail, box, c, header, note, ok, warn } from "../output.ts";
@@ -151,8 +150,9 @@ const LINKEDIN_BACKFILL_BATCH = 25;
 /**
  * `backfill-intent --linkedin`: label this workspace's unlabelled LinkedIn
  * replies in batches until none is left (or `limit` are done), under the
- * server pass's claim, so each is paid for once. An `unsubscribe` label stops
- * that person's cadences, as the server pass does. A dry run classifies (still
+ * server pass's claim, so each is paid for once. It stores labels only: the
+ * workspace server's next pass copies them to the workspaces and applies an
+ * `unsubscribe`, so one process writes those. A dry run classifies (still
  * paid) one batch of up to `limit` (default 200) and writes nothing.
  */
 async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void> {
@@ -188,20 +188,19 @@ async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void
     else ok(`would label ${out.labels.length}, ${out.failed} failed.`);
     return;
   }
-  const total = { labelled: 0, failed: 0, skipped: 0, cadencesStopped: 0, costMicros: 0 };
+  const total = { labelled: 0, failed: 0, skipped: 0, costMicros: 0 };
   while (opts.limit == null || total.labelled + total.failed < opts.limit) {
     const left = opts.limit == null ? Infinity : opts.limit - total.labelled - total.failed;
     const out = await labelLinkedInReplyBatch({
       classify: (email) => classifyReplyIntent(email),
-      stopCadences: (ledger, prospectId) => stopCadencesForOptOut(prospectId, ledger, "linkedin"),
       limit: Math.min(LINKEDIN_BACKFILL_BATCH, left),
       store,
+      copy: false,
     });
     print(out.labels);
     total.labelled += out.labelled;
     total.failed += out.failed;
     total.skipped += out.skipped;
-    total.cadencesStopped += out.cadencesStopped;
     total.costMicros += out.costMicros;
     // Nothing left, or only messages another caller holds right now.
     if (out.checked === 0 || out.labelled + out.failed === 0) break;
@@ -213,9 +212,8 @@ async function backfillLinkedInIntent(opts: BackfillIntentOptions): Promise<void
     `labelled ${total.labelled} LinkedIn repl${total.labelled === 1 ? "y" : "ies"}` +
       (total.failed > 0 ? `, ${total.failed} failed (retried later)` : "") +
       (total.skipped > 0 ? `, ${total.skipped} already being labelled` : "") +
-      (total.cadencesStopped > 0 ? `, ${total.cadencesStopped} cadences stopped` : "") +
       cost +
-      ".",
+      ". The workspace server copies them to the workspaces and applies unsubscribes on its next pass.",
   );
 }
 

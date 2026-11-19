@@ -14,6 +14,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 const { Ledger, LinkedInInboxStore, canonicalLinkedInProfileKey, configDir, currentWorkspaceName } =
   await import("@oneshot-gtm/core");
 const { commandIntelBackfillIntent } = await import("../src/commands/intel.ts");
+const { stopCadencesForOptOut } = await import("@oneshot-gtm/plays");
 
 let store: InstanceType<typeof LinkedInInboxStore>;
 const result = (intent: string) => ({
@@ -115,7 +116,7 @@ it("says how many replies failed every retry, and --retry-failed labels them", a
   expect(labelled()).toBe(30);
 });
 
-it("an unsubscribe stops the person's live cadences; a dry run stops nothing", async () => {
+it("stores an unsubscribe and leaves its stop to the server's pass; a dry run stores nothing", async () => {
   const ledger = new Ledger(join(configDir(), "ledger.sqlite"));
   try {
     const slug = `ada-${randomUUID().slice(0, 8)}`;
@@ -162,6 +163,11 @@ it("an unsubscribe stops the person's live cadences; a dry run stops nothing", a
 
     await commandIntelBackfillIntent({ linkedin: true, linkedinStore: store });
     expect(store.messageIntent("mine", "stop")?.intent).toBe("unsubscribe");
+    // The CLI never copies: only the workspace server writes the ledgers.
+    expect(ledger.getCadence(prospectId, "intro")?.status).toBe("active");
+    store.copyLabels(["mine"], {
+      stopCadences: (l, id) => stopCadencesForOptOut(id, l, "linkedin"),
+    });
     expect(ledger.getCadence(prospectId, "intro")?.status).toBe("unsubscribed");
   } finally {
     ledger.close();

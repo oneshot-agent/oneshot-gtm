@@ -471,6 +471,50 @@ describe("labels reach the workspace ledger", () => {
     ).toEqual({ n: 1 });
   });
 
+  it("a reply whose every imported row is gone keeps its copy pending", () => {
+    const text = "Not now.";
+    const first = seedThread([message("orphaned", { text })]);
+    for (let i = 0; i < 2; i++)
+      ledger.recordLinkedInReply({
+        prospectId: first.prospectId,
+        source: "other-tool",
+        externalEventId: `other-tool:${randomUUID()}`,
+        occurredAt: "2026-11-01T10:00:00Z",
+        body: text,
+      });
+    first.deliver();
+    raw(ledger)
+      .query("DELETE FROM channel_events WHERE source='other-tool' AND prospect_id=?")
+      .run(first.prospectId);
+    store.setMessageIntent("account", "orphaned", label("not_now"));
+    expect(
+      store.db
+        .query("SELECT count(*) AS n FROM delivery_targets WHERE message_id='orphaned'")
+        .get(),
+    ).toEqual({ n: 2 });
+    expect(
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='orphaned'").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("a target added by a replay mid-copy leaves the copy open", () => {
+    const { deliver } = seedThread([message("midway")]);
+    deliver();
+    // Another server's replay records a target while this pass is copying.
+    const stopCadences = vi.fn(() => {
+      store.db
+        .query(
+          "INSERT INTO delivery_targets SELECT account_key,message_id,workspace,prospect_id,'row:0' FROM deliveries WHERE message_id='midway'",
+        )
+        .run();
+      return 0;
+    });
+    store.setMessageIntent("account", "midway", label("unsubscribe"), { stopCadences });
+    expect(
+      store.db.query("SELECT count(*) AS n FROM label_copies WHERE message_id='midway'").get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("a label replaced while it was copied leaves the copy open", () => {
     const { deliver } = seedThread([message("raced")]);
     deliver();
