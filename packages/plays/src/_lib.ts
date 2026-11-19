@@ -535,8 +535,8 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   if (offer) {
     // A problem line may open the email: the name must also come after it.
     const paras = problemOpening() ? paragraphs(kept).map(proseSentences) : null;
-    const at = paras ? problemOfferSlots(paras, offer).at(-1) : undefined;
-    sentences = at === undefined ? sentences.slice(1) : paras!.flat().slice(at + 1);
+    const at = paras ? problemOfferAt(paras, offer) : undefined;
+    sentences = at ? paras!.flat().slice(at + 1) : sentences.slice(1);
   }
   // A question asks; it does not say what the product is.
   return !sentences.some((s) => sentenceMark(s.trim()) !== "?" && named.test(s));
@@ -557,26 +557,47 @@ function proseSentences(text: string): string[] {
 
 /** Non-blank lines grouped at blank lines, so a hard-wrapped paragraph is one. */
 function paragraphs(lines: readonly string[]): string[] {
-  return lines
-    .join("\n")
-    .split(/\n\s*\n/)
-    .map((p) => p.replace(/\s*\n\s*/g, " ").trim())
-    .filter(Boolean);
+  const out: string[] = [];
+  let current: string[] = [];
+  for (const line of [...lines, ""]) {
+    const text = line.trim();
+    if (text) current.push(text);
+    else if (current.length > 0) {
+      out.push(current.join(" "));
+      current = [];
+    }
+  }
+  return out;
 }
 
 /** Most sentences the problem line before the offer may run to: a lead-in, then the problem. */
 const PROBLEM_LINE_MAX_SENTENCES = 2;
 
 /**
- * Indexes into `paras.flat()` where an offer after one problem line sits and
- * is made: the second sentence, or the next paragraph's first after a short
- * first paragraph.
+ * Indexes into `paras.flat()` where an offer after one problem line may sit:
+ * the second sentence, or the next paragraph's first after a short first
+ * paragraph.
  */
-function problemOfferSlots(paras: readonly string[][], offer: string): number[] {
+function problemOfferSlots(paras: readonly string[][]): number[] {
   const first = paras[0]?.length ?? 0;
-  const slots = paras.length > 1 && first === PROBLEM_LINE_MAX_SENTENCES ? [1, first] : [1];
+  return paras.length > 1 && first === PROBLEM_LINE_MAX_SENTENCES ? [1, first] : [1];
+}
+
+/**
+ * The offer sentence's index under a problem opening, of the first sentence
+ * and the slots: a lead-in or a product sentence can read as an offer too, so
+ * the one naming most of the offer wins, the earliest on a tie.
+ */
+function problemOfferAt(paras: readonly string[][], offer: string): number | undefined {
   const flat = paras.flat();
-  return slots.filter((i) => makesOffer(flat[i] ?? "", offer));
+  let best: { at: number; score: number } | undefined;
+  for (const at of [0, ...problemOfferSlots(paras)]) {
+    const sentence = flat[at] ?? "";
+    if (!makesOffer(sentence, offer)) continue;
+    const score = sharedOfferWords(sentence, offer);
+    if (!best || score > best.score) best = { at, score };
+  }
+  return best?.at;
 }
 
 const OBSERVATION_OPENER =
@@ -617,11 +638,14 @@ function contentWords(text: string): Set<string> {
 
 /** True when `sentence` offers to do something or names two of the offer's content words. */
 function makesOffer(sentence: string, offer: string): boolean {
-  if (OFFER_VERB.test(sentence)) return true;
+  return OFFER_VERB.test(sentence) || sharedOfferWords(sentence, offer) >= 2;
+}
+
+function sharedOfferWords(sentence: string, offer: string): number {
   const offerWords = contentWords(offer);
   let shared = 0;
   for (const w of contentWords(sentence)) if (offerWords.has(w)) shared++;
-  return shared >= 2;
+  return shared;
 }
 
 /**
@@ -646,7 +670,9 @@ export function opensWithOffer(
       .split(/(?<=[.!?])\s/)[0] ?? "";
   if (makesOffer(first, offer)) return true;
   if (!opts.problemFirst) return false;
-  return problemOfferSlots(paragraphs(lines.slice(start)).map(proseSentences), offer).length > 0;
+  const paras = paragraphs(lines.slice(start)).map(proseSentences);
+  const flat = paras.flat();
+  return problemOfferSlots(paras).some((i) => makesOffer(flat[i] ?? "", offer));
 }
 
 /** `messageOpening: "problem"` is set; false when config cannot be read. */

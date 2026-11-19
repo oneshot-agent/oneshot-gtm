@@ -131,6 +131,13 @@ describe("no-product-line after a problem line", () => {
     const loose = `Hi Sam,\n\nI could be wrong, but renewals may be taking your team too long. I can get every vendor renewal signed through Acme. Worth a look?\n\nJ`;
     expect(followUp(loose)).toContain("no-product-line");
   });
+
+  it("problem: a product sentence after an offer-first opening still counts", () => {
+    ws.opening = "problem";
+    ws.oneLiner = "Acme is an agent that signs vendor renewals";
+    const direct = `Hi Sam,\n\nI can get every vendor renewal signed before it lapses.\n\nAcme gets vendor renewal paperwork signed automatically.\n\nWorth a look?\n\nJ`;
+    expect(followUp(direct)).not.toContain("no-product-line");
+  });
 });
 
 describe("problem lines that wrap or carry an abbreviation", () => {
