@@ -102,6 +102,7 @@ import {
   logMeetingOutcomeRoute,
 } from "./api/meetings.ts";
 import { listCalendarsRoute } from "./api/calendar-setup.ts";
+import { llmModelsRoute } from "./api/llm-models.ts";
 import { smartleadAccountsRoute } from "./api/smartlead.ts";
 import { deriveBriefRoute } from "./api/derive-brief.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
@@ -296,6 +297,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
   route("POST", "/api/setup/derive-brief", deriveBriefRoute),
   route("POST", "/api/setup/source-repo/test", testSourceRepoRoute),
+  route("POST", "/api/setup/llm-models", llmModelsRoute),
   route("POST", "/api/setup/linkedin-session", linkedinSessionRoute),
   route("POST", "/api/setup/linkedin-login/start", linkedinLoginStartRoute),
   route("POST", "/api/setup/linkedin-login/link", linkedinLoginLinkRoute),
