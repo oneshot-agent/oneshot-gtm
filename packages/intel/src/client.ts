@@ -334,7 +334,13 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       },
       "warn",
     );
-    return plusCost(await run(to), primarySpentUsd);
+    try {
+      return plusCost(await run(to), primarySpentUsd);
+    } catch (fallbackErr) {
+      if (fallbackErr instanceof LlmError && primarySpentUsd > 0)
+        fallbackErr.spentUsd = (fallbackErr.spentUsd ?? 0) + primarySpentUsd;
+      throw fallbackErr;
+    }
   }
 }
 
@@ -843,7 +849,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
         throw err;
       }
     }
-    throw new LlmTruncatedError(
+    const truncated = new LlmTruncatedError(
       truncationMessage({
         provider: args.provider,
         model: args.model,
@@ -852,6 +858,8 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
         reasoningTokens,
       }),
     );
+    truncated.spentUsd = usableCost(data.usage?.cost);
+    throw truncated;
   }
 
   // A refusal, or a tool-call/reasoning-only message, carries no text. That is a

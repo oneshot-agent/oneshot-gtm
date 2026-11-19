@@ -328,6 +328,39 @@ describe("llmReasoningEffort set", () => {
     expect(out.costUsd).toBeCloseTo(0.03);
   });
 
+  it("both cut-off tries' costs are on the second cut-off's error", async () => {
+    state.cfg["llmReasoningEffort"] = "medium";
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    stubFetch((_url, body) =>
+      cutOff(body, (body["max_tokens"] as number) - 3, body["max_tokens"] === first ? 0.01 : 0.02),
+    );
+    const err = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.03);
+  });
+
+  it("a fallback that fails too carries the primary's cut-off cost on its error", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "oa-key");
+    state.cfg = {
+      ...state.cfg,
+      llmReasoningEffort: "medium",
+      llmFallback: { provider: "openai", model: "gpt-test" },
+    };
+    const first = 500 + REASONING_ALLOWANCE_TOKENS.medium;
+    const fn = stubFetch((url, body) => {
+      if (!url.startsWith(OR)) return cutOff(body, 0, 0.02);
+      return body["max_tokens"] === first ? cutOff(body, first - 3, 0.01) : rejection(503, "down");
+    });
+    const err = await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 }).catch(
+      (e: unknown) => e,
+    );
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(err).toBeInstanceOf(LlmTruncatedError);
+    expect((err as InstanceType<typeof LlmError>).spentUsd).toBeCloseTo(0.03);
+  });
+
   it("a second cut-off is the clear truncation error, after exactly one retry", async () => {
     state.cfg["llmReasoningEffort"] = "medium";
     const fn = stubFetch((_url, body) => cutOff(body, (body["max_tokens"] as number) - 3));
