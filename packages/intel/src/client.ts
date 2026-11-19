@@ -507,8 +507,11 @@ export const MANDATORY_REASONING_ALLOWANCE_TOKENS = 1536;
 export const MANDATORY_REASONING_EFFORT = "low";
 
 /**
- * Extra tokens per `llmReasoningEffort`, on top of the caller's maxTokens so it
- * stays the answer budget. Unused tokens are not billed.
+ * Reasoning headroom per `llmReasoningEffort`, added to the caller's maxTokens.
+ * Not a reserve for the answer: where OpenRouter turns effort into a share of
+ * max_tokens (most of it at xhigh), reasoning can still take part of a large
+ * answer budget, and a cut-off answer is an LlmTruncatedError naming the
+ * reasoning tokens. Unused tokens are not billed.
  */
 export const REASONING_ALLOWANCE_TOKENS: Readonly<Record<LlmReasoningEffort, number>> = {
   low: MANDATORY_REASONING_ALLOWANCE_TOKENS,

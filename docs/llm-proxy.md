@@ -24,7 +24,7 @@ Under **If this provider is down, use…**, pick a second provider and a model, 
 
 ## Reasoning effort on OpenRouter
 
-With OpenRouter as the provider, **Reasoning effort** (`llmReasoningEffort`: `low`, `medium`, `high` or `xhigh`; or `POST /api/setup`, `null` clears it) makes every model reason at that effort, including models that could have it off. Each call gets extra tokens on top of its answer budget: 1,536 at low, 4,096 at medium, 8,192 at high, 16,384 at xhigh. Unused tokens are not billed. A model that refuses the effort is asked at `low`, then with no effort. Unset: reasoning is off where the model allows it, else `low`. The fallback provider, the proxy and the Anthropic API ignore it.
+With OpenRouter as the provider, **Reasoning effort** (`llmReasoningEffort`: `low`, `medium`, `high` or `xhigh`; or `POST /api/setup`, `null` clears it) makes every model reason at that effort, including models that could have it off. Each call gets extra tokens on top of its answer budget as room to reason: 1,536 at low, 4,096 at medium, 8,192 at high, 16,384 at xhigh. Unused tokens are not billed. This is headroom, not a reserve: on models where OpenRouter turns the effort into a share of the whole token limit, `high` and `xhigh` can still use part of a large answer budget, and an answer cut off that way is reported as truncated, naming the reasoning tokens. A model that refuses the effort is asked at `low`, then with no effort. Unset: reasoning is off where the model allows it, else `low`. The fallback provider, the proxy and the Anthropic API ignore it.
 
 ## What still needs OpenRouter
 
