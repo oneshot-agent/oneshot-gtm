@@ -1222,14 +1222,12 @@ export class LinkedInInboxStore {
         // A workspace no longer registered keeps its copy pending.
         const home = homes.get(d.workspace);
         if (!home) continue;
-        // Only the workspace that owns the thread now takes its labels.
+        // Only the workspace that owns the thread now takes its labels. One
+        // it left, or a thread with no owner, stays pending until it returns.
         const owner = d.conversation_id
           ? this.threadForConversation(d.account_key, d.conversation_id)?.owner
           : null;
-        if (owner && owner.workspace !== d.workspace) {
-          finish(d, null);
-          continue;
-        }
+        if (owner?.workspace !== d.workspace) continue;
         try {
           const optOut = replyIntentMeta(d.intent)?.optOut === true;
           // An opt-out with nothing to stop it stays pending for a caller that can.
@@ -1409,7 +1407,30 @@ export class LinkedInInboxStore {
             "SELECT prospect_id FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=?",
           )
           .get(eventId) as { prospect_id: number } | null;
-        if (isOwner && !legacy && (!existing || existing.prospect_id === match.prospectId)) {
+        // An imported reply an earlier owner here was delivered: it is that
+        // prospect's, found by the row its delivery saved.
+        const importedElsewhere =
+          isOwner &&
+          !legacy &&
+          !existing &&
+          this.db
+            .query<{ event_key: string }, [string, string, string, number]>(
+              "SELECT event_key FROM delivery_targets WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id<>? AND event_key LIKE 'row:%'",
+            )
+            .all(t.accountKey, m.id, match.workspace, match.prospectId)
+            .some(
+              (r) =>
+                handles
+                  .database(match.home)
+                  .query("SELECT 1 FROM channel_events WHERE id=?")
+                  .get(Number(r.event_key.slice(4))) != null,
+            );
+        if (
+          isOwner &&
+          !legacy &&
+          !importedElsewhere &&
+          (!existing || existing.prospect_id === match.prospectId)
+        ) {
           // A label stored before delivery goes on the row now; one stored
           // after is copied by setMessageIntent. Either way a later replay
           // fills a row left without one, and the labelling pass finishes the
@@ -1762,7 +1783,12 @@ export async function labelLinkedInReplyBatch(opts: {
   const copy = !opts.dryRun && opts.copy !== false;
   if (copy) {
     try {
-      const retried = store.copyLabels(accountKeys, { stopCadences: opts.stopCadences });
+      // Removed accounts too: a label stored before removal still applies.
+      const owned = store
+        .accounts()
+        .filter((a) => a.workspace === workspace)
+        .map((a) => a.key);
+      const retried = store.copyLabels(owned, { stopCadences: opts.stopCadences });
       for (const d of retried.deliveries) out.cadencesStopped += d.cadencesStopped;
       for (const err of retried.errors) logLabelCopyFailed(err);
     } catch (err) {

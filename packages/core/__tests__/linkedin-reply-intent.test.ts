@@ -539,6 +539,55 @@ describe("labels reach the workspace ledger", () => {
     ).toEqual([]);
     expect(stopCadences).not.toHaveBeenCalled();
     expect(eventIntent("left")?.intent).toBeNull();
+    // Pending, not done: the label lands if the thread comes back.
+    store.assign(`linkedin:account:${first.chat}`, { workspace, prospectId: first.prospectId });
+    store.copyLabels(["account"], { stopCadences });
+    expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), first.prospectId);
+    expect(eventIntent("left")?.intent).toBe("unsubscribe");
+  });
+
+  it("a thread with no owner takes no label until one is assigned", () => {
+    const first = seedThread([message("unowned", { text: "Please stop messaging me." })]);
+    first.deliver();
+    store.db
+      .query("UPDATE conversations SET data=json_remove(data,'$.owner') WHERE key=?")
+      .run(`linkedin:account:${first.chat}`);
+    const stopCadences = vi.fn(() => 0);
+    store.setMessageIntent("account", "unowned", label("unsubscribe"), { stopCadences });
+    expect(stopCadences).not.toHaveBeenCalled();
+    expect(eventIntent("unowned")?.intent).toBeNull();
+    store.assign(`linkedin:account:${first.chat}`, { workspace, prospectId: first.prospectId });
+    store.copyLabels(["account"], { stopCadences });
+    expect(eventIntent("unowned")?.intent).toBe("unsubscribe");
+  });
+
+  it("a reassigned thread's imported reply stays the earlier prospect's; the new owner gets an opt-out", () => {
+    const text = "Please stop messaging me.";
+    const first = seedThread([message("imported-moved", { text })]);
+    ledger.recordLinkedInReply({
+      prospectId: first.prospectId,
+      source: "other-tool",
+      externalEventId: `other-tool:${randomUUID()}`,
+      occurredAt: "2026-11-01T10:00:00Z",
+      body: text,
+    });
+    first.deliver();
+    const owner = ledger.upsertProspect({ email: `c-${randomUUID()}@example.test`, name: "Cy" });
+    store.assign(`linkedin:account:${first.chat}`, { workspace, prospectId: owner });
+    first.deliver();
+    // No second reply is recorded for the new owner.
+    expect(eventIntent("imported-moved")).toBeNull();
+    expect(
+      store.db
+        .query(
+          "SELECT event_key FROM delivery_targets WHERE message_id='imported-moved' AND prospect_id=?",
+        )
+        .all(owner),
+    ).toEqual([{ event_key: "optout:account:imported-moved" }]);
+    store.setMessageIntent("account", "imported-moved", label("unsubscribe"), {
+      stopCadences: () => 0,
+    });
+    expect(isProspectOptedOut(raw(ledger), owner)).toBe(true);
   });
 
   it("a merged duplicate's unsubscribe moves onto the kept ledger row", () => {
@@ -745,6 +794,23 @@ describe("labelLinkedInReplyBatch", () => {
     expect(out.cadencesStopped).toBe(1);
     expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
     expect(eventIntent("predelivery")?.intent).toBe("unsubscribe");
+  });
+
+  it("a removed account's stored labels are still applied, but it is not classified", async () => {
+    const optOut = seedThread([message("before-removal", { text: "Please stop messaging me." })]);
+    optOut.deliver();
+    // Stored by the CLI backfill, which leaves copies to the server.
+    store.setMessageIntent("account", "before-removal", label("unsubscribe"), { copy: false });
+    store.saveMessages("account", [
+      message("unlabelled", { conversation_id: optOut.chat }),
+    ] as never);
+    store.saveAccount({ ...store.account("account")!, removedAt: "2026-11-19T00:00:00Z" });
+    const classify = vi.fn(async () => label("interested"));
+    const stopCadences = vi.fn(() => 1);
+    const out = await labelLinkedInReplyBatch({ classify, stopCadences, store });
+    expect(classify).not.toHaveBeenCalled();
+    expect(out.cadencesStopped).toBe(1);
+    expect(stopCadences).toHaveBeenCalledWith(expect.any(Ledger), optOut.prospectId);
   });
 
   it("a dry run classifies without storing", async () => {
