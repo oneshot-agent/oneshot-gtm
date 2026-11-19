@@ -14,6 +14,7 @@ import {
   loadConfig,
   logEvent,
   mentionsStaleDemoDay,
+  messageOpeningOf,
   receiptUrlForId,
   sendEmail,
   subjectCaseOf,
@@ -529,23 +530,74 @@ function missingProductLine(body: string, offer: string | null | undefined): boo
   let end = lines.length - 1;
   while (end >= start && signsOff(end)) end--;
   if (start < 0 || end < start) return true;
-  // Keep abbreviations inside their sentence ("Dr. Lee"), with the same rules
-  // the sentence counter uses.
-  const sentences = lines
-    .slice(start, end + 1)
-    .join(" ")
-    .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
-    .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
-    // So do initialisms ("U.S. clinics"), unless a capital follows.
-    .replace(INITIALISM, (m) => m.replace(/\./g, ""))
-    // A mark ends a sentence; one inside closing quotes only when a capital
-    // follows, so a quoted "Your visit is due." inside the offer does not end
-    // it. Lowercase prose still splits on its plain marks.
-    .split(/(?<=[.!?])\s+|(?<=[.!?]["')”’]+)\s+(?=["'“‘(]*[\p{Lu}\d])/u);
+  const kept = lines.slice(start, end + 1);
+  let sentences = proseSentences(kept.join(" "));
+  if (offer) {
+    // A problem line may open the email: the name must also come after it.
+    const paras = problemOpening() ? paragraphs(kept).map(proseSentences) : null;
+    const at = paras ? problemOfferAt(paras, offer) : undefined;
+    sentences = at ? paras!.flat().slice(at + 1) : sentences.slice(1);
+  }
   // A question asks; it does not say what the product is.
-  return !(offer ? sentences.slice(1) : sentences).some(
-    (s) => sentenceMark(s.trim()) !== "?" && named.test(s),
+  return !sentences.some((s) => sentenceMark(s.trim()) !== "?" && named.test(s));
+}
+
+/** `text` split into sentences, abbreviations ("Dr. Lee") and initialisms kept inside theirs. */
+function proseSentences(text: string): string[] {
+  return (
+    text
+      .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+      .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+      .replace(INITIALISM, (m) => m.replace(/\./g, ""))
+      // A mark inside closing quotes ends a sentence only when a capital
+      // follows, so a quoted "Your visit is due." inside the offer does not.
+      .split(/(?<=[.!?])\s+|(?<=[.!?]["')”’]+)\s+(?=["'“‘(]*[\p{Lu}\d])/u)
   );
+}
+
+/** Non-blank lines grouped at blank lines, so a hard-wrapped paragraph is one. */
+function paragraphs(lines: readonly string[]): string[] {
+  const out: string[] = [];
+  let current: string[] = [];
+  for (const line of [...lines, ""]) {
+    const text = line.trim();
+    if (text) current.push(text);
+    else if (current.length > 0) {
+      out.push(current.join(" "));
+      current = [];
+    }
+  }
+  return out;
+}
+
+/** Most sentences the problem line before the offer may run to: a lead-in, then the problem. */
+const PROBLEM_LINE_MAX_SENTENCES = 2;
+
+/**
+ * Indexes into `paras.flat()` where an offer after one problem line may sit:
+ * the second sentence, or the next paragraph's first after a short first
+ * paragraph.
+ */
+function problemOfferSlots(paras: readonly string[][]): number[] {
+  const first = paras[0]?.length ?? 0;
+  return paras.length > 1 && first === PROBLEM_LINE_MAX_SENTENCES ? [1, first] : [1];
+}
+
+/**
+ * The offer sentence's index under a problem opening, of the first sentence
+ * and the slots: a lead-in or a product sentence can read as an offer too, so
+ * the one naming most of the offer wins, the earliest on a tie.
+ */
+function problemOfferAt(paras: readonly string[][], offer: string): number | undefined {
+  const flat = paras.flat();
+  let best: { at: number; score: number } | undefined;
+  for (const at of [0, ...problemOfferSlots(paras)]) {
+    const sentence = flat[at] ?? "";
+    if (!makesOffer(sentence, offer)) continue;
+    const score = sharedOfferWords(sentence, offer);
+    if (!best || score > best.score) best = { at, score };
+  }
+  return best?.at;
 }
 
 const OBSERVATION_OPENER =
@@ -584,12 +636,29 @@ function contentWords(text: string): Set<string> {
   );
 }
 
+/** True when `sentence` offers to do something or names two of the offer's content words. */
+function makesOffer(sentence: string, offer: string): boolean {
+  return OFFER_VERB.test(sentence) || sharedOfferWords(sentence, offer) >= 2;
+}
+
+function sharedOfferWords(sentence: string, offer: string): number {
+  const offerWords = contentWords(offer);
+  let shared = 0;
+  for (const w of contentWords(sentence)) if (offerWords.has(w)) shared++;
+  return shared;
+}
+
 /**
  * True when the first sentence after any greeting makes the offer: it offers
  * to do something ("I can…", "Want me to…") or names the offer itself (two
- * of its content words). Keyed on the output and the offer text only.
+ * of its content words). `problemFirst` also accepts one problem line before
+ * it. Keyed on the output and the offer text only.
  */
-export function opensWithOffer(body: string, offer: string): boolean {
+export function opensWithOffer(
+  body: string,
+  offer: string,
+  opts: { problemFirst?: boolean } = {},
+): boolean {
   const lines = body.split("\n").map((l) => l.trim());
   const greeting = leadingGreeting();
   const start = lines.findIndex((l) => l && !greeting.test(l));
@@ -599,11 +668,20 @@ export function opensWithOffer(body: string, offer: string): boolean {
       .slice(start)
       .join(" ")
       .split(/(?<=[.!?])\s/)[0] ?? "";
-  if (OFFER_VERB.test(first)) return true;
-  const offerWords = contentWords(offer);
-  let shared = 0;
-  for (const w of contentWords(first)) if (offerWords.has(w)) shared++;
-  return shared >= 2;
+  if (makesOffer(first, offer)) return true;
+  if (!opts.problemFirst) return false;
+  const paras = paragraphs(lines.slice(start)).map(proseSentences);
+  const flat = paras.flat();
+  return problemOfferSlots(paras).some((i) => makesOffer(flat[i] ?? "", offer));
+}
+
+/** `messageOpening: "problem"` is set; false when config cannot be read. */
+function problemOpening(): boolean {
+  try {
+    return messageOpeningOf(loadConfig()) === "problem";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -705,7 +783,9 @@ export function lintEmail(
   // describe the reader back to them.
   if (opts.offer) {
     if (opensOnObservation(body)) flags.push("opens-on-observation");
-    else if (!opensWithOffer(body, opts.offer)) flags.push("opens-without-offer");
+    else if (!opensWithOffer(body, opts.offer, { problemFirst: problemOpening() })) {
+      flags.push("opens-without-offer");
+    }
   }
   if (subject.length === 0) flags.push("empty-subject");
   if (!opts.threadedSubject) {
@@ -1473,6 +1553,9 @@ const WRITING_REPAIRS: Record<string, string> = {
     "Delete the general saying, or rewrite it as a plain statement about this reader's work. Every sentence is about them, their firm, or what you will do.",
 };
 
+const OPENS_WITHOUT_OFFER_REPAIR_PROBLEM =
+  "Open with the OFFER, or with one line naming a problem they very likely have, stated as a bet, and then the OFFER: offer to do it for them, in plain words. Move anything else after it.";
+
 /** The `signoff-subject` repair for a workspace whose `subjectCase` is not `lowercase`. */
 const SIGNOFF_SUBJECT_REPAIR_ANY_CASE =
   "Replace the subject with 2-5 words naming the offer or their work, in their terms, cased as the SUBJECT CASE line says. Never a sign-off such as ending, closing or following up.";
@@ -1526,7 +1609,9 @@ export async function repairWritingLints(
     const repair =
       flag === "signoff-subject" && subjectCase !== "lowercase"
         ? SIGNOFF_SUBJECT_REPAIR_ANY_CASE
-        : WRITING_REPAIRS[flag];
+        : flag === "opens-without-offer" && problemOpening()
+          ? OPENS_WITHOUT_OFFER_REPAIR_PROBLEM
+          : WRITING_REPAIRS[flag];
     return `${flag}: ${repair ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });
   const mayChangeSubject = problems.some(

@@ -8,6 +8,8 @@ const calls = {
   events: [] as Array<Record<string, unknown>>,
   /** The draft's body; null: a clean one that opens with the offer. */
   body: null as string | null,
+  /** The workspace's `messageOpening`; undefined: unset. */
+  opening: undefined as string | undefined,
 };
 const OFFER = {
   offer: "get every enterprise corp renewal quote out the same day it is asked for",
@@ -35,6 +37,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       partners: null,
       mobileSignature: false,
       clientId: "test",
+      ...(calls.opening !== undefined ? { messageOpening: calls.opening } : {}),
     }),
     enrichProfile: async () => ({ result: { profile: { note: "renewal quotes" } }, receiptId: 1 }),
     sendEmail: async () => ({ receiptId: 3 }),
@@ -95,6 +98,7 @@ beforeEach(() => {
   calls.inputs = [];
   calls.events = [];
   calls.body = null;
+  calls.opening = undefined;
 });
 
 describe("prospect offer in a play run", () => {
@@ -181,5 +185,34 @@ describe("prospect offer in a play run", () => {
       flags: [],
       offer: { offer: "the weak one" },
     });
+  });
+});
+
+describe("messageOpening on the first email", () => {
+  const draftInput = () => calls.inputs.find((i) => i.startsWith("design-partner-loi-email"))!;
+  const problemFirst = `I'd bet renewal quotes wait days for someone to price them.\n\nI can ${OFFER.offer}. Worth it?`;
+
+  it("unset or offer: the input carries no OPENING line, the same input either way", async () => {
+    await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
+    const unset = draftInput();
+    expect(unset).not.toContain("OPENING:");
+    calls.inputs = [];
+    calls.opening = "offer";
+    await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
+    expect(draftInput()).toBe(unset);
+  });
+
+  it("problem: the input carries OPENING: problem after the offer, and a problem line first is not flagged", async () => {
+    calls.opening = "problem";
+    calls.body = problemFirst;
+    const out = await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
+    expect(draftInput()).toMatch(/^OFFER \(what you offer[^\n]*\n(?:.*\n)*?OPENING: problem$/m);
+    expect(out.drafted[0]?.flags ?? []).not.toContain("opens-without-offer");
+  });
+
+  it("unset: the same problem line first is flagged opens-without-offer", async () => {
+    calls.body = problemFirst;
+    const out = await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });
+    expect(out.drafted[0]?.flags ?? []).toContain("opens-without-offer");
   });
 });

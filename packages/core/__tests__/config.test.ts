@@ -15,6 +15,7 @@ import {
   followUpOfferPlaysOf,
   loadConfig,
   noOfferPlaysOf,
+  messageOpeningOf,
   offerAnchorOf,
   offerChecksOf,
   offerExclusionsOf,
@@ -356,6 +357,19 @@ describe("offerAnchorOf", () => {
     expect(offerAnchorOf({ offerAnchor: "prefer_product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: "product" })).toBe("either");
     expect(offerAnchorOf({ offerAnchor: 3 })).toBe("either");
+  });
+});
+
+describe("messageOpeningOf", () => {
+  it("turns the problem opening on for the exact value only", () => {
+    expect(messageOpeningOf({ messageOpening: "problem" })).toBe("problem");
+  });
+
+  it("reads absent, `offer` and anything unrecognized as `offer`", () => {
+    expect(messageOpeningOf({})).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: "offer" })).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: "Problem" })).toBe("offer");
+    expect(messageOpeningOf({ messageOpening: true })).toBe("offer");
   });
 });
 

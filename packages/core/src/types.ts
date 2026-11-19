@@ -391,6 +391,8 @@ export interface OfferWriterConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
+export type MessageOpening = "offer" | "problem";
+
 /** The pattern checks a workspace can run on every written offer; see `OneShotConfig.offerChecks`. */
 export const OFFER_CHECKS = ["awareness", "check-lead", "system-wrapper"] as const;
 
@@ -606,6 +608,12 @@ export interface OneShotConfig {
    * `find rejudge-offers`.
    */
   offerAnchor?: OfferAnchor;
+  /**
+   * What an email that makes an offer opens on. `problem`: one line naming
+   * the reader's likely problem may come before the offer. `offer` (the
+   * default, and anything unrecognized): the offer first. Email only.
+   */
+  messageOpening?: MessageOpening;
   /**
    * Plays that make no offer in this workspace, beyond the plays that never
    * make one (`NO_OFFER_PLAYS` in plays): their intros, follow-ups and letters

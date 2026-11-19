@@ -17,6 +17,7 @@ import {
   getLedger,
   linkedinWriterOf,
   loadConfig,
+  messageOpeningOf,
   offerExclusionsOf,
   productBriefText,
   subjectCaseOf,
@@ -118,6 +119,10 @@ export function draftConfigKey(
     productBriefText(cfg, ledger) ?? "",
     text(cfg.pilotOffer),
     offerExclusionsOf(cfg).join("\n"),
+    // Spread, so an unset opening leaves every stored key as it was.
+    ...(surface.channel === "email" && messageOpeningOf(cfg) === "problem"
+      ? ["opening:problem"]
+      : []),
     // First-touch keys never read `followUpOfferPlays`: turning it on stales no intro.
     (
       surface.stage === "follow_up"

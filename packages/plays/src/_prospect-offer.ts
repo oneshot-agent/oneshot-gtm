@@ -31,6 +31,7 @@ import {
   loadConfig,
   noOfferPlaysOf,
   logEvent,
+  messageOpeningOf,
   offerAnchorOf,
   offerChecksOf,
   offerExclusionsOf,
@@ -2387,6 +2388,18 @@ export function offerBlock(
     );
   }
   return lines.length > 0 ? lines.join("\n") : null;
+}
+
+export const PROBLEM_OPENING_LINE = "OPENING: problem";
+
+/** Email drafts only; unset leaves `offerLines` byte-identical. */
+export function withOpeningLine(
+  offerLines: string | null,
+  offer: unknown,
+  cfg: { messageOpening?: unknown },
+): string | null {
+  if (!offerLines || !offer || messageOpeningOf(cfg) !== "problem") return offerLines;
+  return `${offerLines}\n${PROBLEM_OPENING_LINE}`;
 }
 
 /** What the founder reads on a row held for a weak offer. */

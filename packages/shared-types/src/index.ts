@@ -662,6 +662,8 @@ export interface SetupRequest {
    * clear (back to `either`); anything else is a 400.
    */
   offerAnchor?: "prefer-product" | "either" | null;
+  /** `undefined` = leave unchanged; `null` = clear (back to `offer`); anything else is a 400. */
+  messageOpening?: "offer" | "problem" | null;
   /**
    * Plays of `noOfferPlays` whose follow-ups still make an offer. `undefined`
    * = leave unchanged; `null` or `[]` = clear (off); a non-play-name is a 400.
