@@ -445,7 +445,7 @@ export interface OneShotConfig {
    * reasons at it; a refused effort is asked at `low`, then with none. Proxy:
    * `reasoning_effort` on chat models, `output_config.effort` on the Claude
    * models already sent one; a refusal sends today's request. Unset: today's
-   * requests. `llmFallback` and the `anthropic` provider ignore it.
+   * requests. A proxy or OpenRouter `llmFallback` reasons at the same effort; the `anthropic` and `openai` providers ignore it.
    */
   llmReasoningEffort?: LlmReasoningEffort;
   telemetryEnabled: boolean;

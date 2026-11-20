@@ -293,6 +293,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     model: fallbackCfg.model.trim(),
     key: requireKey(fallbackCfg.provider),
     baseUrl: fallbackCfg.provider === "proxy" ? proxyBaseUrl(cfg.llmBaseUrl) : undefined,
+    reasoningEffort: llmReasoningEffortOf(cfg),
   });
   const name = routeName(primary);
   const seen = breakerUntil.get(name);
