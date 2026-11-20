@@ -415,7 +415,7 @@ describe("llmReasoningEffort set", () => {
     expect(sent(fn, 0).body.reasoning).toEqual({ enabled: false });
   });
 
-  it("the OpenRouter fallback of another primary keeps today's request", async () => {
+  it("an OpenRouter fallback reasons at the same effort", async () => {
     vi.stubEnv("OPENAI_API_KEY", "oa-key");
     state.cfg = {
       llmProvider: "openai",
@@ -427,8 +427,8 @@ describe("llmReasoningEffort set", () => {
     await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 });
     expect(sent(fn, 0).body.reasoning).toBeUndefined();
     expect(sent(fn, 1).url).toBe(OR);
-    expect(sent(fn, 1).body.reasoning).toEqual({ enabled: false });
-    expect(sent(fn, 1).body["max_tokens"]).toBe(500);
+    expect(sent(fn, 1).body.reasoning).toEqual({ effort: "high" });
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
   });
 
   it("an OpenRouter primary's fallback gets no effort", async () => {
@@ -574,7 +574,7 @@ describe("llmReasoningEffort on the proxy", () => {
     expect(sent(fn, 0).body["max_tokens"]).toBe(500);
   });
 
-  it("a proxy fallback gets no effort", async () => {
+  it("a proxy fallback reasons at the same effort", async () => {
     state.cfg = {
       llmProvider: "openrouter",
       llmModel: `${fresh}-primary`,
@@ -585,7 +585,7 @@ describe("llmReasoningEffort on the proxy", () => {
     const fn = stubFetch((url) => (url.startsWith(PROXY) ? ok() : rejection(503, "down")));
     await complete({ messages: msgs, maxTokens: 500, maxAttempts: 1 });
     expect(sent(fn, 1).url).toBe(`${PROXY}/v1/chat/completions`);
-    expect(sent(fn, 1).body["reasoning_effort"]).toBeUndefined();
-    expect(sent(fn, 1).body["max_tokens"]).toBe(500);
+    expect(sent(fn, 1).body["reasoning_effort"]).toBe("high");
+    expect(sent(fn, 1).body["max_tokens"]).toBe(500 + REASONING_ALLOWANCE_TOKENS.high);
   });
 });
