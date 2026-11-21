@@ -990,18 +990,10 @@ interface SiteGroup {
  * the queue evidence renderer already branch on, so a local-engine row is
  * indistinguishable downstream from a B2B one.
  *
- * With neither option below set, a run is one search over every location.
- *
- * - `locationsPerRun` searches that many locations a run, one search each,
- *   and the next run carries on from the next location, back to the first
- *   after the last. A long list then costs that many searches a run, not
- *   one, so it is never on by default. A run stopped by the cost cap or the
- *   limit carries on after the last location it searched; businesses found
- *   there but not reached come back when the rotation wraps.
- * - `minSites` keeps only domains seen at that many addresses (across this
- *   run's searches and the sites remembered from earlier runs) and works one
- *   candidate per domain. The chain filter is not sent with it: the index
- *   calls a name at 3+ addresses a chain, which is what a group is.
+ * With neither option set, a run is one search over every location.
+ * `locationsPerRun` is never a default: it turns one flat-priced search per
+ * run into N. `minSites` drops the chain filter, because the index calls a
+ * name at 3+ addresses a chain, which is what a group is. See docs/finders.md.
  */
 async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
