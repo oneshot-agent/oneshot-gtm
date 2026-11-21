@@ -41,6 +41,9 @@ let placesFor: (location: string) => StubLocal[] = () => [];
 /** Locations whose search fails on the platform. */
 let failingLocations = new Set<string>();
 let peopleFor: (input: Record<string, unknown>) => StubPerson[] = () => [];
+let peopleCost = 0;
+/** findEmail fails on the platform (a contact-resolution outage). */
+let findEmailFails = false;
 const SEARCH_COST = 0.02;
 
 vi.mock("../src/_sdk-safe.ts", () => ({
@@ -69,7 +72,7 @@ vi.mock("../src/_sdk-safe.ts", () => ({
     peopleSearchCalls.push(input);
     const results = peopleFor(input);
     return {
-      result: { status: "ok", results, total_found: results.length, cost: 0 },
+      result: { status: "ok", results, total_found: results.length, cost: peopleCost },
       receiptId: 1,
     };
   },
@@ -79,6 +82,9 @@ vi.mock("../src/_sdk-safe.ts", () => ({
   }),
   safeFindEmail: async (input: { companyDomain?: string | null; fullName?: string }) => {
     findEmailCalls.push(input);
+    if (findEmailFails) {
+      return { result: { status: "error", found: false, cost: 0 }, receiptId: 0 };
+    }
     return {
       result: { found: true, email: `found@${input.companyDomain}`, cost: 0 },
       receiptId: 2,
@@ -130,10 +136,12 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+const { _resetBreaker } = await import("../src/_breaker.ts");
 const {
   runLocalBusinessFinder,
   localSearchProgressKey,
   parseLocalCursor,
+  parseRememberedSites,
   rotationSlice,
   siteDomain,
   siteKey,
@@ -174,8 +182,16 @@ beforeEach(() => {
   placesFor = () => [];
   failingLocations = new Set();
   peopleFor = () => [];
+  peopleCost = 0;
+  findEmailFails = false;
+  _resetBreaker();
 });
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.clearAllMocks();
+  _resetBreaker();
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe("local engine helpers", () => {
   it("slices the rotation from the cursor and wraps without repeating a location", () => {
@@ -360,6 +376,54 @@ describe("local engine — minSites", () => {
     });
   });
 
+  it("keeps enough remembered sites for a threshold above the default cap", async () => {
+    const metros = Array.from({ length: 30 }, (_, i) => `Metro ${i}`);
+    placesFor = (loc) => [biz({ domain: "big.example", address: `${loc} 1 Main` })];
+    peopleFor = () => [{ full_name: "Dana Reyes", title: "Owner" }];
+    for (let i = 0; i < 29; i++) {
+      const out = await run({ locations: metros, locationsPerRun: 1, minSites: 30 });
+      expect(out.enqueued).toBe(0);
+    }
+    const stored = JSON.parse(researchCache.get("local-sites:big.example")!) as {
+      sites: unknown[];
+    };
+    expect(stored.sites).toHaveLength(29);
+    const last = await run({ locations: metros, locationsPerRun: 1, minSites: 30 });
+    expect(last.enqueued).toBe(1);
+    expect(enqueued[0]!.payload["siteCount"]).toBe(30);
+  });
+
+  it("expires each remembered site on its own, whenever the entry was rewritten", async () => {
+    const now = Date.now();
+    researchCache.set(
+      "local-sites:desertair.example",
+      JSON.stringify({
+        sites: [
+          { key: "addr:old", location: "Tucson, AZ", seenAt: now - 91 * DAY_MS },
+          { key: "addr:recent", location: "Denver, CO", seenAt: now - DAY_MS },
+        ],
+      }),
+    );
+    expect(
+      parseRememberedSites(researchCache.get("local-sites:desertair.example")!, now).map(
+        (s) => s.key,
+      ),
+    ).toEqual(["addr:recent"]);
+    placesFor = (loc) =>
+      loc === "Phoenix, AZ" ? [biz({ domain: "desertair.example", address: "1 Main" })] : [];
+    peopleFor = () => [{ full_name: "Dana Reyes", title: "Owner" }];
+    // The 91-day-old site does not count: two sites, not three.
+    const out = await run({ minSites: 3 });
+    expect(out.enqueued).toBe(0);
+    const stored = JSON.parse(researchCache.get("local-sites:desertair.example")!) as {
+      sites: Array<{ key: string; seenAt: number }>;
+    };
+    expect(stored.sites.map((s) => s.key)).toEqual(["addr:1main", "addr:recent"]);
+    // The recent site keeps its own time; the one seen now gets now.
+    expect(stored.sites[1]!.seenAt).toBe(now - DAY_MS);
+    expect(stored.sites[0]!.seenAt).toBeGreaterThanOrEqual(now);
+  });
+
   it("does not remember sites on a dry run", async () => {
     placesFor = () => [biz({ domain: "desertair.example", address: "1 Main" })];
     await run({ dryRun: true });
@@ -476,6 +540,34 @@ describe("local engine — design-partner-loi with jobTitles", () => {
       name: "Pat Lin",
       email: "found@desertair.example",
     });
+  });
+
+  it("stops paid title searches at the cost cap and skips the domain-only lookup", async () => {
+    peopleCost = 0.02;
+    peopleFor = () => [{ full_name: "Front Desk", title: "Receptionist" }];
+    // The places search costs 0.02, so 0.01 is left: one title search, then the cap.
+    const out = await run({ maxCostUsd: 0.03 });
+    expect(peopleSearchCalls.map((c) => c["jobTitles"])).toEqual([
+      ["Director of Operations", "COO"],
+    ]);
+    expect(findEmailCalls).toHaveLength(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toBe("max-cost cap (0.03)");
+  });
+
+  it("title searches that answer do not keep the breaker shut through a contact outage", async () => {
+    placesFor = () =>
+      Array.from({ length: 8 }, (_, i) =>
+        biz({ name: `Group ${i}`, domain: `g${i}.example`, address: `${i} Main` }),
+      );
+    peopleFor = (input) =>
+      input["jobTitles"] ? [{ full_name: "Robin Hale", title: "Director of Operations" }] : [];
+    findEmailFails = true;
+    const out = await run({ minSites: 1 });
+    // Five contact failures in a row open the breaker; the other three make no call.
+    expect(findEmailCalls).toHaveLength(5);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(8);
   });
 
   it("without the route, jobTitles are not looked up: the domain-only path as before", async () => {

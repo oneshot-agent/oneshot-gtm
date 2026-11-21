@@ -7,7 +7,7 @@ import {
   type PeopleSearchInput,
   type PersonResult,
 } from "@oneshot-gtm/core";
-import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
+import { isCircuitOpen } from "./_breaker.ts";
 import {
   icpFields,
   pickNamedPerson,
@@ -856,7 +856,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 const LOCAL_CURSOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** How long the sites a domain was seen at are remembered, for `minSites` across runs. */
 const LOCAL_SITES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-/** Sites remembered per domain: enough to clear any sensible `minSites`. */
+/** Sites remembered per domain, newest first; raised to `minSites` when that is larger. */
 const MAX_REMEMBERED_SITES = 25;
 /** Cities a group's evidence names before the rest are only counted. */
 const MAX_EVIDENCE_CITIES = 3;
@@ -936,22 +936,30 @@ export function sitesEvidence(siteCount: number, cities: string[]): string {
 interface RememberedSite {
   key: string;
   location: string | null;
+  /** When the site was last seen (epoch ms): each site expires on its own. */
+  seenAt: number;
 }
 
 function sitesMemoryKey(domain: string): string {
   return `local-sites:${domain}`;
 }
 
-function parseRememberedSites(raw: string | null): RememberedSite[] {
+/** The remembered sites still inside the TTL at `now`; one without a time is dropped. */
+export function parseRememberedSites(raw: string | null, now: number): RememberedSite[] {
   if (!raw) return [];
   try {
     const v = JSON.parse(raw) as { sites?: unknown };
     if (!Array.isArray(v.sites)) return [];
     return v.sites.flatMap((s): RememberedSite[] => {
       if (!s || typeof s !== "object") return [];
-      const { key, location } = s as { key?: unknown; location?: unknown };
+      const { key, location, seenAt } = s as {
+        key?: unknown;
+        location?: unknown;
+        seenAt?: unknown;
+      };
       if (typeof key !== "string" || !key) return [];
-      return [{ key, location: typeof location === "string" ? location : null }];
+      if (typeof seenAt !== "number" || !(now - seenAt < LOCAL_SITES_TTL_MS)) return [];
+      return [{ key, location: typeof location === "string" ? location : null, seenAt }];
     });
   } catch {
     return [];
@@ -1118,7 +1126,11 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     // titles are looked up at its domain first. Only a miss on an address
     // falls back to the domain-only pick below.
     if (route && jobTitles.length > 0) {
-      const titled = await titledPersonAtDomain(domain, jobTitles);
+      const titled = await titledPersonAtDomain(
+        domain,
+        jobTitles,
+        opts.maxCostUsd != null ? opts.maxCostUsd - result.costUsd : null,
+      );
       result.costUsd += titled.costUsd;
       if (titled.failed) {
         result.droppedEnrichment++;
@@ -1140,6 +1152,11 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
         });
         result.costUsd += tried.costUsd;
         if (tried.ok || !NO_ADDRESS_REASONS.has(tried.reason)) contact = tried;
+      }
+      // The cap stops the run here: no domain-only lookup after the titled ones.
+      if (!contact && capReached()) {
+        result.halted = `max-cost cap (${opts.maxCostUsd})`;
+        return;
       }
     }
     // No owner name on a places result: findEmail resolves a company-level
@@ -1317,20 +1334,22 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
   if (groups) {
     // A group may show one site per metro, so the sites remembered from
     // earlier runs' locations count too.
+    const now = Date.now();
+    // Kept newest first, never fewer than `minSites`, so any threshold can be met.
+    const keep = Math.max(minSites!, MAX_REMEMBERED_SITES);
     const ranked = [...groups.values()].map((g) => {
       const remembered = parseRememberedSites(
         ledger.getProductResearchCache(sitesMemoryKey(g.domain), LOCAL_SITES_TTL_MS),
+        now,
       );
-      const sites = new Map(g.sites);
-      for (const s of remembered) if (!sites.has(s.key)) sites.set(s.key, s.location);
-      if (!opts.dryRun && sites.size > remembered.length) {
+      const sites = new Map<string, RememberedSite>();
+      for (const [key, location] of g.sites) sites.set(key, { key, location, seenAt: now });
+      for (const s of remembered) if (!sites.has(s.key)) sites.set(s.key, s);
+      if (!opts.dryRun) {
+        const newest = [...sites.values()].toSorted((a, b) => b.seenAt - a.seenAt);
         ledger.setProductResearchCache(
           sitesMemoryKey(g.domain),
-          JSON.stringify({
-            sites: [...sites]
-              .slice(0, MAX_REMEMBERED_SITES)
-              .map(([key, location]) => ({ key, location })),
-          }),
+          JSON.stringify({ sites: newest.slice(0, keep) }),
         );
       }
       return { group: g, sites };
@@ -1349,7 +1368,9 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
         result.halted = `max-cost cap (${opts.maxCostUsd})`;
         break;
       }
-      const cities = [...new Set([...sites.values()].filter((l): l is string => Boolean(l)))];
+      const cities = [
+        ...new Set([...sites.values()].map((s) => s.location).filter((l): l is string => !!l)),
+      ];
       await work({
         name: (group.first.name ?? "").trim(),
         domain: group.domain,
@@ -1401,11 +1422,14 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
  * The first person at `domain` whose title matches a wanted one, from
  * title-scoped people searches of at most two titles each (more fail
  * upstream). The search's own title filter is loose, so its rows are checked
- * against the titles too. `failed` is a platform error, not a miss.
+ * against the titles too. `failed` is a platform error, not a miss. No
+ * search starts once `budgetUsd` (what is left under the cap) is spent.
+ * Outcomes are not fed to the breaker, which counts contact calls only.
  */
 async function titledPersonAtDomain(
   domain: string,
   jobTitles: string[],
+  budgetUsd: number | null,
 ): Promise<{
   person: {
     fullName: string;
@@ -1420,17 +1444,14 @@ async function titledPersonAtDomain(
   // An open breaker is an outage: the domain-only pick reports it as one.
   if (isCircuitOpen()) return { person: null, costUsd, failed: false };
   for (let i = 0; i < jobTitles.length; i += MAX_TITLES_PER_SEARCH) {
+    if (budgetUsd != null && costUsd >= budgetUsd) break;
     const titles = jobTitles.slice(i, i + MAX_TITLES_PER_SEARCH);
     const search = await safePeopleSearch(
       { companyDomains: [domain], jobTitles: titles, limit: DOMAIN_TITLE_SEARCH_LIMIT },
       { playName: PLAY_NAME },
     );
     costUsd += search.result.cost ?? 0;
-    if (search.result.status === "error") {
-      recordResolutionOutcome(true);
-      return { person: null, costUsd, failed: true };
-    }
-    recordResolutionOutcome(false);
+    if (search.result.status === "error") return { person: null, costUsd, failed: true };
     const rows = (search.result.results ?? []) as PersonResult[];
     // Most wanted title first, then the search's own order.
     for (const wanted of titles) {
