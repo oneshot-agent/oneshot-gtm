@@ -20,6 +20,7 @@ import {
   finderApprovalHealth,
   getTriggerRunningSince,
   isTriggerRunning,
+  LOCAL_ENGINE_COUNTS,
   listPageSourceErrors,
   storedTriggerConfig,
   TRIGGERS,
@@ -283,6 +284,15 @@ export async function setTriggerConfigRoute(
       cfg["industries"].filter((v): v is string => typeof v === "string"),
     );
     if (unknown.length > 0) warnings.push(`industries ${unknownIndustriesNote(unknown)}`);
+  }
+  // `locationsPerRun` and `minSites` only change the places search.
+  if (name === "local-business" && cfg["engine"] !== "local") {
+    const unread = LOCAL_ENGINE_COUNTS.filter((key) => cfg[key] !== undefined);
+    if (unread.length > 0) {
+      warnings.push(
+        `${unread.join(" and ")} only apply with engine "local" — the b2b engine ignores them`,
+      );
+    }
   }
   // Warn-tier `play`/`buyerType` validation never refuses the request:
   // the save above already happened, but a founder routing rows to

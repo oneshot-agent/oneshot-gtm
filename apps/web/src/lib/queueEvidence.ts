@@ -136,7 +136,11 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       // enqueues `sourceLabel`/`matchedDateIso`/`subjectType`. Both route
       // through this same play, so branch on whichever shape is present.
       const businessType = str(p, "businessType");
-      if (businessType) return `matched ${businessType}`;
+      // A multi-site group (`minSites` on the local engine) carries its sites.
+      if (businessType) {
+        const sites = str(p, "signal");
+        return sites ? `matched ${businessType} · ${sites}` : `matched ${businessType}`;
+      }
       const label = str(p, "sourceLabel");
       const matched = str(p, "matchedDateIso");
       const subjectType = str(p, "subjectType");

@@ -40,6 +40,30 @@ People search is paid per row asked, found or not. Each search a run reads start
 
 On the default `b2b` engine, `industries` must be LinkedIn's industry names, such as `Dentists`, `Truck Transportation` or `Hospitals and Health Care`. The people database matches them exactly: `manufacturing` finds no one where `Manufacturing` does. The finder corrects the case. A name LinkedIn doesn't have still matches no one; the trigger editor warns when you save one, and a run that finds no one names it. On `engine: local`, `industries` are place categories and any wording works.
 
+`engine: local` makes one search over all `locations` per run, and a long list returns the same businesses every time. Two options change that. Both are off by default.
+
+- `locationsPerRun: 5` searches five locations a run, one search each, and the next run carries on from the sixth. After the last location it starts again at the first. Each search has a flat price, so a run costs five searches, not one. A run stopped by `maxCostUsd` carries on from the next location.
+- `minSites: 2` keeps only domains seen at two or more addresses, and queues one row per domain with `siteCount` and its evidence, `3 locations (Austin, TX; Dallas, TX)`. Addresses from earlier runs count too, so a group with one site per metro qualifies once the rotation has seen two. The chain filter is off with it, because the places index calls a name at 3+ addresses a chain. A domain below the threshold counts as an ICP drop but is not marked rejected.
+
+```json
+{
+  "engine": "local",
+  "industries": ["HVAC contractor"],
+  "locations": [
+    "Phoenix, AZ",
+    "Tucson, AZ",
+    "Denver, CO",
+    "Dallas, TX",
+    "Austin, TX",
+    "Houston, TX"
+  ],
+  "locationsPerRun": 3,
+  "minSites": 2
+}
+```
+
+With `play: "design-partner-loi"` and `jobTitles`, the local engine looks those titles up at each business's domain, two titles per search, and falls back to the domain-only contact when no one with a matching title is found or reachable.
+
 A finder you keep rejecting pauses itself. When fewer than 10% of its reviewed rows were approved over 30 days, with at least 100 reviewed, scheduled runs skip it. `find watch --ignore-approval-rate` runs it anyway.
 
 ## The gates
