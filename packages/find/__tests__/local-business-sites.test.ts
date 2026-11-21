@@ -393,6 +393,18 @@ describe("local engine — minSites", () => {
     expect(enqueued[0]!.payload["siteCount"]).toBe(30);
   });
 
+  it("a lower-threshold run never shrinks site memory a higher threshold built", async () => {
+    const metros = Array.from({ length: 29 }, (_, i) => `Metro ${i}`);
+    placesFor = (loc) => [biz({ domain: "big.example", address: `${loc} 1 Main` })];
+    for (let i = 0; i < 29; i++) await run({ locations: metros, locationsPerRun: 1, minSites: 30 });
+    placesFor = () => [biz({ domain: "big.example", address: "Elsewhere 9 Main" })];
+    await run({ minSites: 2 });
+    const stored = JSON.parse(researchCache.get("local-sites:big.example")!) as {
+      sites: unknown[];
+    };
+    expect(stored.sites).toHaveLength(30);
+  });
+
   it("expires each remembered site on its own, whenever the entry was rewritten", async () => {
     const now = Date.now();
     researchCache.set(
@@ -550,6 +562,17 @@ describe("local engine — design-partner-loi with jobTitles", () => {
     expect(peopleSearchCalls.map((c) => c["jobTitles"])).toEqual([
       ["Director of Operations", "COO"],
     ]);
+    expect(findEmailCalls).toHaveLength(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toBe("max-cost cap (0.03)");
+  });
+
+  it("checks the cap before the titled person's contact lookup", async () => {
+    peopleCost = 0.01;
+    peopleFor = (input) =>
+      input["jobTitles"] ? [{ full_name: "Robin Hale", title: "Director of Operations" }] : [];
+    // Places 0.02 plus one title search 0.01 spends the whole 0.03.
+    const out = await run({ maxCostUsd: 0.03 });
     expect(findEmailCalls).toHaveLength(0);
     expect(out.enqueued).toBe(0);
     expect(out.halted).toBe("max-cost cap (0.03)");

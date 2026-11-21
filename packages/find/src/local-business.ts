@@ -856,8 +856,11 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 const LOCAL_CURSOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** How long the sites a domain was seen at are remembered, for `minSites` across runs. */
 const LOCAL_SITES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-/** Sites remembered per domain, newest first; raised to `minSites` when that is larger. */
-const MAX_REMEMBERED_SITES = 25;
+/**
+ * Sites remembered per domain, newest first: the largest `minSites` readiness
+ * accepts, because triggers with different thresholds share one entry.
+ */
+const MAX_REMEMBERED_SITES = 1000;
 /** Cities a group's evidence names before the rest are only counted. */
 const MAX_EVIDENCE_CITIES = 3;
 /** Rows asked per title-scoped people search at a business's domain. */
@@ -1137,6 +1140,10 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
         return;
       }
       if (titled.person) {
+        if (capReached()) {
+          result.halted = `max-cost cap (${opts.maxCostUsd})`;
+          return;
+        }
         const tried = await resolveVerifyEnrichQualify({
           ...spine,
           fullName: titled.person.fullName,
@@ -1335,8 +1342,6 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     // A group may show one site per metro, so the sites remembered from
     // earlier runs' locations count too.
     const now = Date.now();
-    // Kept newest first, never fewer than `minSites`, so any threshold can be met.
-    const keep = Math.max(minSites!, MAX_REMEMBERED_SITES);
     const ranked = [...groups.values()].map((g) => {
       const remembered = parseRememberedSites(
         ledger.getProductResearchCache(sitesMemoryKey(g.domain), LOCAL_SITES_TTL_MS),
@@ -1349,7 +1354,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
         const newest = [...sites.values()].toSorted((a, b) => b.seenAt - a.seenAt);
         ledger.setProductResearchCache(
           sitesMemoryKey(g.domain),
-          JSON.stringify({ sites: newest.slice(0, keep) }),
+          JSON.stringify({ sites: newest.slice(0, MAX_REMEMBERED_SITES) }),
         );
       }
       return { group: g, sites };
