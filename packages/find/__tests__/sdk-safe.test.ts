@@ -14,6 +14,8 @@ let enrichCompanyThrow = false;
 let companyHang = false;
 // When set, findEmail/verifyEmail reject with this instead (the paid cache's own answers).
 let cacheError: Error | null = null;
+// When set, every mocked call rejects with this (a payment hold).
+let thrown: Error | null = null;
 const cacheArgs: unknown[] = [];
 const logged: string[] = [];
 
@@ -25,12 +27,14 @@ vi.mock("@oneshot-gtm/core", async () => {
       logged.push(name);
     },
     findEmail: async (_input: unknown, _ctx: unknown, cache?: unknown) => {
+      if (thrown) throw thrown;
       cacheArgs.push(cache);
       if (cacheError) throw cacheError;
       if (findThrow) throw new Error("Job 035ebe1e timed out after 121");
       return { result: { status: "ok", email: "a@b.com", found: true, cost: 0.005 }, receiptId: 7 };
     },
     verifyEmail: async (_input: unknown, _ctx: unknown, cache?: unknown) => {
+      if (thrown) throw thrown;
       cacheArgs.push(cache);
       if (cacheError) throw cacheError;
       if (verifyThrow) throw new Error("Job 035ebe1e timed out after 121");
@@ -48,6 +52,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     peopleSearch: async () => {
+      if (thrown) throw thrown;
       if (peopleSearchThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
         result: {
@@ -60,6 +65,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     companySearch: async () => {
+      if (thrown) throw thrown;
       if (companyHang) return new Promise(() => {});
       if (companySearchThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
@@ -73,6 +79,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     enrichCompany: async () => {
+      if (thrown) throw thrown;
       if (companyHang) return new Promise(() => {});
       if (enrichCompanyThrow) throw new Error("Job 035ebe1e timed out after 121");
       return {
@@ -85,6 +92,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 
 const { safeFindEmail, safeVerifyEmail, safePeopleSearch, safeCompanySearch, safeEnrichCompany } =
   await import("../src/_sdk-safe.ts");
+const { wasHeld } = await import("../src/_held.ts");
 
 describe("safeFindEmail / safeVerifyEmail", () => {
   it("passes through the real result on success", async () => {
@@ -242,6 +250,60 @@ describe("the paid cache under the wrappers", () => {
     try {
       await safeFindEmail({ companyDomain: "b.com", fullName: "A" }, { playName: "t" });
       expect(logged).toContain("error.swallowed");
+    } finally {
+      findThrow = false;
+    }
+  });
+});
+
+describe("a payment hold under the wrappers", () => {
+  const ctx = { playName: "t" };
+  const calls = () => [
+    safeFindEmail({ companyDomain: "b.com", fullName: "A" }, ctx),
+    safeVerifyEmail({ email: "a@b.com" }, ctx),
+    safePeopleSearch({ jobTitles: ["Owner"] }, ctx),
+    safeCompanySearch({ domain: "acme.com" }, ctx),
+    safeEnrichCompany({ domain: "acme.com" }, ctx),
+  ];
+
+  it("a call already held is skipped: the drop sentinel, marked held, and a skip event", async () => {
+    const { PaymentHeldError } = await import("@oneshot-gtm/core");
+    thrown = new PaymentHeldError("k", undefined, { executionUncertain: true, localRefusal: true });
+    logged.length = 0;
+    try {
+      const [found, verified, people, companies, company] = await Promise.all(calls());
+      expect(found!.result).toMatchObject({ status: "invalid", found: false, cost: 0 });
+      expect(verified!.result).toMatchObject({ status: "invalid", deliverable: false, cost: 0 });
+      expect(people!.result).toMatchObject({ status: "error", results: [], cost: 0 });
+      expect(companies!.result).toMatchObject({ status: "error", results: [], cost: 0 });
+      expect(company!.result).toMatchObject({ status: "error", company: {}, cost: 0 });
+      expect([found, verified, people].map((r) => wasHeld(r!))).toEqual([true, true, true]);
+      expect(logged.filter((e) => e === "finder.skipped_held")).toHaveLength(5);
+      expect(logged).not.toContain("error.swallowed");
+    } finally {
+      thrown = null;
+    }
+  });
+
+  it("a new uncertain outcome still throws out of every wrapper", async () => {
+    const { PaymentHeldError } = await import("@oneshot-gtm/core");
+    const ambiguous = new Error("settlement did not confirm");
+    ambiguous.name = "SettlementAmbiguousError";
+    try {
+      for (const err of [new PaymentHeldError("k", "st_1"), ambiguous]) {
+        thrown = err;
+        for (const call of calls()) await expect(call).rejects.toBe(err);
+      }
+    } finally {
+      thrown = null;
+    }
+  });
+
+  it("an ordinary failure is never marked held", async () => {
+    findThrow = true;
+    try {
+      const found = await safeFindEmail({ companyDomain: "b.com", fullName: "A" }, ctx);
+      expect(wasHeld(found)).toBe(false);
     } finally {
       findThrow = false;
     }
