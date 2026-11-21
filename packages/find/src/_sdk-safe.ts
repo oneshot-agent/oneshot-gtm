@@ -1,5 +1,4 @@
 import {
-  isSettlementAmbiguous,
   type CompanySearchInput,
   companySearch,
   deepResearchPerson,
@@ -29,6 +28,7 @@ import type {
   FindEmailInput,
   VerifyEmailInput,
 } from "@oneshot-gtm/core";
+import { markHeld, skippedHeld } from "./_held.ts";
 
 /**
  * Isolate failures from job-based contact-resolution SDK calls.
@@ -37,10 +37,12 @@ import type {
  * batch. Forward CallContext unchanged to preserve audit metadata.
  */
 
-function swallow(ctx: CallContext, call: string, err: unknown): void {
+/** Log a caught failure. True when it was a held call (see `skippedHeld`). */
+function swallow(ctx: CallContext, call: string, err: unknown): boolean {
+  if (skippedHeld(ctx, call, err)) return true;
   // The paid cache's own answers (a miss under cacheOnly, a remembered
   // failure) are not new errors.
-  if (isPaidCacheMiss(err) || isCachedPaidFailure(err)) return;
+  if (isPaidCacheMiss(err) || isCachedPaidFailure(err)) return false;
   logEvent(
     "error.swallowed",
     {
@@ -49,6 +51,7 @@ function swallow(ctx: CallContext, call: string, err: unknown): void {
     },
     "warn",
   );
+  return false;
 }
 
 /** findEmail that never throws. A failure resolves to `found: false` (drop). */
@@ -60,17 +63,21 @@ export async function safeFindEmail(
   try {
     return await findEmail(input, ctx, cache);
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
-    swallow(ctx, "find_email", err);
+    const isHeld = swallow(ctx, "find_email", err);
     // cost 0 / receiptId 0 mirror a cache hit: nothing was spent on this row.
     // A ValidationError is the SDK refusing the CALL (nothing was sent, nothing
     // billed): SDK 0.32 rejects findEmail without a person name. That is a
     // verdict about our input, not a backend outage: reported as "invalid" so
     // the spine drops the candidate instead of feeding the circuit breaker
     // five times and blacking out contact resolution for every finder. A
-    // failure the paid cache remembers is a verdict too, never an outage.
-    const status = isValidationError(err) || isCachedPaidFailure(err) ? "invalid" : "error";
-    return { result: { status, email: null, found: false, cost: 0 }, receiptId: 0 };
+    // failure the paid cache remembers is a verdict too, never an outage, and
+    // so is a held call: it stays held until someone reconciles it.
+    const status =
+      isHeld || isValidationError(err) || isCachedPaidFailure(err) ? "invalid" : "error";
+    return markHeld(isHeld, {
+      result: { status, email: null, found: false, cost: 0 },
+      receiptId: 0,
+    });
   }
 }
 
@@ -92,12 +99,11 @@ export async function safeVerifyEmail(
   try {
     return await verifyEmail(input, ctx, cache);
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
-    swallow(ctx, "verify_email", err);
-    return {
+    const isHeld = swallow(ctx, "verify_email", err);
+    return markHeld(isHeld, {
       result: {
-        // A remembered failure is a verdict (drop), not an outage (defer).
-        status: isCachedPaidFailure(err) ? "invalid" : "error",
+        // A remembered failure or a held call is a drop, not an outage (defer).
+        status: isHeld || isCachedPaidFailure(err) ? "invalid" : "error",
         email: input.email,
         valid: false,
         deliverable: false,
@@ -106,7 +112,7 @@ export async function safeVerifyEmail(
         cost: 0,
       },
       receiptId: 0,
-    };
+    });
   }
 }
 
@@ -135,9 +141,11 @@ export async function safePeopleSearch(
       "peopleSearch",
     );
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
-    swallow(ctx, "people_search", err);
-    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+    const isHeld = swallow(ctx, "people_search", err);
+    return markHeld(isHeld, {
+      result: { status: "error", results: [], total_found: 0, cost: 0 },
+      receiptId: 0,
+    });
   }
 }
 
@@ -177,7 +185,6 @@ export async function safeCompanySearch(
       "companySearch",
     );
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "company_search", err);
     const cost = chargedOnDeadline(err, "companySearch", 0.01);
     return { result: { status: "error", results: [], total_found: 0, cost }, receiptId: 0 };
@@ -200,7 +207,6 @@ export async function safeEnrichCompany(
       "enrichCompany",
     );
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "enrich_company", err);
     const cost = chargedOnDeadline(err, "enrichCompany", 0.005);
     return { result: { status: "error", company: {}, cost }, receiptId: 0 };
@@ -220,7 +226,6 @@ export async function safeGovSolicitations(
   try {
     return await govSolicitations(input, ctx, cache);
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "gov_solicitations", err);
     return {
       result: {
@@ -245,7 +250,6 @@ export async function safeLocalSearch(
   try {
     return await localSearch(input, ctx, cache);
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "local_search", err);
     return {
       result: {
@@ -272,7 +276,6 @@ export async function safeLocalResolve(
   try {
     return await localResolve(input, ctx, cache);
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "local_resolve", err);
     return {
       result: {
@@ -329,7 +332,6 @@ export async function safeDeepResearchPerson(
     live.catch(() => undefined);
     return await withDeadline(live, RESEARCH_DEADLINE_MS, "deepResearchPerson");
   } catch (err) {
-    if (isSettlementAmbiguous(err)) throw err;
     swallow(ctx, "deep_research_person", err);
     return { result: FAILED_RESEARCH, receiptId: 0 };
   }

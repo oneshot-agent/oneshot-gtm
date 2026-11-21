@@ -1,4 +1,3 @@
-import { isSettlementAmbiguous } from "@oneshot-gtm/core";
 import {
   fetchProfileReadmeEmail,
   type GitHubIdentity,
@@ -27,6 +26,7 @@ import { sanitizeCompanyDomain } from "./_accelerator-search-adapter.ts";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { isDudDomain, shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { safeFindEmail, safePeopleSearch, safeVerifyEmail } from "./_sdk-safe.ts";
+import { skippedHeld, wasHeld } from "./_held.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import type { PersonCandidate, PersonVerdict } from "./_filter.ts";
 import { qualifyPostEnrich } from "./_qualify.ts";
@@ -131,6 +131,9 @@ async function resolvePrimaryContact(args: {
         ctx,
       );
       costUsd += people.result.cost ?? 0;
+      // A held lookup is skipped. It never reached OneShot, so the breaker
+      // hears nothing either way.
+      if (wasHeld(people)) return { ok: false, reason: "not-found", costUsd };
       if (people.result.status === "error") {
         recordResolutionOutcome(true);
         return { ok: false, reason: "platform-error", costUsd };
@@ -161,6 +164,7 @@ async function resolvePrimaryContact(args: {
       // failure), NOT a genuine "no email for this person". Don't treat as a
       // verdict; feed the breaker and defer. status:"invalid" = the SDK
       // refused our input before sending anything. A verdict, never an outage.
+      if (wasHeld(found)) return { ok: false, reason: "not-found", costUsd };
       if (found.result.status === "error") {
         recordResolutionOutcome(true);
         return { ok: false, reason: "platform-error", costUsd };
@@ -185,6 +189,8 @@ async function resolvePrimaryContact(args: {
   if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
   const verified = await safeVerifyEmail({ email }, ctx);
   costUsd += verified.result.cost ?? 0;
+  if (wasHeld(verified))
+    return { ok: false, reason: "undeliverable", attemptedEmail: email, costUsd };
   if (verified.result.status === "error") {
     recordResolutionOutcome(true);
     return { ok: false, reason: "platform-error", costUsd };
@@ -301,7 +307,8 @@ export async function resolveViaProfileFallback(
       recordResolutionOutcome(false);
       profile = enriched.result.profile ?? null;
     } catch (err) {
-      if (isSettlementAmbiguous(err)) throw err;
+      // A held lookup is a miss that never reached OneShot: no breaker either way.
+      const held = skippedHeld(ctx, "no_domain_enrich", err);
       // Only a transient failure is an outage. A verdict ("could not find
       // data"), fresh or remembered by the paid cache, is a miss.
       if (isTransientToolError(err) && !isCachedPaidFailure(err)) {
@@ -312,7 +319,7 @@ export async function resolveViaProfileFallback(
       }
       // A fresh verdict is the backend answering, so it ends a failure run. A
       // remembered one never probed the backend and leaves the breaker alone.
-      if (!isCachedPaidFailure(err)) recordResolutionOutcome(false);
+      if (!held && !isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     const domain = employerDomain(profile);
     if (domain) {
@@ -352,7 +359,7 @@ export async function resolveViaProfileFallback(
       recordResolutionOutcome(false);
       email = workEmailFrom(dr.result.result?.enrichment);
     } catch (err) {
-      if (isSettlementAmbiguous(err)) throw err;
+      const held = skippedHeld(ctx, "no_domain_research", err);
       // The dossier is the slowest call in the toolbox (2-5 min): running out
       // of time is no answer, not an outage. Neither is a verdict ("could not
       // find data"), fresh or remembered: only a transient failure is.
@@ -363,7 +370,7 @@ export async function resolveViaProfileFallback(
         report(social.via, { ok: false, reason: "platform-error", costUsd });
         return { ok: false, reason: "platform-error", costUsd };
       }
-      if (!timedOut && !isCachedPaidFailure(err)) recordResolutionOutcome(false);
+      if (!held && !timedOut && !isCachedPaidFailure(err)) recordResolutionOutcome(false);
     }
     if (email) {
       const resolved = await retry({ knownEmail: email });
