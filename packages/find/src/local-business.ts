@@ -783,23 +783,24 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     if (stop) stoppedAt ??= position;
     // A failed search is not marked either way: the next run reads it again.
     if (opts.dryRun || failed) continue;
-    if (ended && fresh === 0 && (known > 0 || startOffset > 0)) {
-      // Read to its end and everyone on it is already in the queue: leave it
-      // alone for a while instead of paying to re-read the same people every
-      // run. A search that returned no one usable from the top is not
-      // marked: that is what a platform outage looks like too, and it should
-      // be retried the next run.
+    if (ended && retryOffset == null && (fresh > 0 || known > 0 || startOffset > 0)) {
+      // Read to its end: the new people on it were worked this run and the
+      // rest are already in the queue, so leave it alone for a while instead
+      // of paying to re-read the same people every run. A search that
+      // returned no one usable from the top is not marked: that is what a
+      // platform outage looks like too, and it should be retried the next run.
       ledger.setProductResearchCache(progressKey, JSON.stringify({ done: true }));
       // Resumed past its last person: nothing was read, as for a search
       // already marked finished.
       if (offset === startOffset) finishedQueries++;
-    } else if (capped || stop) {
+    } else if (capped || stop || (ended && retryOffset != null)) {
       // Everyone before `offset` has been looked at: it only moves past a
       // page once every person on it was worked. So whether the page cap,
       // the run's search budget, the limit or the cost cap stopped it, the
       // next run starts there instead of re-reading the same pages and never
       // getting past them. Someone a passing failure left undecided holds the
-      // mark at their page, so the next run meets them again.
+      // mark at their page, so the next run meets them again, even on a
+      // search read to its end.
       const resumeAt = Math.min(offset, retryOffset ?? offset);
       if (resumeAt > 0) {
         ledger.setProductResearchCache(

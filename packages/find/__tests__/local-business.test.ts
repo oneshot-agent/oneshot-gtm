@@ -703,11 +703,59 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
     expect(second.halted).toMatch(/walked to its end/);
   });
 
-  it("is searched again while it still returns someone new", async () => {
+  it("is left alone too once its new people are queued, when it ends on a short page", async () => {
+    // Three pages, the last short: everyone new on it is queued this run, so
+    // nothing is left to read on it.
+    nextPeopleSearchResults = people(0, 52);
+    const run = () =>
+      runAgain({ dryRun: false, jobTitles: ["Head of AI"], limit: 100, yourEdge: "x" });
+    const first = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0, 10, 50]);
+    expect(first.enqueued).toBe(52);
+    expect(
+      parseSearchProgress(researchCache.get(progressKeyOf({ jobTitles: ["Head of AI"] })) ?? null),
+    ).toEqual({ done: true });
+
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(second.costUsd).toBe(0);
+    expect(second.halted).toMatch(/walked to its end/);
+  });
+
+  it("is not left alone while someone on it was left undecided", async () => {
+    // The only new person is on the second page, and the classifier is down
+    // when the run reaches them: the next run starts at their page.
+    nextPeopleSearchResults = people(0, 30);
+    for (let i = 0; i < 30; i++) if (i !== 20) knownKeys.add(keyOf(i));
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    icpMatch = null;
+    await run();
+    expect(
+      parseSearchProgress(researchCache.get(progressKeyOf({ jobTitles: ["Head of AI"] })) ?? null),
+    ).toEqual({ done: false, offset: 10 });
+
+    icpMatch = true;
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls[0]?.["offset"]).toBe(10);
+    expect(second.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["name"]).toBe("Person 20");
+  });
+
+  it("is read from the top again when the undecided person is on its first page", async () => {
     nextPeopleSearchResults = people(0, 5);
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
-    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
-    expect(peopleSearchCalls).toHaveLength(2);
+    icpMatch = null;
+    const run = () =>
+      runLocalBusinessFinder({ dryRun: false, jobTitles: ["Head of AI"], yourEdge: "x" });
+    await run();
+    expect(researchCache.size).toBe(0);
+    icpMatch = true;
+    peopleSearchCalls.length = 0;
+    const second = await run();
+    expect(peopleSearchCalls.map((c) => c["offset"] ?? 0)).toEqual([0]);
+    expect(second.enqueued).toBe(5);
   });
 
   it("a dry run never marks a search as walked", async () => {
@@ -735,6 +783,7 @@ describe("runLocalBusinessFinder — a search with no one new", () => {
     const run = () =>
       runLocalBusinessFinder({ dryRun: false, jobTitles: ["Chief AI Officer"], yourEdge: "x" });
     await run();
+    expect(researchCache.has(progressKeyOf({ jobTitles: ["Chief AI Officer"] }))).toBe(false);
     await run();
     expect(peopleSearchCalls).toHaveLength(2);
   });
