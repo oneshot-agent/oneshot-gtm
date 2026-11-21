@@ -126,6 +126,18 @@ describe("queueEvidence", () => {
       }),
     ).toBe("NYC licenses — matched 2026-06-01");
   });
+  it("adds a multi-site group's sites to a local-business row", () => {
+    expect(queueEvidence("free-pilot", { businessType: "HVAC contractor" })).toBe(
+      "matched HVAC contractor",
+    );
+    expect(
+      queueEvidence("free-pilot", {
+        businessType: "HVAC contractor",
+        siteCount: 3,
+        signal: "3 locations (Austin, TX; Dallas, TX)",
+      }),
+    ).toBe("matched HVAC contractor · 3 locations (Austin, TX; Dallas, TX)");
+  });
   it("names the notice title (plus agency) for gov-solicitation's two routes", () => {
     expect(
       queueEvidence("sources-sought", {

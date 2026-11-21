@@ -7,7 +7,14 @@ import {
   type PeopleSearchInput,
   type PersonResult,
 } from "@oneshot-gtm/core";
-import { icpFields, resolveVerifyEnrichQualify } from "./_contact.ts";
+import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
+import {
+  icpFields,
+  pickNamedPerson,
+  type QualifiedContact,
+  resolveVerifyEnrichQualify,
+} from "./_contact.ts";
+import { titleMatches } from "./_titles.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
@@ -119,6 +126,18 @@ export interface LocalBusinessFinderOpts extends RunOpts {
   maxProbesPerRun?: number;
   /** Industries per people search; a longer list is searched in groups (default 3). */
   industriesPerSearch?: number;
+  /**
+   * `local` engine only: locations searched per run, one search each, walking
+   * `locations` across runs and wrapping at the end. Unset: one search over
+   * every location, as before.
+   */
+  locationsPerRun?: number;
+  /**
+   * `local` engine only: keep only domains seen at this many distinct
+   * addresses, one candidate per domain. Unset: every business is its own
+   * candidate, as before.
+   */
+  minSites?: number;
 }
 
 /** A per-run count from the config, or the default when missing or out of range. */
@@ -831,13 +850,158 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 }
 
 /**
- * The `local` engine: one flat-priced `localSearch` (category × location),
- * then the domain-only contact spine per business. The same path
+ * How long the local engine's place in its `locations` list is kept. A
+ * rotation that has not run for this long starts again at the first location.
+ */
+const LOCAL_CURSOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** How long the sites a domain was seen at are remembered, for `minSites` across runs. */
+const LOCAL_SITES_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+/** Sites remembered per domain: enough to clear any sensible `minSites`. */
+const MAX_REMEMBERED_SITES = 25;
+/** Cities a group's evidence names before the rest are only counted. */
+const MAX_EVIDENCE_CITIES = 3;
+/** Rows asked per title-scoped people search at a business's domain. */
+const DOMAIN_TITLE_SEARCH_LIMIT = 5;
+/** Contact misses that only mean "no address for this person": try the domain-only pick. */
+const NO_ADDRESS_REASONS = new Set(["no-domain", "prescreen", "not-found", "undeliverable"]);
+
+/** A whole number from 1 to the per-run bound, or null when unset or out of range. */
+function optionalCount(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= MAX_PER_RUN_SETTING
+    ? value
+    : null;
+}
+
+/** Where the local engine's rotation through `locations` stands. */
+export function localSearchProgressKey(industries: string[], locations: string[]): string {
+  const hash = createHash("sha256")
+    .update(JSON.stringify({ engine: "local", industries, locations }))
+    .digest("hex")
+    .slice(0, 16);
+  return `local-search-progress:${hash}`;
+}
+
+/** The index of the next location to search, from the saved cursor. */
+export function parseLocalCursor(raw: string | null, locationCount: number): number {
+  if (!raw || locationCount <= 0) return 0;
+  try {
+    const v = JSON.parse(raw) as { next?: unknown };
+    if (typeof v.next === "number" && Number.isInteger(v.next) && v.next > 0) {
+      return v.next % locationCount;
+    }
+  } catch {
+    // unreadable entry: start at the first location
+  }
+  return 0;
+}
+
+/** `count` locations from `start`, wrapping at the end of the list; never one twice. */
+export function rotationSlice(locations: string[], start: number, count: number): string[] {
+  const n = Math.min(count, locations.length);
+  return Array.from({ length: n }, (_, i) => locations[(start + i) % locations.length]!);
+}
+
+/** A places domain as a group key: lowercase, no `www.`, no trailing dot. */
+export function siteDomain(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, "")
+    .replace(/\.$/, "");
+}
+
+/**
+ * One site of a business: its address with case, spacing and punctuation
+ * folded, else the SDK's `id` (a hash of name + address), else null.
+ */
+export function siteKey(biz: Pick<LocalResult, "address" | "id">): string | null {
+  const address = typeof biz.address === "string" ? biz.address : "";
+  const folded = address.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (folded) return `addr:${folded}`;
+  return typeof biz.id === "string" && biz.id ? `id:${biz.id}` : null;
+}
+
+/** `N locations (A; B; C +2 more)`: cities are the searched locations, which carry commas. */
+export function sitesEvidence(siteCount: number, cities: string[]): string {
+  const named = cities.slice(0, MAX_EVIDENCE_CITIES);
+  const more = cities.length - named.length;
+  const list = named.length > 0 ? ` (${named.join("; ")}${more > 0 ? ` +${more} more` : ""})` : "";
+  return `${siteCount} location${siteCount === 1 ? "" : "s"}${list}`;
+}
+
+interface RememberedSite {
+  key: string;
+  location: string | null;
+}
+
+function sitesMemoryKey(domain: string): string {
+  return `local-sites:${domain}`;
+}
+
+function parseRememberedSites(raw: string | null): RememberedSite[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw) as { sites?: unknown };
+    if (!Array.isArray(v.sites)) return [];
+    return v.sites.flatMap((s): RememberedSite[] => {
+      if (!s || typeof s !== "object") return [];
+      const { key, location } = s as { key?: unknown; location?: unknown };
+      if (typeof key !== "string" || !key) return [];
+      return [{ key, location: typeof location === "string" ? location : null }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** A place worked by the local engine: one business, or with `minSites`, one group. */
+interface LocalCandidate {
+  name: string;
+  domain: string;
+  dedupeKey: string;
+  businessType: string;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  website: string | null;
+  /** Set on a group: the number of sites, and `N locations (…)`. */
+  group?: { siteCount: number; signal: string };
+}
+
+/** A domain's sites as the places index returned them this run. */
+interface SiteGroup {
+  domain: string;
+  first: LocalResult;
+  location: string | null;
+  /** Site key → the location searched when it was seen. */
+  sites: Map<string, string | null>;
+}
+
+/**
+ * The `local` engine: `localSearch` (category × location, flat price per
+ * search), then the domain-only contact spine per business. The same path
  * local-registry walks for a licence row, because a places result is the
  * same shape: a business with a domain and no owner name. Rows enqueue with
  * the `businessType` payload the free-pilot play, the ranking adapter and
  * the queue evidence renderer already branch on, so a local-engine row is
  * indistinguishable downstream from a B2B one.
+ *
+ * With neither option below set, a run is one search over every location.
+ *
+ * - `locationsPerRun` searches that many locations a run, one search each,
+ *   and the next run carries on from the next location, back to the first
+ *   after the last. A long list then costs that many searches a run, not
+ *   one, so it is never on by default. A run stopped by the cost cap or the
+ *   limit carries on after the last location it searched; businesses found
+ *   there but not reached come back when the rotation wraps.
+ * - `minSites` keeps only domains seen at that many addresses (across this
+ *   run's searches and the sites remembered from earlier runs) and works one
+ *   candidate per domain. The chain filter is not sent with it: the index
+ *   calls a name at 3+ addresses a chain, which is what a group is.
  */
 async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
@@ -845,9 +1009,12 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
   const ledger = getLedger();
   const industries = nonEmptyStrings(opts.industries);
   const locations = nonEmptyStrings(opts.locations);
+  const jobTitles = nonEmptyStrings(opts.jobTitles);
   const yourEdge = (opts.yourEdge ?? "").trim();
   const route = resolvePlayRoute(opts);
   const dedupeScope = dedupePlayNames(PLAY_NAME);
+  const locationsPerRun = optionalCount(opts.locationsPerRun);
+  const minSites = optionalCount(opts.minSites);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -870,82 +1037,56 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     return result;
   }
 
+  const cursorKey = localSearchProgressKey(industries, locations);
+  const start =
+    locationsPerRun == null
+      ? 0
+      : parseLocalCursor(
+          ledger.getProductResearchCache(cursorKey, LOCAL_CURSOR_TTL_MS),
+          locations.length,
+        );
+  // Each entry is one search's locations: all of them, or one per search.
+  const plan: string[][] =
+    locationsPerRun == null
+      ? [locations]
+      : rotationSlice(locations, start, locationsPerRun).map((l) => [l]);
+
   logEvent("finder.start", {
     name: PLAY_NAME,
     engine: "local",
     industries: industries.length,
     locations: locations.length,
+    ...(locationsPerRun != null ? { locations_per_run: locationsPerRun, cursor: start } : {}),
+    ...(minSites != null ? { min_sites: minSites } : {}),
     limit,
   });
 
-  const search = await safeLocalSearch(
-    {
-      category: industries,
-      location: locations,
-      // A row has to be contactable to be worth a candidate slot, and a chain
-      // is never an owner-operator buying a free pilot.
-      hasDomain: true,
-      isChain: false,
-      operatingStatus: "open",
-      limit: LOCAL_SEARCH_LIMIT,
-    },
-    { playName: PLAY_NAME },
-  );
-  result.costUsd += search.result.cost ?? 0;
-  if (search.result.status === "error") {
-    result.halted = "localSearch failed (platform error) — see logs";
-    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
-    return result;
-  }
-  const businesses = search.result.results as LocalResult[];
-  result.candidates = businesses.length;
-  if (businesses.length === 0) {
-    result.halted = "localSearch returned no businesses — widen locations or try another category";
-    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
-    return result;
-  }
-
   const fallbackBusinessType = industries.join(" / ");
-  for (const biz of businesses) {
-    if (result.enqueued >= limit) break;
-    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
-      result.halted = `max-cost cap (${opts.maxCostUsd})`;
-      break;
-    }
-    if (!biz || typeof biz !== "object") continue;
-    const name = typeof biz.name === "string" ? biz.name.trim() : "";
-    const domain = typeof biz.domain === "string" ? biz.domain.trim().toLowerCase() : "";
-    if (!name || !domain) {
-      result.droppedEnrichment++;
-      continue;
-    }
-    // The SDK's `id` is a stable hash of normalized name + address. The
-    // dedupe key it documents for exactly this cross-run purpose.
-    const dedupeKey =
-      typeof biz.id === "string" && biz.id
-        ? `${PLAY_NAME}:local:${biz.id}`
-        : `${PLAY_NAME}:local:${domain}`;
-    const businessType = biz.category?.trim() || fallbackBusinessType;
-    const city = locations[0] ?? null;
+  const capReached = () => opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd;
 
+  /** One business (or group) through the gates and into the queue. */
+  const work = async (c: LocalCandidate): Promise<void> => {
+    const { name, domain, dedupeKey, businessType, city } = c;
     if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, dedupeKey))) {
       result.droppedDuplicate++;
-      continue;
+      return;
     }
 
     // ICP gate BEFORE any per-candidate paid call, as every finder does; the
-    // search above was one flat call per run, so it isn't gated here.
+    // search above was one flat call per location, so it isn't gated here.
     const filter = await icpFilter({
       icp,
       candidate: {
         title: businessType,
-        url: biz.website ?? undefined,
-        summary: [name, businessType, biz.address].filter(Boolean).join(" · "),
+        url: c.website ?? undefined,
+        summary: [name, businessType, c.group ? c.group.signal : c.address]
+          .filter(Boolean)
+          .join(" · "),
       },
     });
     if (filter.match === null) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
     if (!filter.match) {
       result.droppedIcp++;
@@ -959,33 +1100,67 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
           notes: `auto: ICP — ${filter.reason}`,
         });
       }
-      continue;
+      return;
     }
 
     if (opts.dryRun) {
       result.enqueued++;
-      continue;
+      return;
     }
 
-    // No owner name on a places result: findEmail resolves a company-level
-    // address off the domain alone, the same opt-in local-registry uses.
-    const contact = await resolveVerifyEnrichQualify({
+    const evidence = c.group
+      ? `localSearch ${businessType}: ${c.group.signal}`
+      : `localSearch ${businessType}${city ? `, ${city}` : ""}`;
+    const spine = {
       playName: PLAY_NAME,
-      fullName: null,
-      allowMissingFullName: true,
       companyDomain: domain,
-      isDuplicate: (candEmail) =>
+      isDuplicate: (candEmail: string) =>
         isDuplicate({ playName: dedupeScope, dedupeKey, prospectEmail: candEmail }),
       icp,
-      person: {
-        name: null,
-        company: name,
-        evidence: `localSearch ${businessType}${city ? `, ${city}` : ""}`,
-      },
       fillGaps: opts.qualifyFillGaps ?? true,
       errKindPrefix: PLAY_NAME,
-    });
-    result.costUsd += contact.costUsd;
+    };
+
+    let contact: QualifiedContact | null = null;
+    // A routed row is written to a named role at the business, so the wanted
+    // titles are looked up at its domain first. Only a miss on an address
+    // falls back to the domain-only pick below.
+    if (route && jobTitles.length > 0) {
+      const titled = await titledPersonAtDomain(domain, jobTitles);
+      result.costUsd += titled.costUsd;
+      if (titled.failed) {
+        result.droppedEnrichment++;
+        return;
+      }
+      if (titled.person) {
+        const tried = await resolveVerifyEnrichQualify({
+          ...spine,
+          fullName: titled.person.fullName,
+          knownEmail: titled.person.bestWorkEmail,
+          linkedinUrlHint: titled.person.linkedinUrl,
+          titleHint: titled.person.title,
+          person: {
+            name: titled.person.fullName,
+            company: name,
+            roleText: titled.person.title,
+            evidence,
+          },
+        });
+        result.costUsd += tried.costUsd;
+        if (tried.ok || !NO_ADDRESS_REASONS.has(tried.reason)) contact = tried;
+      }
+    }
+    // No owner name on a places result: findEmail resolves a company-level
+    // address off the domain alone, the same opt-in local-registry uses.
+    if (!contact) {
+      contact = await resolveVerifyEnrichQualify({
+        ...spine,
+        fullName: null,
+        allowMissingFullName: true,
+        person: { name: null, company: name, evidence },
+      });
+      result.costUsd += contact.costUsd;
+    }
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
       else if (contact.reason === "role") {
@@ -999,36 +1174,41 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
           dryRun: opts.dryRun,
         });
       } else result.droppedEnrichment++;
-      continue;
+      return;
     }
 
-    const phone = contact.phone ?? biz.phone ?? null;
+    const phone = contact.phone ?? c.phone ?? null;
+    const groupFields = c.group ? { siteCount: c.group.siteCount, signal: c.group.signal } : {};
     const target = {
       name: contact.fullName ?? name,
       email: contact.email ?? "",
       company: name,
       businessType,
       yourEdge,
-      ...(biz.address ? { address: biz.address } : {}),
+      ...(c.address ? { address: c.address } : {}),
       ...(city ? { city } : {}),
       ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...groupFields,
     };
     const id = enqueueScoredTarget(ledger, {
       playName: route ? route.playName : PLAY_NAME,
       payload: route
-        ? buildDesignPartnerLoiPayload({
-            name: target.name,
-            email: target.email,
-            company: name,
-            buyerType: route.buyerType,
-            yourEdge,
-            title: contact.title,
-            linkedinUrl: contact.linkedinUrl,
-            phone,
-            icp: icpFields(contact),
-          })
+        ? {
+            ...buildDesignPartnerLoiPayload({
+              name: target.name,
+              email: target.email,
+              company: name,
+              buyerType: route.buyerType,
+              yourEdge,
+              title: contact.title,
+              linkedinUrl: contact.linkedinUrl,
+              phone,
+              icp: icpFields(contact),
+            }),
+            ...groupFields,
+          }
         : target,
       dedupeKey,
       source: SOURCE,
@@ -1038,6 +1218,172 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;
+  };
+
+  /** A places row as a single-business candidate, or null when it has no name or domain. */
+  const toCandidate = (biz: LocalResult, city: string | null): LocalCandidate | null => {
+    const name = typeof biz.name === "string" ? biz.name.trim() : "";
+    const domain = typeof biz.domain === "string" ? biz.domain.trim().toLowerCase() : "";
+    if (!name || !domain) return null;
+    return {
+      name,
+      domain,
+      // The SDK's `id` is a stable hash of normalized name + address. The
+      // dedupe key it documents for exactly this cross-run purpose.
+      dedupeKey:
+        typeof biz.id === "string" && biz.id
+          ? `${PLAY_NAME}:local:${biz.id}`
+          : `${PLAY_NAME}:local:${domain}`,
+      businessType: biz.category?.trim() || fallbackBusinessType,
+      city,
+      address: biz.address ?? null,
+      phone: biz.phone ?? null,
+      website: biz.website ?? null,
+    };
+  };
+
+  const groups = minSites != null ? new Map<string, SiteGroup>() : null;
+  let read = 0;
+  let failed = 0;
+  let failuresInARow = 0;
+  /** Position in `plan` of the last search that answered. */
+  let lastRead = -1;
+  let stop = false;
+
+  for (const [position, searchLocations] of plan.entries()) {
+    if (stop || result.enqueued >= limit) break;
+    // Checked after each search, so a rotation stops part-way at the cap.
+    if (position > 0 && capReached()) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+    const search = await safeLocalSearch(
+      {
+        category: industries,
+        location: searchLocations,
+        // A row has to be contactable to be worth a candidate slot. Without
+        // `minSites` a chain is never an owner-operator buying a free pilot;
+        // with it, a name at several addresses is the target.
+        hasDomain: true,
+        ...(groups ? {} : { isChain: false }),
+        operatingStatus: "open",
+        limit: LOCAL_SEARCH_LIMIT,
+      },
+      { playName: PLAY_NAME },
+    );
+    result.costUsd += search.result.cost ?? 0;
+    if (search.result.status === "error") {
+      // One failure skips the location; several in a row is an outage.
+      failed++;
+      failuresInARow++;
+      if (failuresInARow >= MAX_FAILURES_IN_A_ROW) break;
+      continue;
+    }
+    failuresInARow = 0;
+    read++;
+    lastRead = position;
+    const businesses = search.result.results as LocalResult[];
+    result.candidates += businesses.length;
+    const city = locationsPerRun == null ? (locations[0] ?? null) : (searchLocations[0] ?? null);
+
+    for (const biz of businesses) {
+      if (!groups && result.enqueued >= limit) {
+        stop = true;
+        break;
+      }
+      if (!groups && capReached()) {
+        result.halted = `max-cost cap (${opts.maxCostUsd})`;
+        stop = true;
+        break;
+      }
+      if (!biz || typeof biz !== "object") continue;
+      if (groups) {
+        const name = typeof biz.name === "string" ? biz.name.trim() : "";
+        const domain = siteDomain(biz.domain);
+        const key = siteKey(biz);
+        if (!name || !domain || !key) {
+          result.droppedEnrichment++;
+          continue;
+        }
+        let group = groups.get(domain);
+        if (!group) {
+          group = { domain, first: biz, location: city, sites: new Map() };
+          groups.set(domain, group);
+        }
+        if (!group.sites.has(key)) group.sites.set(key, city);
+        continue;
+      }
+      const candidate = toCandidate(biz, city);
+      if (!candidate) {
+        result.droppedEnrichment++;
+        continue;
+      }
+      await work(candidate);
+    }
+  }
+
+  if (groups) {
+    // A group may show one site per metro, so the sites remembered from
+    // earlier runs' locations count too.
+    const ranked = [...groups.values()].map((g) => {
+      const remembered = parseRememberedSites(
+        ledger.getProductResearchCache(sitesMemoryKey(g.domain), LOCAL_SITES_TTL_MS),
+      );
+      const sites = new Map(g.sites);
+      for (const s of remembered) if (!sites.has(s.key)) sites.set(s.key, s.location);
+      if (!opts.dryRun && sites.size > remembered.length) {
+        ledger.setProductResearchCache(
+          sitesMemoryKey(g.domain),
+          JSON.stringify({
+            sites: [...sites]
+              .slice(0, MAX_REMEMBERED_SITES)
+              .map(([key, location]) => ({ key, location })),
+          }),
+        );
+      }
+      return { group: g, sites };
+    });
+    // Biggest groups first: the limit is spent on them.
+    ranked.sort((a, b) => b.sites.size - a.sites.size);
+    for (const { group, sites } of ranked) {
+      if (sites.size < minSites!) {
+        // Off-ICP by size, so counted with the ICP drops, but never stored
+        // as rejected: a site seen later can still qualify the domain.
+        result.droppedIcp++;
+        continue;
+      }
+      if (result.enqueued >= limit) break;
+      if (capReached()) {
+        result.halted = `max-cost cap (${opts.maxCostUsd})`;
+        break;
+      }
+      const cities = [...new Set([...sites.values()].filter((l): l is string => Boolean(l)))];
+      await work({
+        name: (group.first.name ?? "").trim(),
+        domain: group.domain,
+        // One candidate per group, whichever site the index returned first.
+        dedupeKey: `${PLAY_NAME}:local:${group.domain}`,
+        businessType: group.first.category?.trim() || fallbackBusinessType,
+        city: group.location,
+        address: null,
+        phone: group.first.phone ?? null,
+        website: group.first.website ?? null,
+        group: { siteCount: sites.size, signal: sitesEvidence(sites.size, cities) },
+      });
+    }
+  }
+
+  // The next run starts after the last location that answered. A failure
+  // after it (an outage) is searched again; one before it waits for the wrap.
+  if (locationsPerRun != null && !opts.dryRun && lastRead >= 0) {
+    const next = (start + lastRead + 1) % locations.length;
+    ledger.setProductResearchCache(cursorKey, JSON.stringify({ next }));
+  }
+
+  if (!result.halted && read === 0 && failed > 0) {
+    result.halted = "localSearch failed (platform error) — see logs";
+  } else if (!result.halted && result.candidates === 0) {
+    result.halted = "localSearch returned no businesses — widen locations or try another category";
   }
 
   logEvent("finder.done", {
@@ -1050,7 +1396,63 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
     dropped_enrich: result.droppedEnrichment,
     dropped_role: result.droppedRole,
     cost_usd: result.costUsd,
+    local_searches: plan.length,
+    local_searches_read: read,
+    local_searches_failed: failed,
+    ...(groups ? { groups: groups.size } : {}),
     halted: result.halted ?? null,
   });
   return result;
+}
+
+/**
+ * The first person at `domain` whose title matches a wanted one, from
+ * title-scoped people searches of at most two titles each (more fail
+ * upstream). The search's own title filter is loose, so its rows are checked
+ * against the titles too. `failed` is a platform error, not a miss.
+ */
+async function titledPersonAtDomain(
+  domain: string,
+  jobTitles: string[],
+): Promise<{
+  person: {
+    fullName: string;
+    title: string | null;
+    bestWorkEmail: string | null;
+    linkedinUrl: string | null;
+  } | null;
+  costUsd: number;
+  failed: boolean;
+}> {
+  let costUsd = 0;
+  // An open breaker is an outage: the domain-only pick reports it as one.
+  if (isCircuitOpen()) return { person: null, costUsd, failed: false };
+  for (let i = 0; i < jobTitles.length; i += MAX_TITLES_PER_SEARCH) {
+    const titles = jobTitles.slice(i, i + MAX_TITLES_PER_SEARCH);
+    const search = await safePeopleSearch(
+      { companyDomains: [domain], jobTitles: titles, limit: DOMAIN_TITLE_SEARCH_LIMIT },
+      { playName: PLAY_NAME },
+    );
+    costUsd += search.result.cost ?? 0;
+    if (search.result.status === "error") {
+      recordResolutionOutcome(true);
+      return { person: null, costUsd, failed: true };
+    }
+    recordResolutionOutcome(false);
+    const rows = (search.result.results ?? []) as PersonResult[];
+    // Most wanted title first, then the search's own order.
+    for (const wanted of titles) {
+      for (const row of rows) {
+        if (!titleMatches(row.title, wanted)) continue;
+        const picked = pickNamedPerson([row]);
+        if (!picked) continue;
+        return {
+          person: { ...picked, linkedinUrl: row.linkedin_url?.trim() || null },
+          costUsd,
+          failed: false,
+        };
+      }
+    }
+  }
+  return { person: null, costUsd, failed: false };
 }

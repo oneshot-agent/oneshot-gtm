@@ -553,6 +553,22 @@ describe("checkReadiness", () => {
     }
   });
 
+  it("local-business accepts whole-number locationsPerRun/minSites and refuses anything else", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-business")!;
+    const base = { engine: "local", industries: ["hvac contractor"], yourEdge: "x" };
+    expect(checkReadiness(spec, base)).toEqual({ ready: true });
+    expect(checkReadiness(spec, { ...base, locationsPerRun: 5, minSites: 2 })).toEqual({
+      ready: true,
+    });
+    for (const bad of [0, 2.5, "3", 1001]) {
+      expect(checkReadiness(spec, { ...base, minSites: bad })).toEqual({
+        ready: false,
+        reason: "`minSites` must be a whole number from 1 to 1000",
+      });
+      expect(checkReadiness(spec, { ...base, locationsPerRun: bad }).ready).toBe(false);
+    }
+  });
+
   it("accelerator-batch is not ready when both `cohorts` and legacy `cohort` are missing", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch");
     expect(spec).toBeDefined();

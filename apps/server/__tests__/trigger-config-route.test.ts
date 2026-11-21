@@ -146,6 +146,29 @@ describe("setTriggerConfigRoute — industries the people database does not have
   });
 });
 
+describe("setTriggerConfigRoute — local engine counts", () => {
+  it("warns that the b2b engine ignores locationsPerRun and minSites, and still saves", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { industries: ["Dentists"], locationsPerRun: 5, minSites: 2 } }),
+      { name: "local-business" },
+    );
+    expect(res.status).toBe(200);
+    const { warnings } = (await res.json()) as { warnings: string[] };
+    expect(warnings).toEqual([
+      'locationsPerRun and minSites only apply with engine "local" — the b2b engine ignores them',
+    ]);
+    expect(upserts).toHaveLength(1);
+  });
+
+  it("says nothing when they are set on the local engine", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { engine: "local", industries: ["hvac"], locationsPerRun: 5, minSites: 2 } }),
+      { name: "local-business" },
+    );
+    expect(((await res.json()) as { warnings: string[] }).warnings).toEqual([]);
+  });
+});
+
 describe("setTriggerConfigRoute — design-partner-loi routing warnings (issue #705)", () => {
   it("warns when play routes to design-partner-loi but buyerType is missing", async () => {
     const res = await setTriggerConfigRoute(
