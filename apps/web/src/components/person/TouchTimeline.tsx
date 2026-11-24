@@ -151,11 +151,20 @@ export function TouchTimeline({
   if (touches.length === 0) {
     return <p className="m-0 text-[12px] text-ink-muted">Nothing yet.</p>;
   }
-  // Keyed on the touch, not its index, so a new touch arriving on top keeps
-  // the open ones open; two touches can share an instant and a label.
+  // Keyed on what the touch is, not its position, so a touch arriving or
+  // another play's step landing in between keeps the open ones open. Only
+  // touches equal in every field share a base, and those are interchangeable.
   const seen = new Map<string, number>();
   const keyed = touches.map((t) => {
-    const base = `${t.at}|${t.kind}|${t.label}|${t.call?.id ?? ""}`;
+    const base = [
+      t.at,
+      t.kind,
+      t.channel ?? "",
+      t.label,
+      t.playName ?? "",
+      t.detail ?? "",
+      t.call?.id ?? "",
+    ].join("|");
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     return { t, key: `${base}|${n}` };

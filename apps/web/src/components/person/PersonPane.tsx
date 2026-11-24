@@ -1,12 +1,17 @@
+import type { PersonView } from "@oneshot-gtm/shared-types";
 import type { ReactNode } from "react";
 import { useMask } from "../../lib/privacy.tsx";
 import { Skeleton } from "../primitives/Skeleton.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 import { PersonBio } from "./PersonBio.tsx";
 import { PersonCadences } from "./PersonCadences.tsx";
-import { PersonHeader } from "./PersonHeader.tsx";
+import { PersonFlags, PersonHeader } from "./PersonHeader.tsx";
 import { TouchTimeline } from "./TouchTimeline.tsx";
 import { usePerson, type PersonKey } from "./usePerson.ts";
+
+function hasFlag(f: PersonView["flags"]): boolean {
+  return f.icpReject || f.bounced || f.contactSuppressed != null || f.breakupHold || f.replied;
+}
 
 /** A part of the pane a page already shows its own way. `call` drops call touches. */
 export type PersonPanePart = "header" | "touches" | "cadences" | "call";
@@ -89,7 +94,16 @@ export function PersonPane({
     : person.touches;
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      {showHeader && <PersonHeader person={person} aside={aside} />}
+      {showHeader ? (
+        <PersonHeader person={person} aside={aside} />
+      ) : (
+        // The page shows who they are its own way; what stops a send still shows here.
+        hasFlag(person.flags) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <PersonFlags flags={person.flags} />
+          </div>
+        )
+      )}
       <PersonBio dossier={person.dossier} queueId={queueId ?? person.queueId} />
       {!omit.includes("touches") && (
         <section aria-label="Touches">

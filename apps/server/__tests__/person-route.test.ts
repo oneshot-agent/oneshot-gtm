@@ -205,4 +205,77 @@ describe("GET /api/person", () => {
       experience: [{ company: "Clinicly", title: "Head of Payments", current: true }],
     });
   });
+
+  it("by prospect: takes in unlinked rows that name their email, past a malformed payload", async () => {
+    const pid = ledger.upsertProspect({ name: "Lee", email: "lee@acme.test" });
+    enqueue("show-hn", { email: " Lee@Acme.test " });
+    enqueue("job-change", { founderEmail: "lee@acme.test" });
+    enqueue("luma-events", { email: "someone@else.test" });
+    (ledger as unknown as { db: { exec(sql: string): void } }).db.exec(
+      "INSERT INTO target_queue (play_name, payload_json, dedupe_key, source) VALUES ('broken', '{not json', 'broken:1', 'test')",
+    );
+    const { status, body } = await get(`prospect=${pid}`);
+    expect(status).toBe(200);
+    const surfaced = (body.touches as Array<Record<string, any>>)
+      .filter((t) => t.kind === "surfaced")
+      .map((t) => t.playName)
+      .toSorted();
+    expect(surfaced).toEqual(["job-change", "show-hn"]);
+  });
+
+  it("flags a bounce on the address the row sends to, even when the prospect's differs", async () => {
+    const pid = ledger.upsertProspect({ name: "Kim", email: "kim@old.test" });
+    const qid = enqueue("show-hn", { email: "kim@new.test" });
+    ledger.setQueueProspectId(qid, pid);
+    expect((await get(`queue=${qid}`)).body.flags.bounced).toBe(false);
+    ledger.recordBounce({
+      messageId: "dsn-kim",
+      recipient: "kim@new.test",
+      identityId: null,
+      kind: "hard" as never,
+      statusCode: "5.1.1",
+      diagnostic: "550 user unknown",
+      prospectId: pid,
+      bouncedAt: new Date().toISOString(),
+    });
+    expect((await get(`queue=${qid}`)).body.flags.bounced).toBe(true);
+  });
+});
+
+describe("withProspectResearch", () => {
+  it("fills a bio complete research lacks, and keeps what the research holds and its status", async () => {
+    const { withProspectResearch } = await import("../src/api/person.ts");
+    const view = {
+      status: "complete" as const,
+      researchedAt: "2026-11-01T00:00:00.000Z",
+      person: {
+        fullName: "Rae",
+        title: "CTO",
+        company: "Clinicly",
+        location: null,
+        summary: null,
+        linkedinUrl: null,
+        emails: [],
+        phones: [],
+        skills: [],
+      },
+      experience: [],
+      education: [],
+      company: null,
+      posts: [],
+      newsfeedFetchedAt: null,
+    };
+    const out = withProspectResearch(
+      view,
+      JSON.stringify({
+        person: { title: "Engineer", summary: "Runs payments.", location: "Leeds" },
+      }),
+    );
+    expect(out.status).toBe("complete");
+    expect(out.person).toMatchObject({
+      title: "CTO",
+      summary: "Runs payments.",
+      location: "Leeds",
+    });
+  });
 });

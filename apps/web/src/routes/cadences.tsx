@@ -223,7 +223,7 @@ function CadencesPage() {
     mutationFn: (vars: { items: CadenceStopTarget[]; input: CadenceStopInput }) =>
       stopCadences(vars.items, vars.input, api.stopCadence),
     onSuccess: ({ stopped, failed }) => {
-      for (const queryKey of ["cadences", "prospects", "queue"]) {
+      for (const queryKey of ["cadences", "prospects", "queue", "person"]) {
         void qc.invalidateQueries({ queryKey: [queryKey] });
       }
       setSelected((previous) => {

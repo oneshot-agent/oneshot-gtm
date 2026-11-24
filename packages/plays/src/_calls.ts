@@ -229,7 +229,7 @@ export function personContextLines(prospect: Pick<ProspectRecord, "dossier_json"
 
 /** Their own recent posts, read from the newsfeed cache only (never bought here). */
 function callPostsBlock(
-  prospect: Pick<ProspectRecord, "dossier_json" | "linkedin_url">,
+  prospect: Pick<ProspectRecord, "dossier_json" | "linkedin_url" | "source_profile_url">,
 ): string | null {
   const half = readPersonHalf(prospect.dossier_json);
   const h =
@@ -237,9 +237,14 @@ function callPostsBlock(
       ? (half as Record<string, unknown>)
       : {};
   const newsfeed = h["newsfeed"] as { url?: unknown } | undefined;
+  // The newsfeed's own URL first, then their LinkedIn, then the profile they
+  // were found on: the capture is keyed by whichever of these it was seeded with.
   return recentPostsBlock({
-    linkedinUrl: typeof newsfeed?.url === "string" ? newsfeed.url : prospect.linkedin_url,
-    sourceProfileUrl: prospect.linkedin_url ?? h["linkedinUrl"],
+    linkedinUrl:
+      typeof newsfeed?.url === "string"
+        ? newsfeed.url
+        : (prospect.linkedin_url ?? h["linkedinUrl"]),
+    sourceProfileUrl: prospect.source_profile_url,
   });
 }
 

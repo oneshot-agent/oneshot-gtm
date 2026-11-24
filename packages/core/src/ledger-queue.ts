@@ -754,11 +754,33 @@ export class QueueStore {
     );
   }
 
-  /** Every queue row linked to a prospect, newest first (same order as `getQueueRowForProspect`). */
-  listQueueRowsForProspect(prospectId: number): QueueRow[] {
-    return this.db
+  /**
+   * Every queue row for a prospect, newest first (same order as
+   * `getQueueRowForProspect`): the ones linked by id, and, given their
+   * email, the unlinked ones whose payload names that address (`email`,
+   * else `founderEmail`), as the detail route resolves a row. The email
+   * half reads the payload of every unlinked row: no index covers it, so it
+   * is for a single person's read, never a loop.
+   */
+  listQueueRowsForProspect(prospectId: number, email?: string | null): QueueRow[] {
+    const linked = this.db
       .query("SELECT * FROM target_queue WHERE prospect_id = ? ORDER BY found_at DESC, id DESC")
       .all(prospectId) as QueueRow[];
+    const canon = email ? canonEmail(email) : "";
+    if (!canon) return linked;
+    const unlinked = this.db
+      .query(
+        `SELECT * FROM target_queue
+         WHERE prospect_id IS NULL
+           AND CASE WHEN json_valid(payload_json) THEN LOWER(TRIM(COALESCE(
+                 NULLIF(TRIM(json_extract(payload_json, '$.email')), ''),
+                 json_extract(payload_json, '$.founderEmail')))) END = ?`,
+      )
+      .all(canon) as QueueRow[];
+    if (unlinked.length === 0) return linked;
+    return [...linked, ...unlinked].toSorted((a, b) =>
+      a.found_at < b.found_at ? 1 : a.found_at > b.found_at ? -1 : b.id - a.id,
+    );
   }
 
   /**

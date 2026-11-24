@@ -13,8 +13,9 @@ import { Button } from "../primitives/Button.tsx";
 import { DossierBody } from "../queue/PersonDossier.tsx";
 import { PaneHeading } from "./PaneHeading.tsx";
 
-/** Summaries longer than this get a "more" toggle; shorter ones fit the clamp. */
+/** Summaries longer than this, or on more lines than the clamp shows, get a "more" toggle. */
 const CLAMP_CHARS = 280;
+const CLAMP_LINES = 4;
 
 /** The role the research marks current: "Head of AI at Acme since Jan 2023". */
 function currentRole(dossier: QueueDossierView, mask: ReturnType<typeof useMask>): string | null {
@@ -120,6 +121,9 @@ export function PersonBio({
   const mask = useMask();
   const [more, setMore] = useState(false);
   const summary = dossier.person.summary?.trim() || null;
+  // Only a summary with a toggle is clamped, so no line is ever hidden for good.
+  const clampable =
+    summary != null && (summary.length > CLAMP_CHARS || summary.split("\n").length > CLAMP_LINES);
   const role = currentRole(dossier, mask);
   const posts = dossier.posts.filter((p) => !p.isRepost && p.content?.trim()).slice(0, 2);
   const empty = !summary && !role && posts.length === 0;
@@ -137,12 +141,12 @@ export function PersonBio({
                 <p
                   className={cn(
                     "m-0 mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]",
-                    !more && "line-clamp-4",
+                    clampable && !more && "line-clamp-4",
                   )}
                 >
                   {summary}
                 </p>
-                {summary.length > CLAMP_CHARS && (
+                {clampable && (
                   <button
                     type="button"
                     className="mt-0.5 cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2"

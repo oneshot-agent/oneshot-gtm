@@ -27,14 +27,16 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
  * Fill what the row and the research cache left empty from the prospect's
  * own researched record (the person half of `dossier_json`): the same facts
  * the call brief and the follow-ups are written from, so the pane never says
- * "no research" about someone the brief knows. A person half is the record
+ * "no research" about someone the brief knows, nor leaves out a bio the
+ * brief was given. A person half is the record
  * `personRecordFromResearch` writes, or an older enrichment of the same shape.
  */
 export function withProspectResearch(
   view: QueueDossierView,
   dossierJson: string | null | undefined,
 ): QueueDossierView {
-  if (view.status === "complete") return view;
+  // Complete research can still lack a bio or a location: those are filled
+  // too, while everything the research holds wins and its status stays.
   const half = readPersonHalf(dossierJson);
   if (!half || typeof half !== "object" || Array.isArray(half)) return view;
   const h = half as Record<string, unknown>;
@@ -109,8 +111,9 @@ export function personRoute(req: Request): Response {
   const sequenceEvents = prospect ? ledger.listAllSequenceEventsForProspect(prospect.id) : [];
   const replies = prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [];
   const channelEvents = prospect ? ledger.listChannelEventsForProspect(prospect.id) : [];
-  // A row found by payload email is not linked by prospect_id, so it is added by hand.
-  const rows = prospect ? ledger.listQueueRowsForProspect(prospect.id) : [];
+  // Rows linked by id and rows that name their email, as a row resolves to
+  // a prospect; the opened row is added if neither matched it.
+  const rows = prospect ? ledger.listQueueRowsForProspect(prospect.id, prospect.email) : [];
   if (row && !rows.some((r) => r.id === row.id)) rows.push(row);
 
   const body: PersonView = {

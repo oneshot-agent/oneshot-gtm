@@ -2510,8 +2510,8 @@ export class Ledger {
   }
 
   /** @see ledger-queue.ts#QueueStore.listQueueRowsForProspect */
-  listQueueRowsForProspect(prospectId: number): QueueRow[] {
-    return this.queue.listQueueRowsForProspect(prospectId);
+  listQueueRowsForProspect(prospectId: number, email?: string | null): QueueRow[] {
+    return this.queue.listQueueRowsForProspect(prospectId, email);
   }
 
   /** @see ledger-queue.ts#QueueStore.searchQueue */

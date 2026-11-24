@@ -639,9 +639,13 @@ export function contactFlags(
 ): QueueRowDetail["flags"] {
   const flagEmail = prospect?.email ?? (row ? payloadEmail(row) : null);
   const contactSuppressed = flagEmail ? ledger.contactSuppressionFor(flagEmail) : null;
+  // The row sends to its payload address, which can differ from the
+  // prospect's: a bounce on either is a bounce for this person.
+  const rowEmail = row ? payloadEmail(row) : null;
+  const bounced = [flagEmail, rowEmail].some((e) => e != null && ledger.suppressionFor(e) != null);
   return {
     replied: prospect ? hasReplied(history) : false,
-    bounced: flagEmail ? ledger.suppressionFor(flagEmail) != null : false,
+    bounced,
     contactSuppressed: contactSuppressed?.kind ?? null,
     breakupHold: flagEmail ? ledger.breakupReviveHoldFor(flagEmail) != null : false,
     // A row that was never emailed only carries the gate's verdict on its payload.

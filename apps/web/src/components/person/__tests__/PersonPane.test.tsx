@@ -242,6 +242,36 @@ describe("PersonPane", () => {
     expect(touches).not.toContain(">call</span>");
   });
 
+  it("still shows what stops a send when the page omits the header", () => {
+    seed(
+      person({
+        flags: {
+          replied: false,
+          bounced: true,
+          contactSuppressed: "unsubscribe",
+          breakupHold: false,
+          icpReject: true,
+        },
+      }),
+    );
+    const out = html(<PersonPane prospectId={1} omit={["header"]} />);
+    expect(out).toContain("hard bounce");
+    expect(out).toContain("unsubscribed");
+    expect(out).toContain("off-icp");
+    seed(person({ flags: { ...person().flags, replied: false } }));
+    expect(html(<PersonPane prospectId={1} omit={["header"]} />)).not.toContain("hard bounce");
+  });
+
+  it("offers more on a short bio spread over more lines than the clamp shows, and no clamp without it", () => {
+    const lines = "one\ntwo\nthree\nfour\nfive\nsix";
+    seed(person({ dossier: { ...dossier, person: { ...dossier.person, summary: lines } } }));
+    const many = html(<PersonPane prospectId={1} />);
+    expect(many).toContain("line-clamp-4");
+    expect(many).toMatch(/aria-expanded="false"[^>]*>more</);
+    seed(person({ dossier: { ...dossier, person: { ...dossier.person, summary: "short" } } }));
+    expect(html(<PersonPane prospectId={1} />)).not.toContain("line-clamp-4");
+  });
+
   it("opens a touch to show its body and a call's outcome, duration and note", async () => {
     seed(person());
     const el = await mount(<PersonPane prospectId={1} />);

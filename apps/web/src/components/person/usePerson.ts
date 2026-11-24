@@ -21,5 +21,8 @@ export function usePerson(key: PersonKey) {
       prospectId != null ? api.person({ prospectId }) : api.person({ queueId: queueId as number }),
     enabled: prospectId != null || queueId != null,
     staleTime: 30_000,
+    // An open pane follows sends that finish in the background, replies and
+    // calls logged elsewhere; a closed one does not poll.
+    refetchInterval: 30_000,
   });
 }
