@@ -211,7 +211,10 @@ export function CallsView({
           {section("Due", data.due, "No cadence calls due.")}
           {section("Call list", data.list, "Nobody else with a number.")}
         </div>
-        <div className="min-w-0 lg:sticky lg:top-0 lg:self-start">
+        {/* Pinned beside the list, and never taller than the page: the header,
+            footer and page padding take about 7rem, so a long brief scrolls
+            inside the panel instead of running past the bottom. */}
+        <div className="min-w-0 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-7rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain">
           {row ? (
             <DialPanel
               key={rowId(row)}
