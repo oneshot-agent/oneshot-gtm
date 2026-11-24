@@ -106,8 +106,11 @@ describe("bridged-call routes", () => {
       await routes.hangUpCallRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
       await routes.recordCallRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
       await routes.discardRecordingRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
+      await routes.stopRecordingRoute(req("/x", { ...nobody, method: "POST" }), { id: "1" }),
     ];
-    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403, 403, 403, 403, 403]);
+    expect(responses.map((r) => r.status)).toEqual([
+      403, 403, 403, 403, 403, 403, 403, 403, 403, 403,
+    ]);
     expect(sent).toEqual([]);
   });
 
@@ -366,6 +369,7 @@ describe("bridged-call routes", () => {
     expect(hang.status).toBe(403);
     expect((await hang.json()).error).toMatch(/only the member who placed this call/);
     expect((await post(routes.recordCallRoute)).status).toBe(403);
+    expect((await post(routes.stopRecordingRoute)).status).toBe(403);
     expect(sent).toEqual([]);
     // The local owner may still delete its recording.
     answers[`GET ${ACCOUNT}/Calls/CA1.json`] = () => ({

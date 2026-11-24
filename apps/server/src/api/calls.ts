@@ -23,6 +23,7 @@ import {
   assertCallActor,
   startBridgedCall,
   startBridgedRecording,
+  setBridgedRecordingPaused,
   verifyMemberPhone,
 } from "@oneshot-gtm/plays";
 import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
@@ -342,6 +343,23 @@ export async function recordCallRoute(
     return jsonResponse(await startBridgedRecording(id), 200, req);
   } catch (err) {
     return bridgeError(req, err, "starting the recording failed");
+  }
+}
+
+/** POST /api/calls/:id/stop-recording: stop recording a connected call; Record resumes it. */
+export async function stopRecordingRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  const id = prospectIdOf(params["id"]);
+  if (id == null) return jsonResponse({ error: "bad id" }, 400, req);
+  try {
+    assertCallActor(id, member, "record");
+    return jsonResponse(await setBridgedRecordingPaused(id, true), 200, req);
+  } catch (err) {
+    return bridgeError(req, err, "stopping the recording failed");
   }
 }
 

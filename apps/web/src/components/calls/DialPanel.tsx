@@ -281,11 +281,23 @@ export function DialPanel({
   const recordMode: CallRecordMode = callsMe.data?.record ?? false;
   const startRecording = useMutation({
     mutationFn: (id: number) => api.recordCall(id),
-    onSuccess: (c) => {
+    onSuccess: async (c) => {
+      // A poll that read the call before this must not write the old state back.
+      await qc.cancelQueries({ queryKey: callKey(c.id), exact: true });
       qc.setQueryData(callKey(c.id), c);
       void qc.invalidateQueries({ queryKey: liveCallsKey });
     },
     onError: (err) => toast.error(`couldn't start recording · ${err.message}`),
+  });
+  const stopRecording = useMutation({
+    mutationFn: (id: number) => api.stopRecording(id),
+    onSuccess: async (c) => {
+      // A poll that read the call before this must not write the old state back.
+      await qc.cancelQueries({ queryKey: callKey(c.id), exact: true });
+      qc.setQueryData(callKey(c.id), c);
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
+    },
+    onError: (err) => toast.error(`couldn't stop recording · ${err.message}`),
   });
   // Its own action: no outcome needed, and open from the history after Save.
   const discard = useMutation({
@@ -477,6 +489,8 @@ export function DialPanel({
             onRemoveCommitment={removeCommitment}
             onRecord={() => startRecording.mutate(call.id)}
             recording={startRecording.isPending}
+            onStopRecording={() => stopRecording.mutate(call.id)}
+            stoppingRecording={stopRecording.isPending}
             onDeclineConsent={() => discard.mutate(call.id)}
             declineDisabled={discard.isPending}
             onEndedByMember={() => setEndedByMember(call.id)}
@@ -855,6 +869,8 @@ export function BridgeCallView({
   onRemoveCommitment,
   onRecord,
   recording,
+  onStopRecording,
+  stoppingRecording,
   onDeclineConsent,
   declineDisabled,
   onEndedByMember,
@@ -874,6 +890,9 @@ export function BridgeCallView({
   /** "ask" mode: the prospect agreed, record from now. */
   onRecord: () => void;
   recording: boolean;
+  /** Stop recording the connected call; `onRecord` resumes it. */
+  onStopRecording: () => void;
+  stoppingRecording: boolean;
   /** "always" mode: delete the recording, the prospect refused it. */
   onDeclineConsent: () => void;
   declineDisabled: boolean;
@@ -884,8 +903,9 @@ export function BridgeCallView({
   const s = call.suggestion;
   // What this call records is its own: the workspace's mode only decides
   // whether a call not recorded yet offers Record.
-  const recordingNow = live && call.transcriptStatus === "pending";
-  const fromAnswer = recordingNow && call.recordedFrom !== "consent";
+  // A connected call that is recorded can be stopped and started again;
+  // what was recorded before Stop is kept.
+  const recorded = call.status === "connected" && call.transcriptStatus === "pending";
   // Whether it records, then where its transcript is: one line, live and after.
   const rec = recordingState(call, record);
   return (
@@ -911,10 +931,44 @@ export function BridgeCallView({
           </span>
         </div>
         {live && (
-          <Button size="sm" variant="danger" disabled={hangingUp} onClick={onHangUp} {...readOnly}>
-            {hangingUp ? <Loader2 size={11} className="animate-spin" /> : <PhoneOff size={11} />}{" "}
-            Hang up
-          </Button>
+          <div className="flex items-center gap-2">
+            {recorded &&
+              (call.recordingPaused ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={recording}
+                  onClick={onRecord}
+                  title="Record the rest of the call again"
+                  {...readOnly}
+                >
+                  {recording && <Loader2 size={11} className="animate-spin" />}
+                  Record
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={stoppingRecording}
+                  onClick={onStopRecording}
+                  title="Stop recording; the call goes on, and what was recorded so far is kept"
+                  {...readOnly}
+                >
+                  {stoppingRecording && <Loader2 size={11} className="animate-spin" />}
+                  Stop recording
+                </Button>
+              ))}
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={hangingUp}
+              onClick={onHangUp}
+              {...readOnly}
+            >
+              {hangingUp ? <Loader2 size={11} className="animate-spin" /> : <PhoneOff size={11} />}{" "}
+              Hang up
+            </Button>
+          </div>
         )}
       </div>
       {pollError && (
@@ -926,21 +980,6 @@ export function BridgeCallView({
             </Button>
           )}
         </div>
-      )}
-      {fromAnswer && (
-        <ConsentLine label="Say this first, the call is recorded">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="mt-2"
-            disabled={declineDisabled}
-            onClick={onDeclineConsent}
-            title="Hangs up and deletes the recording and transcript"
-            {...readOnly}
-          >
-            They didn't agree — hang up and delete it
-          </Button>
-        </ConsentLine>
       )}
       {call.status === "connected" && record === "ask" && call.transcriptStatus === "none" && (
         <ConsentLine label="Ask first; nothing is recorded until you press Record">

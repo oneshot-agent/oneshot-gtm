@@ -103,6 +103,12 @@ export interface CallBridge {
   ): Promise<void>;
   /** Start recording a connected call: the member on channel 1, the prospect on 2. */
   startRecording(callSid: string): Promise<void>;
+  /**
+   * Stop (pause) or resume the call's recording, whichever way it started.
+   * A stopped stretch is left out of the recording, so the transcript has
+   * only what was said while it recorded.
+   */
+  setRecordingPaused(callSid: string, paused: boolean): Promise<void>;
   status(callSid: string): Promise<BridgeCallState>;
   hangUp(callSid: string): Promise<void>;
   recording(callSid: string): Promise<BridgeRecording | null>;
@@ -398,6 +404,14 @@ export class TwilioBridge implements CallBridge {
       "POST",
       this.account(`Calls/${encodeURIComponent(callSid)}/Recordings.json`),
       { RecordingChannels: "dual" },
+    );
+  }
+
+  async setRecordingPaused(callSid: string, paused: boolean): Promise<void> {
+    await this.request(
+      "POST",
+      this.account(`Calls/${encodeURIComponent(callSid)}/Recordings/Twilio.CURRENT.json`),
+      paused ? { Status: "paused", PauseBehavior: "skip" } : { Status: "in-progress" },
     );
   }
 

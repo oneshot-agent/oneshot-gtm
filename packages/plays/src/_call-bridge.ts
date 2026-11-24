@@ -893,6 +893,10 @@ export async function startBridgedRecording(
   if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
   if (!callsOf(loadConfig()).bridge?.record)
     throw new CallBridgeRequestError("recording is off for this workspace", 409);
+  // Recorded already: Record resumes the same recording, queued behind any
+  // Stop still on its way, so the last press wins (a no-op when recording).
+  if (call.view.transcriptStatus === "pending" && !call.discardPending)
+    return setBridgedRecordingPaused(callId, false, opts);
   if (call.view.transcriptStatus !== "none" || call.discardPending) return call.view;
   const bridge = bridgeFor(opts);
   if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
@@ -921,6 +925,71 @@ export async function startBridgedRecording(
     throw providerError(err);
   }
   logEvent("call.recording_started", { call_id: callId });
+  return ledger.getCall(callId)!;
+}
+
+/**
+ * Stop recording a connected call, or resume it (`paused` false). The call
+ * stays up; what was recorded before Stop is kept and transcribed after the
+ * call, and a stopped stretch is left out. Works the same whether the
+ * recording started from the answer or from Record.
+ */
+export async function setBridgedRecordingPaused(
+  callId: number,
+  paused: boolean,
+  opts: { bridge?: CallBridge | null } = {},
+): Promise<CallRecordView> {
+  // One stop or resume per call at a time, in the order pressed: a slow
+  // Stop must never land after a Record and mark the call stopped.
+  const prev = recordingOps.get(callId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => applyRecordingPaused(callId, paused, opts));
+  const tail = run.catch(() => undefined);
+  recordingOps.set(callId, tail);
+  void tail.then(() => {
+    if (recordingOps.get(callId) === tail) recordingOps.delete(callId);
+  });
+  return run;
+}
+
+/** Stop/resume requests per call, chained so they reach the provider and the ledger in order. */
+const recordingOps = new Map<number, Promise<unknown>>();
+/** Calls whose last stop/resume the provider may or may not have applied: the next press is sent. */
+const recordingUnsure = new Set<number>();
+
+async function applyRecordingPaused(
+  callId: number,
+  paused: boolean,
+  opts: { bridge?: CallBridge | null },
+): Promise<CallRecordView> {
+  const ledger = getLedger();
+  const call = ledger.getBridgedCall(callId);
+  if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
+  if (call.view.transcriptStatus !== "pending" || call.discardPending)
+    throw new CallBridgeRequestError("nothing is being recorded on this call", 409);
+  if (call.view.status !== "connected")
+    throw new CallBridgeRequestError(
+      `${paused ? "Stop recording" : "Record"} works only while you are connected to them`,
+      409,
+    );
+  if ((call.view.recordingPaused === true) === paused && !recordingUnsure.has(callId))
+    return call.view;
+  const bridge = bridgeFor(opts);
+  if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
+  try {
+    await bridge.setRecordingPaused(call.callSid, paused);
+  } catch (err) {
+    if (err instanceof CallBridgeError && err.uncertain) {
+      recordingUnsure.add(callId);
+      throw new CallBridgeRequestError(
+        `Twilio did not confirm the recording ${paused ? "stopped" : "started again"}; press it again`,
+        502,
+      );
+    }
+    throw providerError(err);
+  }
+  recordingUnsure.delete(callId);
+  ledger.updateBridgedCall(callId, { recordingPaused: paused });
+  logEvent(paused ? "call.recording_stopped" : "call.recording_resumed", { call_id: callId });
   return ledger.getCall(callId)!;
 }
 

@@ -736,6 +736,15 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // The member stopped the recording mid-call (Stop recording); Record
+    // clears it. What was recorded before is kept and transcribed.
+    version: 35,
+    name: "calls-recording-paused",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "recording_paused", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /**
