@@ -721,6 +721,21 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       );
     },
   },
+  {
+    // When a bridged call was first read connected, written once, so the
+    // call timer reads the same on every page and after a reload. The live
+    // bar reads calls that are not over yet; the partial index keeps that a
+    // seek however many calls the workspace has made.
+    version: 34,
+    name: "calls-connected-at",
+    up: (db) => {
+      addColumnIfMissing(db, "calls", "connected_at", "TEXT");
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_calls_live
+          ON calls(started_at) WHERE provider = 'twilio' AND COALESCE(status, '') NOT IN ('ended', 'failed');
+      `);
+    },
+  },
 ];
 
 /**

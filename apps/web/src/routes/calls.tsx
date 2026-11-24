@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import type { CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
+import type { CallListResponse, CallListRow, LiveCallView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
 import { NoNumber } from "../components/calls/NoNumber.tsx";
+import { useLiveCalls, useSecondTick } from "../components/calls/useLiveCalls.ts";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
@@ -24,7 +25,8 @@ import {
   type CallTimer,
   type RowKey,
 } from "../lib/dialler.ts";
-import { useMask } from "../lib/privacy.tsx";
+import { liveCallFor, rowLiveLine, callBlock } from "../lib/liveCall.ts";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 
 interface CallsSearch {
   /** The open row, e.g. from a cadence's "Open call". */
@@ -107,6 +109,8 @@ export function CallsView({
   // Which row is open as of the latest render: a save that finishes after the
   // founder opened someone else must not move them on.
   const openRef = useRef<CallListRow | null>(null);
+  // Who is on a call now, from the live bar's read (it polls; this only reads).
+  const liveCalls = useLiveCalls()?.calls;
 
   const header = (
     <div>
@@ -185,6 +189,7 @@ export function CallsView({
               data={data}
               now={now}
               onRefresh={refresh}
+              liveCalls={liveCalls}
               open={row != null && sameRow(r, row)}
               onOpen={() => onOpen(r)}
               onStart={(phone) => {
@@ -255,6 +260,7 @@ function CallRow({
   data,
   now,
   onRefresh,
+  liveCalls,
   open,
   onOpen,
   onStart,
@@ -262,14 +268,20 @@ function CallRow({
   row: CallListRow;
   data: CallListResponse;
   now: Date;
+  liveCalls: LiveCallView[] | undefined;
   onRefresh: () => void;
   open: boolean;
   onOpen: () => void;
   onStart: (phone: string | null) => void;
 }) {
   const mask = useMask();
+  const { masked } = usePrivacy();
+  const live = liveCallFor(liveCalls, row.prospectId);
+  const tick = useSecondTick(live?.status === "connected");
+  const blockedReason = callBlock(liveCalls, row.prospectId, masked);
   const hint = windowHint(row, data.window, now);
-  const dialable = canDial(row, data.window, now) && data.dialMode === "tel";
+  // A teammate on a call with them: the number is not a link either.
+  const dialable = canDial(row, data.window, now) && data.dialMode === "tel" && !blockedReason;
   const localTime = localTimeNow(row.local, now);
   return (
     <div
@@ -312,6 +324,7 @@ function CallRow({
             <span>{mask("phone", row.phone)}</span>
           )}
           {localTime && <span>· {localTime} their time</span>}
+          {live && <span className="text-ink-cream">· {rowLiveLine(live, masked, tick)}</span>}
           <span>· {row.reason}</span>
           {row.lastTouchAt && <span>· last touch {timeAgo(row.lastTouchAt)}</span>}
           {row.lastCall && (
@@ -330,6 +343,7 @@ function CallRow({
           now={now}
           onStart={onStart}
           onRefresh={onRefresh}
+          blockedReason={blockedReason}
         />
       )}
     </div>

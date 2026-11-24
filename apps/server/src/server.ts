@@ -53,6 +53,7 @@ import { cadenceOfferRoute } from "./api/cadence-offer.ts";
 import {
   callBriefRoute,
   callsMeRoute,
+  liveCallsRoute,
   checkPhoneRoute,
   discardRecordingRoute,
   getCallRoute,
@@ -223,6 +224,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/calls", listCallsRoute),
   route("POST", "/api/calls/brief", callBriefRoute),
   route("GET", "/api/calls/me", callsMeRoute),
+  route("GET", "/api/calls/live", liveCallsRoute),
   route("POST", "/api/calls/me/phone", verifyPhoneRoute),
   route("DELETE", "/api/calls/me/phone", removePhoneRoute),
   route("POST", "/api/calls/me/phone/check", checkPhoneRoute),

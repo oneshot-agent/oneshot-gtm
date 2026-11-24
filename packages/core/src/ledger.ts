@@ -178,6 +178,7 @@ import {
   lastTouchFor as callsLastTouchFor,
   listCallCandidates as callsListCallCandidates,
   listCallsForProspect as callsListCallsForProspect,
+  listLiveCalls as callsListLiveCalls,
   phoneForCall as callsPhoneForCall,
   wrongNumbersFor as callsWrongNumbersFor,
   recordCallChannelEvent as callsRecordCallChannelEvent,
@@ -2016,6 +2017,13 @@ export class Ledger {
   /** @see ledger-calls.ts#updateBridgedCall */
   updateBridgedCall(id: number, patch: Parameters<typeof callsUpdateBridgedCall>[2]): void {
     callsUpdateBridgedCall(this.db, id, patch);
+  }
+
+  /** @see ledger-calls.ts#listLiveCalls */
+  listLiveCalls(
+    input: Parameters<typeof callsListLiveCalls>[1],
+  ): ReturnType<typeof callsListLiveCalls> {
+    return callsListLiveCalls(this.db, input);
   }
 
   /** @see ledger-calls.ts#listBridgedCallsToAdvance */

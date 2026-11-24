@@ -63,9 +63,14 @@ export function useRouteTitle(): string | null {
   });
 }
 
-export function useDocumentTitle(workspace: string | null): void {
+/**
+ * Sets the tab title. `prefix` leads it while it applies ("● On call" while
+ * the member is on a call), so the tab says so from any other tab.
+ */
+export function useDocumentTitle(workspace: string | null, prefix?: string | null): void {
   const page = useRouteTitle();
   useEffect(() => {
-    document.title = composeTitle(page, IS_DEMO ? null : workspace);
-  }, [page, workspace]);
+    const title = composeTitle(page, IS_DEMO ? null : workspace);
+    document.title = prefix ? `${prefix} · ${title}` : title;
+  }, [page, workspace, prefix]);
 }

@@ -10,6 +10,8 @@ import {
   type CallRecordView,
   type CallsMeResponse,
   type MemberPhoneView,
+  type LiveCallsResponse,
+  type LiveCallView,
 } from "@oneshot-gtm/shared-types";
 import {
   CallBridgeError,
@@ -374,6 +376,86 @@ export async function startBridgedCall(input: {
       `outside their call hours: it is ${local.localTime ?? "outside the window"} there; calls open ${opensAtText(local.opensAt, local.zones[0])} their time`,
       409,
     );
+  // One call per person and per member at a time. A start still waiting on
+  // the provider has no row yet, so it is held here until it has one.
+  const startKeys = [`p:${input.prospectId}`, `m:${memberKeyOf(input.member)}`];
+  if (startKeys.some((k) => starting.has(k)))
+    throw new CallBridgeRequestError("a call is already being placed; wait a moment", 409);
+  await refuseWhileLive(input.prospectId, input.member, bridge, now);
+  if (startKeys.some((k) => starting.has(k)))
+    throw new CallBridgeRequestError("a call is already being placed; wait a moment", 409);
+  for (const k of startKeys) starting.add(k);
+  try {
+    return await placeBridgedCall(input, { calls, bridge, prospect, number, memberPhone, now });
+  } finally {
+    for (const k of startKeys) starting.delete(k);
+  }
+}
+
+/** Starts waiting on the provider, by `p:<prospect>` and `m:<member key>`. */
+const starting = new Set<string>();
+
+/** A live call older than this is stale (Twilio's default call limit is four hours). */
+export const LIVE_CALL_MAX_MS = 4 * 3600_000;
+
+function memberKeyOf(member: string | null): string {
+  return member == null ? "" : memberPhoneKey(member);
+}
+
+/**
+ * Refuse a second call to someone already on one, or from a member already
+ * on one. A call that only looks live (nobody read it since it ended) is
+ * read from the provider first, so a stale row never blocks calling.
+ */
+async function refuseWhileLive(
+  prospectId: number,
+  member: string | null,
+  bridge: CallBridge,
+  now: Date,
+): Promise<void> {
+  const me = memberKeyOf(member);
+  const blocking = () =>
+    getLedger()
+      .listLiveCalls({
+        sinceIso: now.toISOString(),
+        liveSinceIso: new Date(now.getTime() - LIVE_CALL_MAX_MS).toISOString(),
+        endedLimit: 0,
+      })
+      .map((r) => r.view)
+      .filter((v) => v.prospectId === prospectId || memberKeyOf(v.member) === me);
+  const first = blocking();
+  if (first.length === 0) return;
+  for (const v of first) await refreshBridgedCall(v.id, { bridge, now }).catch(() => undefined);
+  const still = blocking();
+  const same = still.find((v) => v.prospectId === prospectId);
+  if (same) {
+    const mine = memberKeyOf(same.member) === me;
+    throw new CallBridgeRequestError(
+      mine
+        ? "you're already calling them"
+        : `${same.member ?? "someone"} is already on a call with them`,
+      409,
+    );
+  }
+  if (still.length > 0) throw new CallBridgeRequestError("hang up your other call first", 409);
+}
+
+/** The provider call and its row, once every gate passed. */
+async function placeBridgedCall(
+  input: { prospectId: number; playName?: string | null; member: string | null },
+  ctx: {
+    calls: ReturnType<typeof callsOf>;
+    bridge: CallBridge;
+    prospect: { name?: string | null; company?: string | null };
+    number: string;
+    memberPhone: string;
+    now: Date;
+  },
+): Promise<CallRecordView> {
+  const { calls, bridge, prospect, number, memberPhone, now } = ctx;
+  const ledger = getLedger();
+  if (!calls.bridge)
+    throw new CallBridgeRequestError("bridged calls are off for this workspace", 409);
   const row = {
     prospectId: input.prospectId,
     playName: input.playName?.trim() || null,
@@ -451,6 +533,66 @@ export function assertCallActor(
       : `only the member who placed this call can ${action === "record" ? "record" : "hang up"} it`,
     403,
   );
+}
+
+/** Ended calls without an outcome stay on the member's bar this long, as long as a transcript may take. */
+const OWN_ENDED_MS = TRANSCRIPT_GIVE_UP_MS;
+/** The member's own ended calls the bar shows at most. */
+const OWN_ENDED_LIMIT = 3;
+
+/**
+ * The live bar for one member: every bridged call in the workspace not over
+ * yet, whoever placed it, then the member's own calls that ended without an
+ * outcome. The member's own calls are read from the provider first (as the
+ * dial panel's poll reads them), so a call keeps moving from any page: the
+ * prospect is dialled once their phone is answered, and the transcript is
+ * advanced after hangup. Teammates' calls are shown as stored; their own
+ * pages move them.
+ */
+export async function liveCalls(
+  member: string | null,
+  opts: { bridge?: CallBridge | null; now?: Date } = {},
+): Promise<LiveCallsResponse> {
+  const calls = callsOf(loadConfig());
+  if (!calls.enabled || !calls.bridge) return { enabled: false, record: false, calls: [] };
+  const now = opts.now ?? new Date();
+  const me = memberKeyOf(member);
+  const read = () =>
+    getLedger().listLiveCalls({
+      sinceIso: new Date(now.getTime() - OWN_ENDED_MS).toISOString(),
+      liveSinceIso: new Date(now.getTime() - LIVE_CALL_MAX_MS).toISOString(),
+    });
+  const mine = (m: string | null) => memberKeyOf(m) === me;
+  const bridge = bridgeFor(opts);
+  const own = read().filter((r) => mine(r.view.member));
+  if (bridge)
+    for (const r of own.slice(0, OWN_ENDED_LIMIT + 1)) {
+      await refreshBridgedCall(r.view.id, { bridge, now }).catch((err: unknown) =>
+        logEvent(
+          "call.live_read_failed",
+          { call_id: r.view.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        ),
+      );
+    }
+  const rows = read();
+  const live = rows.filter((r) => !TERMINAL.has(r.view.status ?? ""));
+  const ended = rows
+    .filter((r) => TERMINAL.has(r.view.status ?? "") && mine(r.view.member))
+    .slice(0, OWN_ENDED_LIMIT);
+  // No transcript body: the bar polls every few seconds and never shows one.
+  const out: LiveCallView[] = [];
+  for (const r of [...live, ...ended]) {
+    const { transcript: _transcript, ...view } = r.view;
+    out.push(
+      Object.assign(view, {
+        prospectName: r.prospectName,
+        prospectCompany: r.prospectCompany,
+        mine: mine(r.view.member),
+      }),
+    );
+  }
+  return { enabled: true, record: calls.bridge.record, calls: out };
 }
 
 /** Hang up a bridged call (ringing or connected), then read its state. */
