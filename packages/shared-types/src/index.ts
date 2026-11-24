@@ -664,7 +664,7 @@ export interface SetupRequest {
    */
   offerAnchor?: "prefer-product" | "either" | null;
   /** `undefined` = leave unchanged; `null` = clear (back to `offer`); anything else is a 400. */
-  messageOpening?: "offer" | "problem" | null;
+  messageOpening?: "offer" | "problem" | "mixed" | null;
   /**
    * Plays of `noOfferPlays` whose follow-ups still make an offer. `undefined`
    * = leave unchanged; `null` or `[]` = clear (off); a non-play-name is a 400.
@@ -2308,6 +2308,11 @@ export interface TriggerView {
    * only once a draft was written under a `firstTouchFormat` setting.
    */
   formatUsage?: Record<string, DraftUsageView> | null;
+  /**
+   * Intro outcomes by how the email opened (`offer` / `bet` / `figure` /
+   * `question`), present only under `messageOpening: "mixed"`.
+   */
+  openingUsage?: Record<string, DraftUsageView> | null;
 }
 
 export interface PackView {

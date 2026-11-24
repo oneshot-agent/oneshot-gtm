@@ -58,6 +58,7 @@ import {
   edgeFieldOf,
   splitEdgeAngles,
 } from "./_angles.ts";
+import { openingLine, openingShapeFor } from "./_opening.ts";
 import { slopFlags } from "./_lib.ts";
 import { recentPosts } from "./_recent-posts.ts";
 
@@ -2392,14 +2393,23 @@ export function offerBlock(
 
 export const PROBLEM_OPENING_LINE = "OPENING: problem";
 
-/** Email drafts only; unset leaves `offerLines` byte-identical. */
+/**
+ * Email drafts only; unset leaves `offerLines` byte-identical. `problem`
+ * adds the bet line; `mixed` adds the line for the shape `to` is assigned
+ * at `stepIndex` (`openingShapeFor`), none for an offer-first one.
+ */
 export function withOpeningLine(
   offerLines: string | null,
   offer: unknown,
-  cfg: { messageOpening?: unknown },
+  cfg: { messageOpening?: unknown; productBrief?: unknown },
+  to: { email: string; stepIndex: number } = { email: "", stepIndex: 0 },
 ): string | null {
-  if (!offerLines || !offer || messageOpeningOf(cfg) !== "problem") return offerLines;
-  return `${offerLines}\n${PROBLEM_OPENING_LINE}`;
+  if (!offerLines || !offer) return offerLines;
+  const mode = messageOpeningOf(cfg);
+  if (mode === "offer") return offerLines;
+  if (mode === "problem") return `${offerLines}\n${PROBLEM_OPENING_LINE}`;
+  const line = openingLine(openingShapeFor(cfg, to.email, to.stepIndex));
+  return line ? `${offerLines}\n${line}` : offerLines;
 }
 
 /** What the founder reads on a row held for a weak offer. */

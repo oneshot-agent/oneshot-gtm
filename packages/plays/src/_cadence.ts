@@ -3696,6 +3696,7 @@ export function buildFollowUpEmail(opts: {
       offerBlock(introOffer, ctx.cfg, opts.playName, { sequence: true }),
       introOffer,
       ctx.cfg,
+      { email: ctx.prospect.email ?? "", stepIndex: ctx.stepIndex ?? 1 },
     );
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,

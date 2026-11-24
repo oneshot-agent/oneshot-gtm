@@ -120,8 +120,8 @@ export function draftConfigKey(
     text(cfg.pilotOffer),
     offerExclusionsOf(cfg).join("\n"),
     // Spread, so an unset opening leaves every stored key as it was.
-    ...(surface.channel === "email" && messageOpeningOf(cfg) === "problem"
-      ? ["opening:problem"]
+    ...(surface.channel === "email" && messageOpeningOf(cfg) !== "offer"
+      ? [`opening:${messageOpeningOf(cfg)}`]
       : []),
     // First-touch keys never read `followUpOfferPlays`: turning it on stales no intro.
     (

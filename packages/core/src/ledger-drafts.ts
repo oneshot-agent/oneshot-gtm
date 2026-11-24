@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { openingShapeOf } from "./opening.ts";
 
 /**
  * Persist each intro and follow-up draft for review and outcome attribution.
@@ -48,6 +49,8 @@ export interface DraftVersionRow {
   voice_key: string | null;
   /** First-touch format arm (`standard` / `brief`) when the trigger set one; NULL otherwise. */
   format_key: string | null;
+  /** How an email version opens (`openingShapeOf`); NULL for other channels and older rows. */
+  opening_key: string | null;
   /** Fingerprint of the approved learned-guidance set in the prompt (#813); NULL when none applied. */
   learning_key: string | null;
   /** Who wrote the text: a workspace template or the model; NULL when unrecorded (older rows). */
@@ -460,8 +463,9 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin, angle_assignment,
-           outcome, discard_reason, voice_key, format_key, learning_key, writer, channel, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, opening_key, learning_key, writer, channel,
+           created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -479,6 +483,7 @@ export class DraftVersionStore {
         input.outcome,
         input.voiceKey ?? null,
         input.formatKey ?? null,
+        (input.channel ?? "email") === "email" ? openingShapeOf(input.body) : null,
         input.learningKey ?? null,
         input.writer ?? null,
         input.channel ?? "email",
@@ -681,6 +686,48 @@ export class DraftVersionStore {
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
       target.replied = r.replied ?? 0;
+    }
+    return out;
+  }
+
+  /**
+   * Per play: intro email version counts by how they open (`opening_key`),
+   * replies included. The side-by-side for `messageOpening: "mixed"`.
+   */
+  draftUsageByOpening(): Record<string, Record<string, DraftUsage>> {
+    const rows = this.db
+      .query(
+        `SELECT play_name, opening_key,
+                SUM(outcome = 'open') AS open,
+                SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
+                SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
+                SUM(outcome = 'sent') AS sent,
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
+          WHERE opening_key IS NOT NULL AND step_index = 0
+          GROUP BY play_name, opening_key`,
+      )
+      .all() as Array<{
+      play_name: string;
+      opening_key: string;
+      open: number;
+      regenerated: number;
+      rotated: number;
+      sent: number;
+      auto_sent: number;
+      replied: number;
+    }>;
+    const out: Record<string, Record<string, DraftUsage>> = {};
+    for (const r of rows) {
+      (out[r.play_name] ??= {})[r.opening_key] = {
+        open: r.open,
+        regenerated: r.regenerated,
+        rotated: r.rotated,
+        sent: r.sent,
+        autoSent: r.auto_sent,
+        replied: r.replied ?? 0,
+      };
     }
     return out;
   }

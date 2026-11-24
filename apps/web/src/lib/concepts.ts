@@ -132,6 +132,11 @@ export const CONCEPTS = {
     body: "An opt-in test of the first email: standard against brief (at most 3 sentences, no opener about the reader). Each person stays in one arm; nothing switches automatically.",
     href: docs + "plays",
   },
+  messageOpening: {
+    title: "Email openings",
+    body: "With messageOpening set to mixed, each person's first email opens one way by an even split: on the offer, a bet, an industry number from your brief, or a question. Each follow-up moves to the next, so nobody gets the same opening twice in a row. These counts read how each first email actually opened.",
+    href: docs + "prompt-inputs",
+  },
   angleArms: {
     title: "Angle arms",
     body: "With angleAssignment set to arm, each person gets one angle by an even split instead of by fit, and keeps it through the follow-ups, so the angles can be compared like for like. These counts include only those arm drafts.",

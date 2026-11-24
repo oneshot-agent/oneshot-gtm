@@ -708,6 +708,19 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       `);
     },
   },
+  {
+    // How an email draft version opens (offer, bet, figure, question), read
+    // from its body when it is recorded, so intro outcomes split by opening
+    // the way `format_key` splits them by format. Older rows stay NULL.
+    version: 33,
+    name: "draft-versions-opening-key",
+    up: (db) => {
+      addColumnIfMissing(db, "draft_versions", "opening_key", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_draft_versions_opening ON draft_versions(play_name, opening_key)",
+      );
+    },
+  },
 ];
 
 /**

@@ -1324,6 +1324,7 @@ export function mergeOfferAnchor(
 const MESSAGE_OPENINGS: ReadonlyArray<NonNullable<OneShotConfig["messageOpening"]>> = [
   "offer",
   "problem",
+  "mixed",
 ];
 
 /** Same shape as `mergeOfferAnchor`: a misspelling is a 400, not a silent `offer`. */

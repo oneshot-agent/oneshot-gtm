@@ -384,7 +384,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         });
         const offerSet = offerLookup && !isOfferSkipped(offerLookup) ? offerLookup : null;
         const offer = offerSet?.offer ?? null;
-        const offerLines = withOpeningLine(offerBlock(offer, cfg, def.playName), offer, cfg);
+        const offerLines = withOpeningLine(offerBlock(offer, cfg, def.playName), offer, cfg, {
+          email: def.toEmail(target),
+          stepIndex: 0,
+        });
 
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input: present only when set,

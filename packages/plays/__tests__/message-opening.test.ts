@@ -164,3 +164,49 @@ describe("the offer-first rules", () => {
     expect(rules).toContain("Without that line, the offer is the first sentence.");
   });
 });
+
+describe("messageOpening: mixed", () => {
+  const block = "OFFER (what you offer to do for them; the message opens with it): x";
+  const withFigure = { messageOpening: "mixed", productBrief: "Only 47% of plans are finished." };
+  const lineFor = (cfg: object, email: string, stepIndex = 0) =>
+    withOpeningLine(block, { offer }, cfg, { email, stepIndex });
+
+  it("adds the line for the assigned shape, none for an offer-first email", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const out = lineFor(withFigure, `p${i}@example.test`)!;
+      seen.add(out === block ? "none" : out.slice(block.length + 1));
+    }
+    expect([...seen].toSorted()).toEqual(
+      ["OPENING: figure", "OPENING: problem", "OPENING: question", "none"].toSorted(),
+    );
+  });
+
+  it("never asks for a figure when the brief gives no number", () => {
+    const cfg = { messageOpening: "mixed", productBrief: "We follow up with patients." };
+    for (let i = 0; i < 200; i++) {
+      expect(lineFor(cfg, `p${i}@example.test`)).not.toContain("OPENING: figure");
+    }
+  });
+
+  it("lets one problem line of any shape come before the offer", () => {
+    ws.opening = "mixed";
+    const flags = (body: string) => lintEmail("vendor renewals", body, 120, undefined, { offer });
+    const question = `Hi Sam,\n\nDo vendor renewals ever lapse before anyone signs them? ${offerLine} ${tail}\n\nJ`;
+    const figure = `Hi Sam,\n\nAbout 1 in 5 vendor renewals lapses before anyone signs it. ${offerLine} ${tail}\n\nJ`;
+    for (const body of [question, figure, sameParagraph, offerFirst]) {
+      expect(flags(body)).not.toContain("opens-without-offer");
+    }
+    expect(flags(twoLines)).toContain("opens-without-offer");
+  });
+
+  it("the rules describe the figure and question openings", () => {
+    const rules = loadPrompt("_offer-first");
+    expect(rules).toContain(
+      "**Figure opening (only when the input has an `OPENING: figure` line).**",
+    );
+    expect(rules).toContain(
+      "**Question opening (only when the input has an `OPENING: question` line).**",
+    );
+  });
+});

@@ -210,6 +210,24 @@ describe("messageOpening on the first email", () => {
     expect(out.drafted[0]?.flags ?? []).not.toContain("opens-without-offer");
   });
 
+  it("mixed: the input asks for the shape assigned to each prospect", async () => {
+    calls.opening = "mixed";
+    const { openingLine, openingShapeFor } = await import("../src/_opening.ts");
+    const seen = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      calls.inputs = [];
+      const email = `jamie${i}@enterprise-corp.com`;
+      await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base, email }] });
+      const expected = openingLine(
+        openingShapeFor({ messageOpening: "mixed", productBrief: "no numbers" }, email, 0),
+      );
+      const found = draftInput().match(/^OPENING: \w+$/m)?.[0] ?? null;
+      expect(found).toBe(expected);
+      seen.add(String(found));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
   it("unset: the same problem line first is flagged opens-without-offer", async () => {
     calls.body = problemFirst;
     const out = await runDesignPartnerLoi({ dryRun: true, targets: [{ ...base }] });

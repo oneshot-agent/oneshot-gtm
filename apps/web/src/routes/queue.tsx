@@ -3027,6 +3027,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   draftUsage={t.draftUsage ?? null}
                   voiceUsage={t.voiceUsage ?? null}
                   formatUsage={t.formatUsage ?? null}
+                  openingUsage={t.openingUsage ?? null}
                   disabled={props.setConfigPending || READ_ONLY}
                   onSuggest={props.onSuggestAngles}
                   suggesting={props.suggestingAngles}

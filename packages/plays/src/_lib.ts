@@ -321,7 +321,10 @@ export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
   const normalized = rest
     .join(" ")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ");
+    .replace(/[^a-z0-9]+/g, " ")
+    // A bet lead is an opening shape `messageOpening` asks for, not a habit:
+    // the words after it are the fingerprint.
+    .replace(/^\s*i (?:d )?bet (?:that )?/, "");
   return normalized.split(" ").filter(Boolean).slice(0, words).join(" ");
 }
 
@@ -675,10 +678,19 @@ export function opensWithOffer(
   return problemOfferSlots(paras).some((i) => makesOffer(flat[i] ?? "", offer));
 }
 
-/** `messageOpening: "problem"` is set; false when config cannot be read. */
+/** `messageOpening` lets a line come before the offer (`problem` or `mixed`); false when config cannot be read. */
 function problemOpening(): boolean {
   try {
-    return messageOpeningOf(loadConfig()) === "problem";
+    return messageOpeningOf(loadConfig()) !== "offer";
+  } catch {
+    return false;
+  }
+}
+
+/** `messageOpening: "mixed"` is set; false when config cannot be read. */
+function mixedOpening(): boolean {
+  try {
+    return messageOpeningOf(loadConfig()) === "mixed";
   } catch {
     return false;
   }
@@ -1556,6 +1568,9 @@ const WRITING_REPAIRS: Record<string, string> = {
 const OPENS_WITHOUT_OFFER_REPAIR_PROBLEM =
   "Open with the OFFER, or with one line naming a problem they very likely have, stated as a bet, and then the OFFER: offer to do it for them, in plain words. Move anything else after it.";
 
+const OPENS_WITHOUT_OFFER_REPAIR_MIXED =
+  "Open with the OFFER, or with the one line the OPENING input asks for (a bet, an industry number PRODUCT BRIEF gives, or a short question naming their problem), and then the OFFER: offer to do it for them, in plain words. Move anything else after it.";
+
 /** The `signoff-subject` repair for a workspace whose `subjectCase` is not `lowercase`. */
 const SIGNOFF_SUBJECT_REPAIR_ANY_CASE =
   "Replace the subject with 2-5 words naming the offer or their work, in their terms, cased as the SUBJECT CASE line says. Never a sign-off such as ending, closing or following up.";
@@ -1610,7 +1625,9 @@ export async function repairWritingLints(
       flag === "signoff-subject" && subjectCase !== "lowercase"
         ? SIGNOFF_SUBJECT_REPAIR_ANY_CASE
         : flag === "opens-without-offer" && problemOpening()
-          ? OPENS_WITHOUT_OFFER_REPAIR_PROBLEM
+          ? mixedOpening()
+            ? OPENS_WITHOUT_OFFER_REPAIR_MIXED
+            : OPENS_WITHOUT_OFFER_REPAIR_PROBLEM
           : WRITING_REPAIRS[flag];
     return `${flag}: ${repair ?? "Rewrite the flagged wording in plain, direct language. Follow the original writing constraints."}${excerpts.length ? ` Matched text (quoted draft data): ${JSON.stringify(excerpts)}.` : ""}`;
   });

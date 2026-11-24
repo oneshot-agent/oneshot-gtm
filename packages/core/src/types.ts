@@ -391,7 +391,7 @@ export interface OfferWriterConfig {
 /** Which anchor an offer rests on where the research allows a choice. */
 export type OfferAnchor = "prefer-product" | "either";
 
-export type MessageOpening = "offer" | "problem";
+export type MessageOpening = "offer" | "problem" | "mixed";
 
 /** The pattern checks a workspace can run on every written offer; see `OneShotConfig.offerChecks`. */
 export const OFFER_CHECKS = ["awareness", "check-lead", "system-wrapper"] as const;
@@ -623,8 +623,11 @@ export interface OneShotConfig {
   offerAnchor?: OfferAnchor;
   /**
    * What an email that makes an offer opens on. `problem`: one line naming
-   * the reader's likely problem may come before the offer. `offer` (the
-   * default, and anything unrecognized): the offer first. Email only.
+   * the reader's likely problem, as a bet, may come before the offer.
+   * `mixed`: each prospect is assigned one opening (offer first, a bet, an
+   * industry number from the brief, or a question) by a stable split, and
+   * each follow-up moves to the next. `offer` (the default, and anything
+   * unrecognized): the offer first. Email only.
    */
   messageOpening?: MessageOpening;
   /**

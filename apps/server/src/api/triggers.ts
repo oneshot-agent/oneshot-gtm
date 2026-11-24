@@ -120,6 +120,7 @@ export function toView(
     draftUsage: draftUsageView(usage?.drafts),
     voiceUsage: voiceUsageView(usage?.voice),
     formatUsage: formatUsageView(usage?.format),
+    openingUsage: formatUsageView(usage?.opening),
   };
 }
 
