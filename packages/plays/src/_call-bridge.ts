@@ -893,8 +893,9 @@ export async function startBridgedRecording(
   if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
   if (!callsOf(loadConfig()).bridge?.record)
     throw new CallBridgeRequestError("recording is off for this workspace", 409);
-  // Stopped earlier on this call: Record resumes the same recording.
-  if (call.view.transcriptStatus === "pending" && call.view.recordingPaused && !call.discardPending)
+  // Recorded already: Record resumes the same recording, queued behind any
+  // Stop still on its way, so the last press wins (a no-op when recording).
+  if (call.view.transcriptStatus === "pending" && !call.discardPending)
     return setBridgedRecordingPaused(callId, false, opts);
   if (call.view.transcriptStatus !== "none" || call.discardPending) return call.view;
   const bridge = bridgeFor(opts);

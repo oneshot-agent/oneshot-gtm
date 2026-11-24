@@ -351,4 +351,22 @@ describe("Stop recording", () => {
     await setBridgedRecordingPaused(id, false, { bridge });
     expect(bridge.setRecordingPaused).toHaveBeenCalledTimes(2);
   });
+
+  it("queues Record pressed while a Stop still waits on Twilio, so Record wins", async () => {
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "always" } } };
+    const id = recorded();
+    const bridge = fakeBridge(connected);
+    let releaseStop!: () => void;
+    bridge.setRecordingPaused = vi.fn(async (_sid: string, paused: boolean) => {
+      if (paused) await new Promise<void>((r) => (releaseStop = r));
+    });
+    const stop = setBridgedRecordingPaused(id, true, { bridge });
+    const record = startBridgedRecording(id, { bridge });
+    await new Promise((r) => setTimeout(r, 5));
+    releaseStop();
+    await stop;
+    await record;
+    expect(ledger.getCall(id)?.recordingPaused).toBeUndefined();
+    expect(vi.mocked(bridge.setRecordingPaused).mock.calls.map((c) => c[1])).toEqual([true, false]);
+  });
 });
