@@ -6,7 +6,7 @@ import {
   DeliveryWarning,
   deliveryWarningText,
 } from "../components/queue/DeliveryWarning.tsx";
-import { PersonDossier } from "../components/queue/PersonDossier.tsx";
+import { PersonPane } from "../components/person/PersonPane.tsx";
 import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { SentRowSequenceOffer } from "../components/queue/SequenceOffer.tsx";
@@ -1550,7 +1550,7 @@ export function QueueRow({
                 </>
               )}
               <FindPhone row={row} />
-              <PersonDossier rowId={row.id} />
+              <PersonPane queueId={row.id} omit={["header"]} />
               <ProductResearch payload={row.payload} />
               {profileHistory.length > 0 && (
                 <Disclosure label="Profile history">

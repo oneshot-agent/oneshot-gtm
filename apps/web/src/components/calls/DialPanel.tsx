@@ -56,6 +56,7 @@ import { humanizeFlag } from "../../lib/flagLabels.ts";
 import { useMask, usePrivacy } from "../../lib/privacy.tsx";
 import { readOnly } from "../../lib/readOnly.ts";
 import { SheetHeading } from "../ledger/SheetHeading.tsx";
+import { PersonPane, PersonTouches } from "../person/PersonPane.tsx";
 import { Button, buttonStyles } from "../primitives/Button.tsx";
 import { Input, Textarea } from "../primitives/Field.tsx";
 import { callsMeKey } from "../setup/YourPhone.tsx";
@@ -316,6 +317,7 @@ export function DialPanel({
       void qc.invalidateQueries({ queryKey: ["calls"] });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person", row.prospectId] });
       toast.success(`logged · ${outcomeTitle(req.outcome)}`);
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
@@ -384,38 +386,40 @@ export function DialPanel({
 
   return (
     <div className="flex flex-col gap-5 rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep/50 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[15px] text-ink-cream">{mask("name", row.name) || "—"}</div>
-          <div className="mt-0.5 text-[12px] text-ink-muted">
-            {[row.title, mask("company", row.company)].filter(Boolean).join(" · ")}
-          </div>
-          <div className="mt-1 font-mono text-[11.5px] text-ink-muted">
-            {row.phone ? mask("phone", row.phone) : <NoNumber row={row} />}
-            {localTime && <span> · {localTime} their time</span>}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {startedAt != null && !call && (
-            <span className="font-mono text-[13px] text-ink-cream" aria-label="call time">
-              {formatDuration(elapsed)}
-            </span>
-          )}
-          {!callLive && (
-            <CallControl
-              row={row}
-              dialMode={dialMode}
-              window={callWindow}
-              now={now}
-              onStart={startTel}
-              onRefresh={onRefresh}
-              onRing={() => ring.mutate()}
-              ringing={starting}
-              className="h-8 px-3 text-[13px]"
-            />
-          )}
-        </div>
-      </div>
+      <PersonPane
+        prospectId={row.prospectId}
+        highlightPlay={row.playName}
+        omit={["touches", "cadences"]}
+        fallback={{ name: row.name, title: row.title, company: row.company }}
+        aside={
+          <>
+            <div className="flex items-center gap-3">
+              {startedAt != null && !call && (
+                <span className="font-mono text-[13px] text-ink-cream" aria-label="call time">
+                  {formatDuration(elapsed)}
+                </span>
+              )}
+              {!callLive && (
+                <CallControl
+                  row={row}
+                  dialMode={dialMode}
+                  window={callWindow}
+                  now={now}
+                  onStart={startTel}
+                  onRefresh={onRefresh}
+                  onRing={() => ring.mutate()}
+                  ringing={starting}
+                  className="h-8 px-3 text-[13px]"
+                />
+              )}
+            </div>
+            <div className="font-mono text-[11.5px] text-ink-muted">
+              {row.phone ? mask("phone", row.phone) : <NoNumber row={row} />}
+              {localTime && <span> · {localTime} their time</span>}
+            </div>
+          </>
+        }
+      />
       {needsPhone && (
         <div className="-mt-3 text-[12px] text-ink-faint">
           To have Call ring your own phone and record a transcript, verify it in{" "}
@@ -561,6 +565,11 @@ export function DialPanel({
             {next ? "Save & next" : "Save"}
           </Button>
         </div>
+      </section>
+
+      <section>
+        <SheetHeading label="touches" />
+        <PersonTouches prospectId={row.prospectId} highlightPlay={row.playName} omitCalls />
       </section>
 
       <section>

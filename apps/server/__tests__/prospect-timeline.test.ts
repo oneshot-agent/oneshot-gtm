@@ -15,7 +15,7 @@ const row = {
 describe("buildProspectTimeline", () => {
   it("names a skipped letter plainly, with no subject (#610)", () => {
     const out = buildProspectTimeline({
-      row,
+      rows: [row],
       sequenceEvents: [
         {
           id: 2,
@@ -40,7 +40,7 @@ describe("buildProspectTimeline", () => {
 
   it("orders SQLite and ISO timestamps together, newest first", () => {
     const out = buildProspectTimeline({
-      row: { ...row, sent_at: "2026-09-02T10:00:00.000Z" },
+      rows: [{ ...row, sent_at: "2026-09-02T10:00:00.000Z" }],
       sequenceEvents: [
         {
           id: 1,
@@ -116,7 +116,7 @@ describe("buildProspectTimeline", () => {
 
   it("uses the step label when the send recorded one, and labels non-human replies by kind", () => {
     const out = buildProspectTimeline({
-      row: { ...row, decided_at: null, decision: null, decided_by: null, notes: null },
+      rows: [{ ...row, decided_at: null, decision: null, decided_by: null, notes: null }],
       sequenceEvents: [
         {
           id: 1,
@@ -160,7 +160,7 @@ describe("buildProspectTimeline", () => {
 describe("buildProspectTimeline ordering", () => {
   it("orders by instant, so a millisecond timestamp and a whole-second one interleave correctly", () => {
     const out = buildProspectTimeline({
-      row: { ...row, decided_at: "2026-09-07T19:03:34.900Z", sent_at: null },
+      rows: [{ ...row, decided_at: "2026-09-07T19:03:34.900Z", sent_at: null }],
       sequenceEvents: [
         {
           id: 1,
@@ -181,6 +181,171 @@ describe("buildProspectTimeline ordering", () => {
       outcomes: [],
     });
     expect(out.map((e) => e.kind)).toEqual(["decided", "sequence", "surfaced"]);
+  });
+});
+
+describe("buildProspectTimeline for the person pane", () => {
+  const step = {
+    id: 1,
+    prospect_id: 1,
+    play_name: "luma-events",
+    step_index: 0,
+    channel: "email" as const,
+    status: "sent" as const,
+    metadata_json: JSON.stringify({ subject: "hi", body: "the letter" }),
+    created_at: "2026-09-02 07:30:00",
+    replied_at: null,
+    bounced_at: null,
+  };
+  const reply = {
+    id: "r",
+    thread_key: "t",
+    prospect_id: 1,
+    play_name: "luma-events",
+    from_email: "a@b",
+    subject: "Re: hi",
+    body: "their answer",
+    received_at: "2026-09-03T00:00:00.000Z",
+    source_identity_id: null,
+    thread_id: null,
+    message_id: null,
+    kind: "human",
+    intent: null,
+    intent_reason: null,
+    created_at: "2026-09-03T00:00:00.000Z",
+  };
+  const callEvent = {
+    id: 9,
+    source: "call",
+    external_event_id: "c1",
+    prospect_id: 1,
+    channel: "call",
+    event_type: "call",
+    occurred_at: "2026-09-04T10:00:00.000Z",
+    body: null,
+    created_at: "2026-09-04T10:00:00.000Z",
+  };
+  const call = {
+    id: 3,
+    prospectId: 1,
+    playName: "luma-events",
+    member: "mia@example.com",
+    startedAt: "2026-09-04T10:00:00.000Z",
+    durationSec: 42,
+    outcome: "voicemail" as const,
+    note: "left one",
+    provider: "tel" as const,
+    transcriptStatus: "none" as const,
+    transcript: null,
+    suggestion: null,
+  };
+  const base = {
+    rows: [row],
+    sequenceEvents: [step],
+    replies: [reply],
+    channelEvents: [callEvent as never],
+    outcomes: [],
+  };
+
+  it("carries bodies only when asked", () => {
+    const plain = buildProspectTimeline(base);
+    expect(plain.some((e) => "body" in e)).toBe(false);
+    expect(JSON.stringify(plain)).not.toMatch(/the letter|their answer/);
+
+    const full = buildProspectTimeline({ ...base, withBodies: true });
+    expect(full.find((e) => e.kind === "sequence")).toMatchObject({
+      body: "the letter",
+      channel: "email",
+    });
+    expect(full.find((e) => e.kind === "reply")).toMatchObject({
+      body: "their answer",
+      channel: "email",
+    });
+    expect(full.find((e) => e.kind === "surfaced")?.channel).toBeNull();
+  });
+
+  it("never carries a LinkedIn reply's text: it is private to the account's member", () => {
+    const linkedinReply = {
+      ...callEvent,
+      id: 10,
+      source: "linkedin",
+      external_event_id: "li1",
+      channel: "linkedin",
+      event_type: "reply",
+      body: "a private linkedin message",
+    };
+    const full = buildProspectTimeline({
+      ...base,
+      channelEvents: [linkedinReply as never],
+      withBodies: true,
+    });
+    expect(full.find((e) => e.kind === "channel")).toMatchObject({
+      label: "linkedin reply",
+      channel: "linkedin",
+      body: null,
+    });
+    expect(JSON.stringify(full)).not.toContain("a private linkedin message");
+  });
+
+  it("lists logged calls and drops the bare call channel events they wrote", () => {
+    const without = buildProspectTimeline(base);
+    expect(without.find((e) => e.kind === "channel")).toMatchObject({
+      label: "call call",
+      channel: "call",
+    });
+
+    const out = buildProspectTimeline({
+      ...base,
+      calls: [call, { ...call, id: 4, outcome: null, startedAt: "2026-09-05T10:00:00.000Z" }],
+    });
+    expect(out.some((e) => e.kind === "channel")).toBe(false);
+    expect(out.filter((e) => e.kind === "call").map((e) => [e.label, e.call?.id])).toEqual([
+      ["call · not logged", 4],
+      ["call · left voicemail", 3],
+    ]);
+    expect(out.find((e) => e.call?.id === 3)).toMatchObject({
+      channel: "call",
+      detail: null,
+      playName: "luma-events",
+      call: {
+        id: 3,
+        outcome: "voicemail",
+        durationSec: 42,
+        note: "left one",
+        member: "mia@example.com",
+      },
+    });
+  });
+
+  it("merges the milestones of every queue row, newest first", () => {
+    const out = buildProspectTimeline({
+      rows: [
+        { ...row, play_name: "show-hn", found_at: "2026-10-01 08:00:00", decided_at: null },
+        row,
+      ],
+      sequenceEvents: [],
+      replies: [],
+      channelEvents: [],
+      outcomes: [],
+    });
+    expect(out.map((e) => [e.kind, e.playName])).toEqual([
+      ["surfaced", "show-hn"],
+      ["decided", "luma-events"],
+      ["surfaced", "luma-events"],
+    ]);
+  });
+
+  it("attaches the delivery check to its step", () => {
+    const delivery = {
+      status: "ok" as const,
+      observed: 1,
+      deliveredAt: ["2026-09-02T07:30:05.000Z"],
+    };
+    const out = buildProspectTimeline({
+      ...base,
+      deliveries: new Map([[1, delivery as never]]),
+    });
+    expect(out.find((e) => e.kind === "sequence")?.delivery).toEqual(delivery);
   });
 });
 

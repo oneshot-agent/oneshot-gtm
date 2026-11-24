@@ -41,6 +41,7 @@ import type { InboxArchiveRequest, InboxArchiveResult } from "@oneshot-gtm/share
 import type {
   AddProspectResult,
   QueueDossierView,
+  PersonView,
   BusinessMailAddress,
   CadenceOfferView,
   CadenceSequenceView,
@@ -693,6 +694,11 @@ export const api = {
       : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
   queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
   queueDossier: (id: number) => getJson<QueueDossierView>(`/queue/${id}/dossier`),
+  /** One person, by prospect or by queue row: bio, research, flags, cadences and every touch. */
+  person: (key: { prospectId: number } | { queueId: number }) =>
+    getJson<PersonView>(
+      "prospectId" in key ? `/person?prospect=${key.prospectId}` : `/person?queue=${key.queueId}`,
+    ),
   // Read the row's LinkedIn profile now, when it has a seed and no fresh live
   // read; may re-judge the row and rewrite its offer and draft. The demo
   // reads nothing: a silent skip, not a read-only error on opening a row.

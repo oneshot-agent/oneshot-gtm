@@ -158,10 +158,11 @@ function expand(url: string, body: unknown): string[] {
       ...(data.threads ?? []).map((t) => t.prospectId),
       data.prospect?.id,
     ]);
+    const known = [...ids].filter((id): id is number => id != null);
     return [
-      ...[...ids]
-        .filter((id): id is number => id != null)
-        .map((id) => `/prospects/${id}/linkedin-friend`),
+      ...known.map((id) => `/prospects/${id}/linkedin-friend`),
+      // The person pane a cadence or reply thread opens, by prospect.
+      ...known.map((id) => `/person?prospect=${id}`),
       ...(data.cadences ?? [])
         .filter((c) => c.status === "active" && c.nextStepChannel === "direct_mail")
         .map(
@@ -179,7 +180,10 @@ function expand(url: string, body: unknown): string[] {
   }
 
   if (url.startsWith("/queue/search?")) {
-    const { rows, total } = body as { rows?: Array<{ id: number }>; total?: number };
+    const { rows, total } = body as {
+      rows?: Array<{ id: number; prospect?: { id: number } | null }>;
+      total?: number;
+    };
     // The demo searches this one document client-side, so it has to hold the
     // whole seeded queue. The server clamps `limit` (to 200 today), so compare
     // against the total it reports rather than the limit we asked for.
@@ -189,8 +193,12 @@ function expand(url: string, body: unknown): string[] {
       );
       process.exit(1);
     }
-    // Every row opens a detail drawer.
-    return (rows ?? []).flatMap((r) => [`/queue/${r.id}`, `/queue/${r.id}/dossier`]);
+    // Every row opens a detail drawer and the person pane, by row and by prospect.
+    return (rows ?? []).flatMap((r) => {
+      const paths = [`/queue/${r.id}`, `/queue/${r.id}/dossier`, `/person?queue=${r.id}`];
+      if (r.prospect) paths.push(`/person?prospect=${r.prospect.id}`);
+      return paths;
+    });
   }
 
   if (url.startsWith("/queue?") && !url.includes("play=")) {

@@ -239,6 +239,7 @@ describe("queueRowDetailRoute", () => {
           label: "delivered 2× by the mail provider",
           detail: "09:00:05, 09:00:09 UTC",
           playName: "show-hn",
+          channel: "email",
         },
       ]);
     } finally {

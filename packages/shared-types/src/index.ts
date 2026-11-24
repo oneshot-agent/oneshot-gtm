@@ -1,5 +1,5 @@
 import type { DecisionReason } from "./learning.ts";
-import type { CallRecordMode } from "./calls.ts";
+import type { CallOutcome, CallRecordMode } from "./calls.ts";
 import type { LinkedInTemplateStep } from "./linkedin-template.ts";
 export * from "./reply-email-view.ts";
 export * from "./linkedin-reads.ts";
@@ -1154,10 +1154,52 @@ export interface ProspectSearchResponse {
 export interface ProspectTimelineEvent {
   /** ISO timestamp. */
   at: string;
-  kind: "surfaced" | "decided" | "sent" | "sequence" | "reply" | "channel" | "outcome";
+  kind: "surfaced" | "decided" | "sent" | "sequence" | "reply" | "channel" | "outcome" | "call";
   label: string;
   detail: string | null;
   playName: string | null;
+  /** The channel the touch went over; null for queue milestones and outcomes. Absent in older responses. */
+  channel?: "email" | "linkedin" | "call" | "sms" | null;
+  /**
+   * What was sent (a step's body) or received (an email reply's body). Only
+   * `GET /api/person` fills it; the client renders none of it in privacy mode.
+   */
+  body?: string | null;
+  /** A logged call (`kind: "call"`), from the `calls` table. */
+  call?: {
+    id: number;
+    outcome: CallOutcome | null;
+    durationSec: number | null;
+    note: string | null;
+    member: string | null;
+  };
+  /** The sent-folder check of a sequence send, when one ran. */
+  delivery?: SendDeliveryView;
+}
+
+/**
+ * `GET /api/person?prospect=ID` or `?queue=ID`: one person, the same on
+ * /calls, /queue, /cadences and /prospects. Who they are, the cached research,
+ * whether they may be contacted, their cadences and every touch on every
+ * channel, newest first. Read-only: it never buys research.
+ */
+export interface PersonView {
+  prospect: {
+    id: number;
+    name: string | null;
+    email: string | null;
+    title: string | null;
+    company: string | null;
+    linkedinUrl: string | null;
+    icpVerdict: string | null;
+    icpVerdictReason: string | null;
+  } | null;
+  /** The newest queue row for this person (the one Research reads for); null when none. */
+  queueId: number | null;
+  dossier: QueueDossierView;
+  flags: QueueRowDetail["flags"];
+  cadences: CadenceView[];
+  touches: ProspectTimelineEvent[];
 }
 
 /** GET /api/queue/:id: everything the /prospects detail drawer shows. */

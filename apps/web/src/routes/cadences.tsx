@@ -2,7 +2,7 @@ import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPane
 import { CallStepActions } from "../components/calls/CallStepActions.tsx";
 import { InviteQuotaLine } from "../components/InviteQuotaLine.tsx";
 import { ConnectOnLinkedIn } from "../components/ConnectOnLinkedIn.tsx";
-import { DeliveryBadge, DeliveryWarning } from "../components/queue/DeliveryWarning.tsx";
+import { PersonPane } from "../components/person/PersonPane.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -56,7 +56,7 @@ import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
-import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
+import { CaseList, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 import {
@@ -223,7 +223,7 @@ function CadencesPage() {
     mutationFn: (vars: { items: CadenceStopTarget[]; input: CadenceStopInput }) =>
       stopCadences(vars.items, vars.input, api.stopCadence),
     onSuccess: ({ stopped, failed }) => {
-      for (const queryKey of ["cadences", "prospects", "queue"]) {
+      for (const queryKey of ["cadences", "prospects", "queue", "person"]) {
         void qc.invalidateQueries({ queryKey: [queryKey] });
       }
       setSelected((previous) => {
@@ -257,6 +257,7 @@ function CadencesPage() {
       api.skipCadenceMail(vars.prospectId, vars.playName),
     onSuccess: (_data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       void qc.invalidateQueries({ queryKey: ["direct-mail"] });
       toast.success(`letter skipped · ${vars.playName}`);
     },
@@ -267,6 +268,7 @@ function CadencesPage() {
       api.skipCadenceMailBatch(items),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       void qc.invalidateQueries({ queryKey: ["direct-mail"] });
       setSkipMailConfirmOpen(false);
       const tail = data.failed > 0 ? ` · ${data.failed} need attention in the mail review` : "";
@@ -280,6 +282,7 @@ function CadencesPage() {
       api.markLinkedInReply(vars.prospectId, vars.body),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       setLinkedinReplyModal(null);
       setLinkedinReplyBody("");
       const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
@@ -301,10 +304,12 @@ function CadencesPage() {
       if (data.skipped) {
         // The cadence is complete now: the row leaves the active list.
         void qc.invalidateQueries({ queryKey: ["cadences"] });
+        void qc.invalidateQueries({ queryKey: ["person"] });
         toast.info(data.message);
         return;
       }
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
       // A call step's preview is its brief, which may carry no lint flags.
       const flagCount = data.flags?.length ?? 0;
@@ -334,6 +339,7 @@ function CadencesPage() {
       // so the founder isn't stuck staring at a "Sending…" button; the next
       // refetch will show the row's preview cleared once the send completes.
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       void qc.invalidateQueries({ queryKey: ["receipts"] });
       setExpandedKeys((prev) => {
         const next = new Set(prev);
@@ -347,12 +353,14 @@ function CadencesPage() {
       // ask, as the button would have.
       if (/^away\b/.test(err.message) && !vars.confirmHold) {
         void qc.invalidateQueries({ queryKey: ["cadences"] });
+        void qc.invalidateQueries({ queryKey: ["person"] });
         setAwayConfirm({ prospectId: vars.prospectId, playName: vars.playName, note: err.message });
         return;
       }
       // Written under an older setup: ask, as the button would have.
       if (/^stale-config\b/.test(err.message) && !vars.confirmStale) {
         void qc.invalidateQueries({ queryKey: ["cadences"] });
+        void qc.invalidateQueries({ queryKey: ["person"] });
         setStaleConfirm({
           prospectId: vars.prospectId,
           playName: vars.playName,
@@ -398,6 +406,7 @@ function CadencesPage() {
       api.previewCadenceBatch(items),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       const okItems = data.results.filter((r) => r.ok);
       const held = data.results.filter((r) => r.heldBack);
       const errCount = data.results.length - okItems.length - held.length;
@@ -421,6 +430,7 @@ function CadencesPage() {
       api.sendCadenceBatch(items),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["person"] });
       setSelected(new Set());
       setBulkSendConfirmOpen(false);
       const skipped = data.skipped ?? [];
@@ -1617,62 +1627,8 @@ function CadencesPage() {
                             {(reminderSignal || fitReason) && <Rule />}
                             <CaseList rows={caseRows} />
                             <ConnectOnLinkedIn prospectId={c.prospectId} />
-                            {c.priorSteps.length > 0 && (
-                              <>
-                                <Rule />
-                                <div>
-                                  <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                                    History
-                                  </div>
-                                  <ol className="flex flex-col gap-2">
-                                    {c.priorSteps.map((st) =>
-                                      st.status === "skipped" ? (
-                                        <li
-                                          key={st.stepIndex}
-                                          className="flex items-baseline gap-3 leading-4"
-                                        >
-                                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
-                                            {timeAgo(st.sentAt)}
-                                          </span>
-                                          <span className="shrink-0 whitespace-nowrap text-ink-faint">
-                                            step {st.stepIndex} · letter skipped
-                                          </span>
-                                        </li>
-                                      ) : (
-                                        <li key={st.stepIndex} className="flex flex-col gap-1">
-                                          <div className="flex items-baseline gap-3 leading-4">
-                                            <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
-                                              {timeAgo(st.sentAt)}
-                                            </span>
-                                            <span className="shrink-0 whitespace-nowrap text-ink-cream-2">
-                                              step {st.stepIndex} · {st.label}
-                                            </span>
-                                            <span className="min-w-0 truncate text-ink-muted">
-                                              {st.subject}
-                                            </span>
-                                            <DeliveryBadge delivery={st.delivery} />
-                                          </div>
-                                          <div className="pl-[104px]">
-                                            <DeliveryWarning delivery={st.delivery} />
-                                            {st.body ? (
-                                              <Disclosure label="body">
-                                                <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-                                                  {st.body}
-                                                </pre>
-                                              </Disclosure>
-                                            ) : (
-                                              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                                                body not captured
-                                              </span>
-                                            )}
-                                          </div>
-                                        </li>
-                                      ),
-                                    )}
-                                  </ol>
-                                </div>
-                              </>
-                            )}
+                            <Rule />
+                            <PersonPane prospectId={c.prospectId} highlightPlay={c.playName} />
                           </CaseSection>
                         }
                         theLetter={letter}
