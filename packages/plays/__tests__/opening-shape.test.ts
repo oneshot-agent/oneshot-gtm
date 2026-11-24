@@ -1,6 +1,6 @@
 import { figuresIn, OPENING_SHAPES, openingShapeOf } from "@oneshot-gtm/core";
 import { describe, expect, it } from "vitest";
-import { openingLine, openingPool, openingShapeFor } from "../src/_opening.ts";
+import { briefHasFigure, OPENING_ROTATION, openingLine, openingShapeFor } from "../src/_opening.ts";
 
 // Openings are assigned in code before drafting, so variety does not depend
 // on the model remembering what it wrote last. Fictional copy.
@@ -36,11 +36,11 @@ describe("openingShapeFor", () => {
   });
 
   it("mixed: each follow-up moves to the next shape", () => {
-    const pool = openingPool(mixed);
+    const n = OPENING_ROTATION.length;
     for (const email of emails.slice(0, 50)) {
-      const first = pool.indexOf(openingShapeFor(mixed, email, 0));
+      const first = OPENING_ROTATION.indexOf(openingShapeFor(mixed, email, 0));
       for (const step of [1, 2, 3]) {
-        expect(openingShapeFor(mixed, email, step)).toBe(pool[(first + step) % pool.length]);
+        expect(openingShapeFor(mixed, email, step)).toBe(OPENING_ROTATION[(first + step) % n]);
         expect(openingShapeFor(mixed, email, step)).not.toBe(
           openingShapeFor(mixed, email, step - 1),
         );
@@ -48,11 +48,27 @@ describe("openingShapeFor", () => {
     }
   });
 
-  it("mixed: no figure without a number in the brief", () => {
-    expect(openingPool({ productBrief: "We follow up with patients." })).not.toContain("figure");
-    expect(openingPool({})).not.toContain("figure");
+  it("mixed: no figure without a number in the brief, the offer stands in", () => {
+    expect(briefHasFigure("We follow up with patients.")).toBe(false);
+    expect(briefHasFigure(brief)).toBe(true);
+    const plain = { messageOpening: "mixed", productBrief: "We follow up with patients." };
     for (const email of emails.slice(0, 200)) {
-      expect(openingShapeFor({ messageOpening: "mixed" }, email, 0)).not.toBe("figure");
+      const withNumber = openingShapeFor(mixed, email, 0);
+      expect(openingShapeFor(plain, email, 0)).toBe(withNumber === "figure" ? "offer" : withNumber);
+    }
+  });
+
+  it("mixed: a brief edit between two emails never repeats an opening", () => {
+    const plain = { messageOpening: "mixed", productBrief: "We follow up with patients." };
+    for (const email of emails.slice(0, 300)) {
+      for (const [a, b] of [
+        [mixed, plain],
+        [plain, mixed],
+      ]) {
+        for (const step of [1, 2, 3]) {
+          expect(openingShapeFor(b!, email, step)).not.toBe(openingShapeFor(a!, email, step - 1));
+        }
+      }
     }
   });
 

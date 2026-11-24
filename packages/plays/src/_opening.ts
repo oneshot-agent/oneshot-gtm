@@ -5,39 +5,41 @@ import { hash32, mix32 } from "./_angles.ts";
 const OPENING_SALT = "opening-shape:";
 
 /**
- * The shapes a `mixed` workspace splits its emails across. `figure` only
- * when the product brief gives a number to open on.
+ * The fixed order a `mixed` prospect moves through, one shape per email. Its
+ * length never changes, so a brief edit between two emails cannot land them
+ * on the same shape. `figure` sits between `bet` and `question`, so standing
+ * in `offer` for it when there is no number never repeats a neighbour.
  */
-export function openingPool(
-  cfg: { productBrief?: unknown },
-  briefText: string = typeof cfg.productBrief === "string" ? cfg.productBrief : "",
-): OpeningShape[] {
-  return figuresIn(briefText).length > 0
-    ? ["offer", "bet", "figure", "question"]
-    : ["offer", "bet", "question"];
+export const OPENING_ROTATION: readonly OpeningShape[] = ["offer", "bet", "figure", "question"];
+
+/** True when `briefText` gives a number to open on. */
+export function briefHasFigure(briefText: string): boolean {
+  return figuresIn(briefText).length > 0;
 }
 
 /**
  * The opening asked for on the `emailIndex`th email to `email` (0 = first).
  * `offer` (unset) opens on the offer, `problem` on a bet. `mixed` gives each
  * prospect a stable arm and moves one shape per email, never per cadence
- * step, so no reader gets one opening twice in a row. `briefText` is the
- * brief the writer sees: a figure is only asked for when it holds one.
+ * step. `briefText` is the brief the writer sees: with no number in it, the
+ * figure email opens on the offer instead.
  */
 export function openingShapeFor(
   cfg: { messageOpening?: unknown; productBrief?: unknown },
   email: string,
   emailIndex: number,
-  briefText?: string,
+  briefText: string = typeof cfg.productBrief === "string" ? cfg.productBrief : "",
 ): OpeningShape {
   const mode = messageOpeningOf(cfg);
   if (mode === "offer") return "offer";
   if (mode === "problem") return "bet";
-  const pool = openingPool(cfg, briefText);
-  const arm = Math.floor(
-    (mix32(hash32(OPENING_SALT + email.trim().toLowerCase())) / 2 ** 32) * pool.length,
+  const n = OPENING_ROTATION.length;
+  const arm = Math.min(
+    n - 1,
+    Math.floor((mix32(hash32(OPENING_SALT + email.trim().toLowerCase())) / 2 ** 32) * n),
   );
-  return pool[(Math.min(arm, pool.length - 1) + Math.max(0, emailIndex)) % pool.length]!;
+  const shape = OPENING_ROTATION[(arm + Math.max(0, emailIndex)) % n]!;
+  return shape === "figure" && !briefHasFigure(briefText) ? "offer" : shape;
 }
 
 /** The input line that asks for `shape`; null for an offer-first email. */
