@@ -2396,19 +2396,20 @@ export const PROBLEM_OPENING_LINE = "OPENING: problem";
 /**
  * Email drafts only; unset leaves `offerLines` byte-identical. `problem`
  * adds the bet line; `mixed` adds the line for the shape `to` is assigned
- * at `stepIndex` (`openingShapeFor`), none for an offer-first one.
+ * for its `emailIndex`th email (`openingShapeFor`), none for an offer-first one.
  */
 export function withOpeningLine(
   offerLines: string | null,
   offer: unknown,
   cfg: { messageOpening?: unknown; productBrief?: unknown },
-  to: { email: string; stepIndex: number } = { email: "", stepIndex: 0 },
+  to: { email: string; emailIndex: number } = { email: "", emailIndex: 0 },
 ): string | null {
   if (!offerLines || !offer) return offerLines;
   const mode = messageOpeningOf(cfg);
   if (mode === "offer") return offerLines;
   if (mode === "problem") return `${offerLines}\n${PROBLEM_OPENING_LINE}`;
-  const line = openingLine(openingShapeFor(cfg, to.email, to.stepIndex));
+  // The rendered block carries the brief as the writer reads it (clipped, code answers added).
+  const line = openingLine(openingShapeFor(cfg, to.email, to.emailIndex, offerLines));
   return line ? `${offerLines}\n${line}` : offerLines;
 }
 

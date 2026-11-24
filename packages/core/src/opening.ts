@@ -29,7 +29,12 @@ export function figuresIn(text: string): string[] {
   );
 }
 
-const GREETING = /^(?:hey|hi|hello|dear|good (?:morning|afternoon))\b[^,\n]{0,40},?\s*$/i;
+/** A greeting line: a known greeting, or any short line ending in a comma ("Yo Sam,"). */
+const GREETING =
+  /^(?:(?:hey|hi|hello|dear|good (?:morning|afternoon))\b[^,\n]{0,40},?|[^,.!?\n]{1,40},)\s*$/i;
+/** A sentence that makes an offer ("I can…", "Want me to…") is offer-led, whatever number it names. */
+const OFFER_LEAD =
+  /^(?:i can|i could|i(?:'|’)d (?:like|love)|i would|i want to|i(?:'|’)ll|i will|want me to|let me|happy to|we can|we could|can i|shall i)\b/i;
 const BET = /^i(?:'|’)?d bet\b|^i bet\b/i;
 
 /** The first sentence after a greeting line; "" for an empty body. */
@@ -46,6 +51,8 @@ export function openingSentence(body: string): string {
 /** The shape an email body opens with. */
 export function openingShapeOf(body: string): OpeningShape {
   const first = openingSentence(body);
+  // "Want me to…?" is an offer phrased as a question: the offer wins.
+  if (OFFER_LEAD.test(first)) return "offer";
   if (first.endsWith("?")) return "question";
   if (figuresIn(first).length > 0) return "figure";
   if (BET.test(first)) return "bet";

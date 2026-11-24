@@ -76,6 +76,11 @@ describe("openingShapeOf", () => {
     expect(openingShapeOf("Hey,\n\nAbout one in five visits is missed. I can rebook them.")).toBe(
       "figure",
     );
+    // An offer that names a number, or is phrased as a question, is offer-led.
+    expect(openingShapeOf("Hey Sam,\n\nI can cut missed visits by 47%. Worth it?")).toBe("offer");
+    expect(openingShapeOf("Hey Sam,\n\nWant me to book every open plan?")).toBe("offer");
+    // A custom greeting line is still a greeting.
+    expect(openingShapeOf("Yo Sam,\n\nI'd bet plans go quiet. I can book them.")).toBe("bet");
     // A figure later in the email is not the opening.
     expect(openingShapeOf("Hey Sam,\n\nI can book plans. Only 47% get finished.")).toBe("offer");
     expect(openingShapeOf("")).toBe("offer");

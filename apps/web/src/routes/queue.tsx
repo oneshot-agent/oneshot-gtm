@@ -58,7 +58,7 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
-import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
+import { AngleUsagePanel, OpeningUsageLine } from "../components/queue/AngleUsagePanel.tsx";
 import { LearningProposalsCard } from "../components/queue/LearningProposalsCard.tsx";
 import { MoveToWorkspace } from "../components/queue/MoveToWorkspace.tsx";
 import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts";
@@ -3020,6 +3020,9 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   : 3–4 angles separated by <code className="ln-mono text-[11.5px]">{"//"}</code>
                   <Explain concept="edgeShape" />
                 </div>
+              )}
+              {!/yourEdge|yourClaim/.test(props.editing.text) && (
+                <OpeningUsageLine openingUsage={t.openingUsage ?? null} />
               )}
               {/yourEdge|yourClaim/.test(props.editing.text) && (
                 <AngleUsagePanel

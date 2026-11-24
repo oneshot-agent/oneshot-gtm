@@ -168,24 +168,27 @@ describe("the offer-first rules", () => {
 describe("messageOpening: mixed", () => {
   const block = "OFFER (what you offer to do for them; the message opens with it): x";
   const withFigure = { messageOpening: "mixed", productBrief: "Only 47% of plans are finished." };
-  const lineFor = (cfg: object, email: string, stepIndex = 0) =>
-    withOpeningLine(block, { offer }, cfg, { email, stepIndex });
+  const briefed = `${block}\nPRODUCT BRIEF (the only source of product claims):\nOnly 47% of plans are finished.`;
+  const lineFor = (cfg: object, email: string, text = briefed) =>
+    withOpeningLine(text, { offer }, cfg, { email, emailIndex: 0 });
 
   it("adds the line for the assigned shape, none for an offer-first email", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 200; i++) {
       const out = lineFor(withFigure, `p${i}@example.test`)!;
-      seen.add(out === block ? "none" : out.slice(block.length + 1));
+      seen.add(out === briefed ? "none" : out.slice(briefed.length + 1));
     }
     expect([...seen].toSorted()).toEqual(
       ["OPENING: figure", "OPENING: problem", "OPENING: question", "none"].toSorted(),
     );
   });
 
-  it("never asks for a figure when the brief gives no number", () => {
+  it("never asks for a figure the writer cannot see in its brief", () => {
     const cfg = { messageOpening: "mixed", productBrief: "We follow up with patients." };
     for (let i = 0; i < 200; i++) {
-      expect(lineFor(cfg, `p${i}@example.test`)).not.toContain("OPENING: figure");
+      expect(lineFor(cfg, `p${i}@example.test`, block)).not.toContain("OPENING: figure");
+      // A number in the saved brief that the writer's clipped brief lost.
+      expect(lineFor(withFigure, `p${i}@example.test`, block)).not.toContain("OPENING: figure");
     }
   });
 

@@ -35,6 +35,23 @@ function angleCounts(a: AngleUsageView): string {
   ].join(" · ");
 }
 
+/** First-email sends and replies by opening; nothing outside a mixed workspace. */
+export function OpeningUsageLine({
+  openingUsage,
+}: {
+  openingUsage?: TriggerView["openingUsage"];
+}): React.ReactElement | null {
+  if (!openingUsage || Object.keys(openingUsage).length === 0) return null;
+  return (
+    <div className="font-mono text-[11px] text-ink-faint">
+      {`opening · ${Object.entries(openingUsage)
+        .map(([shape, u]) => usageLine(shape, u))
+        .join(" · ")}`}
+      <Explain concept="messageOpening" />
+    </div>
+  );
+}
+
 export function AngleUsagePanel({
   angleUsage,
   draftUsage,
@@ -86,14 +103,7 @@ export function AngleUsagePanel({
           <Explain concept="firstTouchFormat" />
         </div>
       )}
-      {openingUsage && Object.keys(openingUsage).length > 0 && (
-        <div className="font-mono text-[11px] text-ink-faint">
-          {`opening · ${Object.entries(openingUsage)
-            .map(([shape, u]) => usageLine(shape, u))
-            .join(" · ")}`}
-          <Explain concept="messageOpening" />
-        </div>
-      )}
+      <OpeningUsageLine openingUsage={openingUsage} />
       {angleUsage.angles.some((a) => (a.armOffered ?? 0) > 0) && (
         <div className="font-mono text-[11px] text-ink-faint">
           {`angle arms · ${angleUsage.angles

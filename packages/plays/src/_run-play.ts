@@ -386,7 +386,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         const offer = offerSet?.offer ?? null;
         const offerLines = withOpeningLine(offerBlock(offer, cfg, def.playName), offer, cfg, {
           email: def.toEmail(target),
-          stepIndex: 0,
+          emailIndex: 0,
         });
 
         // Append SOCIAL PROOF block when any of the three optional fields is

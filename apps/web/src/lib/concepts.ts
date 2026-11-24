@@ -134,7 +134,7 @@ export const CONCEPTS = {
   },
   messageOpening: {
     title: "Email openings",
-    body: "With messageOpening set to mixed, each person's first email opens one way by an even split: on the offer, a bet, an industry number from your brief, or a question. Each follow-up moves to the next, so nobody gets the same opening twice in a row. These counts read how each first email actually opened.",
+    body: "With messageOpening set to mixed, each person's first email opens one way by an even split: on the offer, a bet, a question, or an industry number from your brief (only when the brief gives one). Each follow-up moves to the next, so nobody gets the same opening twice in a row. These counts read how each first email actually opened.",
     href: docs + "prompt-inputs",
   },
   angleArms: {

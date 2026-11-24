@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AngleUsagePanel } from "../src/components/queue/AngleUsagePanel.tsx";
+import { AngleUsagePanel, OpeningUsageLine } from "../src/components/queue/AngleUsagePanel.tsx";
 
 // Under `messageOpening: "mixed"` the angle editor shows how first emails
 // opened next to their replies. Static render of the line the founder reads.
@@ -34,5 +34,13 @@ describe("AngleUsagePanel opening line", () => {
   it("is absent outside a mixed workspace", () => {
     expect(render(null)).not.toContain("opening ·");
     expect(render({})).not.toContain("opening ·");
+  });
+
+  it("renders on its own for a play with no angles", () => {
+    const html = renderToStaticMarkup(
+      createElement(OpeningUsageLine, { openingUsage: { offer: usage(4, 0) } as never }),
+    );
+    expect(html).toContain("opening · offer 4 sent");
+    expect(renderToStaticMarkup(createElement(OpeningUsageLine, { openingUsage: null }))).toBe("");
   });
 });

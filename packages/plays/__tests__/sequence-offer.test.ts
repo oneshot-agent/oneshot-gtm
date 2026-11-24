@@ -1105,4 +1105,28 @@ describe("messageOpening on an email follow-up", () => {
     }
     expect(seen.size).toBeGreaterThan(1);
   });
+
+  it("mixed: the rotation counts emails, so a call between two emails does not move it", async () => {
+    const { priorEmailCount } = await import("../src/_cadence.ts");
+    const { id } = preOfferSequence();
+    const prospect = ledger.getProspectById(id)!;
+    expect(priorEmailCount({ prospect, stepIndex: 1 }, PLAY)).toBe(1);
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 1,
+      channel: "call",
+      status: "sent",
+    });
+    expect(priorEmailCount({ prospect, stepIndex: 2 }, PLAY)).toBe(1);
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 2,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s", body: "b" },
+    });
+    expect(priorEmailCount({ prospect, stepIndex: 3 }, PLAY)).toBe(2);
+  });
 });

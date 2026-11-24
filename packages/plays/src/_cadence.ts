@@ -3483,6 +3483,29 @@ function loadProspect(id: number): ProspectRecord | null {
  * disagree. Returns "" on any missing cadence rather than throwing: steering
  * copy is a nicety, and a follow-up must still draft without it.
  */
+/**
+ * How many emails of this sequence went out before the one being drafted:
+ * the opening rotation (`openingShapeFor`) moves once per email, so a call or
+ * letter step between two emails does not land them on the same opening.
+ */
+export function priorEmailCount(
+  ctx: Pick<CadenceContext, "prospect" | "stepIndex">,
+  playName: string,
+): number {
+  try {
+    const before = ctx.stepIndex ?? Number.POSITIVE_INFINITY;
+    const steps = new Set(
+      getLedger()
+        .listSequenceEventsForProspectPlay(ctx.prospect.id, playName)
+        .filter((e) => e.channel === "email" && e.status !== "skipped" && e.step_index < before)
+        .map((e) => e.step_index),
+    );
+    return Math.max(1, steps.size);
+  } catch {
+    return 1;
+  }
+}
+
 function overusedOpenersBlock(prospectId: number, playName: string): string {
   const ledger = getLedger();
   const cadence = ledger.getCadence(prospectId, playName);
@@ -3696,7 +3719,7 @@ export function buildFollowUpEmail(opts: {
       offerBlock(introOffer, ctx.cfg, opts.playName, { sequence: true }),
       introOffer,
       ctx.cfg,
-      { email: ctx.prospect.email ?? "", stepIndex: ctx.stepIndex ?? 1 },
+      { email: ctx.prospect.email ?? "", emailIndex: priorEmailCount(ctx, opts.playName) },
     );
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,

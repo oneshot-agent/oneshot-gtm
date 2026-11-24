@@ -8,9 +8,11 @@ const OPENING_SALT = "opening-shape:";
  * The shapes a `mixed` workspace splits its emails across. `figure` only
  * when the product brief gives a number to open on.
  */
-export function openingPool(cfg: { productBrief?: unknown }): OpeningShape[] {
-  const brief = typeof cfg.productBrief === "string" ? cfg.productBrief : "";
-  return figuresIn(brief).length > 0
+export function openingPool(
+  cfg: { productBrief?: unknown },
+  briefText: string = typeof cfg.productBrief === "string" ? cfg.productBrief : "",
+): OpeningShape[] {
+  return figuresIn(briefText).length > 0
     ? ["offer", "bet", "figure", "question"]
     : ["offer", "bet", "question"];
 }
@@ -20,20 +22,24 @@ export function openingPool(cfg: { productBrief?: unknown }): OpeningShape[] {
  * email). `offer` (unset) always opens on the offer and `problem` always on a
  * bet. `mixed` gives each prospect a stable arm, and each follow-up moves to
  * the next shape so no reader gets the same opening twice in a row.
+ * `emailIndex` counts emails, not cadence steps: a call or letter between
+ * two emails does not move the rotation. `briefText` is the brief the writer
+ * is given, so a figure is only asked for when it can see one.
  */
 export function openingShapeFor(
   cfg: { messageOpening?: unknown; productBrief?: unknown },
   email: string,
-  stepIndex: number,
+  emailIndex: number,
+  briefText?: string,
 ): OpeningShape {
   const mode = messageOpeningOf(cfg);
   if (mode === "offer") return "offer";
   if (mode === "problem") return "bet";
-  const pool = openingPool(cfg);
+  const pool = openingPool(cfg, briefText);
   const arm = Math.floor(
     (mix32(hash32(OPENING_SALT + email.trim().toLowerCase())) / 2 ** 32) * pool.length,
   );
-  return pool[(Math.min(arm, pool.length - 1) + Math.max(0, stepIndex)) % pool.length]!;
+  return pool[(Math.min(arm, pool.length - 1) + Math.max(0, emailIndex)) % pool.length]!;
 }
 
 /** The input line that asks for `shape`; null for an offer-first email. */
