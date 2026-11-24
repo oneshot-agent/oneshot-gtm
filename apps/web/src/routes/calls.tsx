@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import type { CallListResponse, CallListRow } from "@oneshot-gtm/shared-types";
+import type { CallListResponse, CallListRow, LiveCallView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
 import { NoNumber } from "../components/calls/NoNumber.tsx";
+import { useLiveCalls, useSecondTick } from "../components/calls/useLiveCalls.ts";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
@@ -24,13 +25,16 @@ import {
   type CallTimer,
   type RowKey,
 } from "../lib/dialler.ts";
-import { useMask } from "../lib/privacy.tsx";
+import { liveCallFor, rowLiveLine, callBlock } from "../lib/liveCall.ts";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 
 interface CallsSearch {
   /** The open row, e.g. from a cadence's "Open call". */
   prospect?: number;
   /** Its play, for a Due row: a person can be due in two. */
   play?: string;
+  /** The call to open the panel on (the live bar's link): a person can have two unlogged. */
+  call?: number;
 }
 
 export const Route = createFileRoute("/calls")({
@@ -39,29 +43,43 @@ export const Route = createFileRoute("/calls")({
     const id = Number(search["prospect"]);
     if (!Number.isInteger(id) || id <= 0) return {};
     const play = search["play"];
-    return typeof play === "string" && play ? { prospect: id, play } : { prospect: id };
+    const call = Number(search["call"]);
+    return {
+      prospect: id,
+      ...(typeof play === "string" && play ? { play } : {}),
+      ...(Number.isInteger(call) && call > 0 ? { call } : {}),
+    };
   },
   component: CallsPage,
 });
 
 function CallsPage() {
-  const { prospect, play } = Route.useSearch();
+  const { prospect, play, call } = Route.useSearch();
   const navigate = Route.useNavigate();
   const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
-  const open = (row: RowKey | null) =>
+  const open = (row: RowKey | null) => {
+    // Reopening the row already open keeps the call it shows, so its panel
+    // (and the note typed in it) stays; another row starts fresh.
+    const same = row != null && row.prospectId === prospect && (row.playName ?? undefined) === play;
     void navigate({
       search:
         row == null
           ? {}
-          : { prospect: row.prospectId, ...(row.playName ? { play: row.playName } : {}) },
+          : {
+              prospect: row.prospectId,
+              ...(row.playName ? { play: row.playName } : {}),
+              ...(same && call ? { call } : {}),
+            },
       replace: true,
     });
+  };
   return (
     <CallsView
       data={query.data}
       error={query.error}
       selected={prospect}
       {...(play ? { selectedPlay: play } : {})}
+      {...(call ? { selectedCall: call } : {})}
       onOpen={open}
     />
   );
@@ -73,12 +91,15 @@ export function CallsView({
   error,
   selected,
   selectedPlay,
+  selectedCall,
   onOpen,
 }: {
   data: CallListResponse | undefined;
   error?: Error | null;
   selected: number | undefined;
   selectedPlay?: string;
+  /** Open the panel on this call rather than the one it would resume. */
+  selectedCall?: number;
   onOpen: (row: RowKey | null) => void;
 }) {
   // Each row's next save id, kept here so a panel that remounts while its
@@ -107,6 +128,11 @@ export function CallsView({
   // Which row is open as of the latest render: a save that finishes after the
   // founder opened someone else must not move them on.
   const openRef = useRef<CallListRow | null>(null);
+  // And which call on it: a save that finishes after the founder opened
+  // another call on the same row must not move them on either.
+  const openCallRef = useRef<number | null>(null);
+  // Who is on a call now, from the live bar's read (it polls; this only reads).
+  const liveCalls = useLiveCalls()?.calls;
 
   const header = (
     <div>
@@ -168,6 +194,8 @@ export function CallsView({
 
   const row = selected != null ? findRow(data, selected, selectedPlay) : null;
   openRef.current = row;
+  openCallRef.current = selectedCall ?? null;
+  const panelCall = selectedCall ?? null;
   const next = row ? nextRow(sectionRows(data, row), row) : null;
   const section = (title: string, rows: CallListRow[], empty: string) => (
     <section className="flex flex-col gap-3">
@@ -185,6 +213,7 @@ export function CallsView({
               data={data}
               now={now}
               onRefresh={refresh}
+              liveCalls={liveCalls}
               open={row != null && sameRow(r, row)}
               onOpen={() => onOpen(r)}
               onStart={(phone) => {
@@ -221,8 +250,10 @@ export function CallsView({
         >
           {row ? (
             <DialPanel
-              key={rowId(row)}
+              // A different call asked for on the same row is a new panel, not this one's pin.
+              key={`${rowId(row)}|${selectedCall ?? ""}`}
               row={row}
+              {...(selectedCall ? { openCallId: selectedCall } : {})}
               next={next}
               dialMode={data.dialMode}
               window={data.window}
@@ -237,7 +268,11 @@ export function CallsView({
                   saveKeys.current.delete(rowId(logged));
               }}
               onOpen={onOpen}
-              isOpen={(r) => openRef.current != null && sameRow(openRef.current, r)}
+              isOpen={(r) =>
+                openRef.current != null &&
+                sameRow(openRef.current, r) &&
+                openCallRef.current === panelCall
+              }
             />
           ) : selected != null ? (
             <EmptyNote note="This person isn't on the call list: no usable number, or they can't be contacted." />
@@ -255,6 +290,7 @@ function CallRow({
   data,
   now,
   onRefresh,
+  liveCalls,
   open,
   onOpen,
   onStart,
@@ -262,14 +298,20 @@ function CallRow({
   row: CallListRow;
   data: CallListResponse;
   now: Date;
+  liveCalls: LiveCallView[] | undefined;
   onRefresh: () => void;
   open: boolean;
   onOpen: () => void;
   onStart: (phone: string | null) => void;
 }) {
   const mask = useMask();
+  const { masked } = usePrivacy();
+  const live = liveCallFor(liveCalls, row.prospectId);
+  const tick = useSecondTick(live?.status === "connected");
+  const blockedReason = callBlock(liveCalls, row.prospectId, masked);
   const hint = windowHint(row, data.window, now);
-  const dialable = canDial(row, data.window, now) && data.dialMode === "tel";
+  // A teammate on a call with them: the number is not a link either.
+  const dialable = canDial(row, data.window, now) && data.dialMode === "tel" && !blockedReason;
   const localTime = localTimeNow(row.local, now);
   return (
     <div
@@ -312,6 +354,7 @@ function CallRow({
             <span>{mask("phone", row.phone)}</span>
           )}
           {localTime && <span>· {localTime} their time</span>}
+          {live && <span className="text-ink-cream">· {rowLiveLine(live, masked, tick)}</span>}
           <span>· {row.reason}</span>
           {row.lastTouchAt && <span>· last touch {timeAgo(row.lastTouchAt)}</span>}
           {row.lastCall && (
@@ -330,6 +373,7 @@ function CallRow({
           now={now}
           onStart={onStart}
           onRefresh={onRefresh}
+          blockedReason={blockedReason}
         />
       )}
     </div>

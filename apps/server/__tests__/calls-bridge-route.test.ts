@@ -376,6 +376,38 @@ describe("bridged-call routes", () => {
     expect((await post(routes.discardRecordingRoute)).status).toBe(200);
   });
 
+  it("list live calls for the bar: off when calls are off, a teammate's call as stored", async () => {
+    keys();
+    expect((await routes.liveCallsRoute(req("/api/calls/live", { member: false }))).status).toBe(
+      403,
+    );
+    cfg = { calls: { enabled: false } };
+    expect(await (await routes.liveCallsRoute(req("/api/calls/live"))).json()).toEqual({
+      enabled: false,
+      record: false,
+      calls: [],
+    });
+    cfg = { calls: { enabled: true } };
+    const id = ledger.upsertProspect({ name: "Dana", email: "d@a.test", phone: PROSPECT });
+    const callId = ledger.insertCall({
+      prospectId: id,
+      startedAt: new Date().toISOString(),
+      provider: "twilio",
+      providerCallSid: "CA1",
+      status: "connected",
+      member: "sam@example.com",
+    });
+    const res = await routes.liveCallsRoute(req("/api/calls/live"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      enabled: true,
+      record: "ask",
+      calls: [{ id: callId, prospectName: "Dana", mine: false, status: "connected" }],
+    });
+    // Someone else's call is theirs to read from Twilio.
+    expect(sent).toEqual([]);
+  });
+
   it("log a tel: call with the member who logged it", async () => {
     // Its own shared database: the install's last owner can never be removed.
     const sharedBefore = process.env["ONESHOT_GTM_SHARED"];

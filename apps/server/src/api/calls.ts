@@ -15,6 +15,7 @@ import {
   discardBridgedRecording,
   hangUpBridgedCall,
   listCalls,
+  liveCalls,
   memberCanBridge,
   recordCall,
   refreshBridgedCall,
@@ -278,6 +279,21 @@ export async function startCallRoute(req: Request): Promise<Response> {
     return jsonResponse(call, 200, req);
   } catch (err) {
     return bridgeError(req, err, "starting the call failed");
+  }
+}
+
+/**
+ * GET /api/calls/live: the live bar on every page. Reading it moves the
+ * reader's own calls on, so a call placed from the dial panel keeps going
+ * when the member opens another page.
+ */
+export async function liveCallsRoute(req: Request): Promise<Response> {
+  const member = memberOf(req);
+  if (member instanceof Response) return member;
+  try {
+    return jsonResponse(await liveCalls(member.email), 200, req);
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message ?? "reading live calls failed" }, 500, req);
   }
 }
 

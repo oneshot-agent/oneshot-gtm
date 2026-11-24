@@ -86,6 +86,7 @@ interface CallRow {
   recording_from?: string | null;
   recording_requested_at?: string | null;
   discard_next_at?: string | null;
+  connected_at?: string | null;
 }
 
 /** A bridged call's live states (`CallRecordView.status`). */
@@ -132,6 +133,14 @@ function toView(row: CallRow): CallRecordView {
     ...(row.recording_from === "answer" || row.recording_from === "consent"
       ? { recordedFrom: row.recording_from }
       : {}),
+    ...(row.connected_at ? { connectedAt: row.connected_at } : {}),
+    // A consent recording starts when Record was pressed; one from the
+    // answer starts when the call connected.
+    ...(row.recording_from === "consent" && row.recording_requested_at
+      ? { recordingSince: row.recording_requested_at }
+      : row.recording_from === "answer" && row.connected_at
+        ? { recordingSince: row.connected_at }
+        : {}),
     ...(row.discard_recording === 1
       ? { discard: "pending" as const }
       : row.discard_recording === 2
@@ -366,6 +375,11 @@ export function updateBridgedCall(
     // A late read of a live state never replaces an ended one.
     patch.status !== undefined && !TERMINAL_STATUSES.has(patch.status) ? LIVE_ONLY : "",
   );
+  // The first read that finds it connected starts the call's clock, once.
+  if (patch.status === "connected")
+    db.prepare(
+      `UPDATE calls SET connected_at = ? WHERE id = ? AND connected_at IS NULL ${LIVE_ONLY}`,
+    ).run(new Date().toISOString(), id);
   write(
     [
       ["recording_sid", patch.recordingSid],
@@ -391,6 +405,58 @@ export function updateBridgedCall(
 }
 
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["ended", "failed"]);
+
+/** A call on the live bar, with who it is to. */
+export interface LiveCallRow {
+  view: CallRecordView;
+  prospectName: string | null;
+  prospectCompany: string | null;
+}
+
+/**
+ * What the live bar is built from: every bridged call not over yet (started
+ * since `liveSinceIso`), whoever placed it, then the member's own bridged
+ * calls that ended since `sinceIso` with no outcome logged, newest first.
+ */
+export function listLiveCalls(
+  db: Database,
+  input: {
+    /** Ended calls from this time on. */
+    sinceIso: string;
+    /** Live calls started from this time on: an older one still marked live is stale, not live. */
+    liveSinceIso: string;
+    /** Whose ended calls: the member's key (trimmed, lowercased email), "" for the unlisted owner. */
+    endedMember: string;
+    endedLimit?: number;
+  },
+): LiveCallRow[] {
+  type Joined = CallRow & { p_name: string | null; p_company: string | null };
+  const select = `SELECT c.*, p.name AS p_name, p.company AS p_company
+                    FROM calls c LEFT JOIN prospects p ON p.id = c.prospect_id`;
+  const live = db
+    .query(
+      `${select}
+        WHERE c.provider = 'twilio' AND COALESCE(c.status, '') NOT IN ('ended', 'failed')
+          AND c.started_at >= ?
+        ORDER BY c.started_at DESC, c.id DESC`,
+    )
+    .all(input.liveSinceIso) as Joined[];
+  const ended = db
+    .query(
+      `${select}
+        WHERE c.provider = 'twilio' AND c.status = 'ended' AND c.outcome IS NULL
+          AND c.started_at >= ?
+          AND (CASE WHEN ? = '' THEN c.member IS NULL ELSE LOWER(TRIM(c.member)) = ? END)
+        ORDER BY c.started_at DESC, c.id DESC
+        LIMIT ?`,
+    )
+    .all(input.sinceIso, input.endedMember, input.endedMember, input.endedLimit ?? 3) as Joined[];
+  return [...live, ...ended].map((r) => ({
+    view: toView(r),
+    prospectName: r.p_name,
+    prospectCompany: r.p_company,
+  }));
+}
 const LIVE_ONLY = "AND COALESCE(status, '') NOT IN ('ended', 'failed')";
 
 /**

@@ -92,6 +92,21 @@ function st(
   return { status, durationSec, answered, answeredBy };
 }
 
+/**
+ * End every call still live, in the ledger only: a test that places one call
+ * after another to the same person means the earlier one is over by then
+ * (a second call to someone still on one is refused).
+ */
+function endLiveCalls(): void {
+  for (const r of ledger.listLiveCalls({
+    sinceIso: IN_WINDOW.toISOString(),
+    liveSinceIso: "1970-01-01T00:00:00.000Z",
+    endedMember: "",
+    endedLimit: 0,
+  }))
+    ledger.updateBridgedCall(r.view.id, { status: "ended" });
+}
+
 /** Past the hold: the prospect was dialled. */
 function bridged(id: number): number {
   ledger.claimBridge(id, IN_WINDOW.toISOString());
@@ -248,6 +263,7 @@ describe("startBridgedCall", () => {
     await refreshBridgedCall(call.id, { bridge, now: IN_WINDOW });
     expect(vi.mocked(bridge.connect).mock.calls[0]![1].record).toBe(false);
 
+    endLiveCalls();
     const refusing = fakeBridge({
       start: async () => {
         throw new CallBridgeError("Twilio: The number is unverified", 400, 21210);
@@ -1166,6 +1182,7 @@ describe("calls a teammate made, in the next email", () => {
 describe("the mode and the gates as they are when the prospect is dialled", () => {
   async function held(bridge: Fake): Promise<number> {
     verifyOwner();
+    endLiveCalls();
     const call = await startBridgedCall({
       prospectId: prospect(),
       member: null,

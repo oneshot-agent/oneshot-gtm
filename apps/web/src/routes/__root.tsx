@@ -27,6 +27,8 @@ import {
 import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
+import { LiveCallBar } from "../components/calls/LiveCallBar.tsx";
+import { useOnMyCall } from "../components/calls/useLiveCalls.ts";
 import { DemoFrame } from "../components/shell/DemoFrame.tsx";
 import { CommandPalette } from "../components/shell/CommandPalette.tsx";
 import { PrivacyToggle } from "../components/shell/PrivacyToggle.tsx";
@@ -183,7 +185,9 @@ function RootLayout() {
 
   // Several workspaces run at once, each its own server on its own port. Name
   // the tab and tint its icon, or they are indistinguishable in the tab strip.
-  useDocumentTitle(workspace?.name ?? null);
+  // While one of your calls is connected the tab says so, from any other tab.
+  const onCall = useOnMyCall();
+  useDocumentTitle(workspace?.name ?? null, onCall ? "● On call" : null);
   useEffect(() => {
     void applyWorkspaceFavicon(workspace?.name ?? null);
   }, [workspace?.name]);
@@ -331,44 +335,49 @@ function RootLayout() {
             </div>
           </aside>
 
-          <header className="flex min-w-0 items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
-            <button
-              type="button"
-              aria-label="Open navigation"
-              aria-expanded={mobileNavOpen}
-              ref={menuRef}
-              onClick={() => setMobileNavOpen(true)}
-              className="text-[12px] text-ink-cream md:hidden"
-            >
-              Menu · {workspace?.name ?? "oneshot"}
-            </button>
-            {/* Below md the line that names the member is hidden, so name them here. */}
-            {me?.email ? (
-              <SignedInAs
-                me={me}
-                className="min-w-0 flex-1 truncate px-3 text-right text-[11.5px] text-ink-cream md:hidden"
+          {/* One grid row: the header, and the live call bar under it when a call is on. */}
+          <div className="min-w-0">
+            <header className="flex min-w-0 items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
+              <button
+                type="button"
+                aria-label="Open navigation"
+                aria-expanded={mobileNavOpen}
+                ref={menuRef}
+                onClick={() => setMobileNavOpen(true)}
+                className="text-[12px] text-ink-cream md:hidden"
               >
-                <span className="sr-only">signed in as </span>
-              </SignedInAs>
-            ) : null}
-            <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
-              workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
-              {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
-              local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+                Menu · {workspace?.name ?? "oneshot"}
+              </button>
+              {/* Below md the line that names the member is hidden, so name them here. */}
               {me?.email ? (
-                <>
-                  {" "}
-                  · signed in as <SignedInAs me={me} className="text-ink-cream" />
-                </>
+                <SignedInAs
+                  me={me}
+                  className="min-w-0 flex-1 truncate px-3 text-right text-[11.5px] text-ink-cream md:hidden"
+                >
+                  <span className="sr-only">signed in as </span>
+                </SignedInAs>
               ) : null}
-            </div>
-            <div className="flex items-center gap-3">
-              <PrivacyToggle />
-              <div className="hidden sm:block">
-                <StatusBar />
+              <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
+                workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
+                {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
+                local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+                {me?.email ? (
+                  <>
+                    {" "}
+                    · signed in as <SignedInAs me={me} className="text-ink-cream" />
+                  </>
+                ) : null}
               </div>
-            </div>
-          </header>
+              <div className="flex items-center gap-3">
+                <PrivacyToggle />
+                <div className="hidden sm:block">
+                  <StatusBar />
+                </div>
+              </div>
+            </header>
+            {/* Every call on now, on every page; it also keeps your own call moving. */}
+            {!IS_DEMO && <LiveCallBar />}
+          </div>
 
           {/*
             The bottom gutter is NOT padding here. `sticky bottom-0` resolves

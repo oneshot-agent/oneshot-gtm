@@ -95,6 +95,7 @@ export {
   type BridgedCall,
   type CallCandidate,
   type CallTier,
+  type LiveCallRow,
 } from "./ledger-calls.ts";
 export * from "./phone-timezone.ts";
 export * from "./call-bridge.ts";

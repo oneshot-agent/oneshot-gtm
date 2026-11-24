@@ -53,6 +53,12 @@ import {
   type RowKey,
 } from "../../lib/dialler.ts";
 import { humanizeFlag } from "../../lib/flagLabels.ts";
+import {
+  connectedAtMs,
+  RECORDING_TONE_CLASS,
+  recordingState,
+  callBlock,
+} from "../../lib/liveCall.ts";
 import { useMask, usePrivacy } from "../../lib/privacy.tsx";
 import { readOnly } from "../../lib/readOnly.ts";
 import { SheetHeading } from "../ledger/SheetHeading.tsx";
@@ -61,6 +67,7 @@ import { Button, buttonStyles } from "../primitives/Button.tsx";
 import { Input, Textarea } from "../primitives/Field.tsx";
 import { callsMeKey } from "../setup/YourPhone.tsx";
 import { NoNumber } from "./NoNumber.tsx";
+import { liveCallsKey, useLiveCalls } from "./useLiveCalls.ts";
 
 export const briefKey = (row: Pick<CallListRow, "prospectId" | "playName">) => [
   "call-brief",
@@ -111,6 +118,7 @@ export function dialledNumber(
  */
 export function DialPanel({
   row,
+  openCallId,
   next,
   dialMode,
   window: callWindow,
@@ -124,6 +132,8 @@ export function DialPanel({
   isOpen,
 }: {
   row: CallListRow;
+  /** The call this panel opens on (a link to that call); else the one it resumes. */
+  openCallId?: number;
   next: CallListRow | null;
   dialMode: CallListResponse["dialMode"];
   window: CallListResponse["window"];
@@ -195,7 +205,7 @@ export function DialPanel({
   const [ringPhone, setRingPhone] = useState<string | null>(null);
   // The resumed call stays the one the draft is for, even when a newer one
   // shows up; a tel: call started here ends resuming for this panel.
-  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const [pinnedId, setPinnedId] = useState<number | null>(openCallId ?? null);
   const [noResume, setNoResume] = useState(false);
   const callId = panelCallId({ startedId, pinnedId, noResume }, history.data?.calls, me.data);
   useEffect(() => {
@@ -225,7 +235,12 @@ export function DialPanel({
     onStart(phone);
   };
   const callLive = isLive(call);
-  const connectedSec = useElapsed(useConnectedAt(call));
+  // The server's connect time, the same clock the live bar shows; the
+  // first read seen connected here when it has none.
+  const seenConnectedAt = useConnectedAt(call);
+  const connectedSec = useElapsed(connectedAtMs(call) ?? seenConnectedAt);
+  // A teammate on a call with this prospect now: Call waits (the server refuses it too).
+  const blockedReason = callBlock(useLiveCalls()?.calls, row.prospectId, masked);
 
   const ring = useMutation({
     mutationKey: startKey(row.prospectId),
@@ -238,6 +253,7 @@ export function DialPanel({
       });
       qc.setQueryData(callKey(c.id), c);
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
       return c;
     },
     // A new call gets a blank draft. A refused start keeps the draft, so it
@@ -256,13 +272,19 @@ export function DialPanel({
   const [endedByMember, setEndedByMember] = useState<number | null>(null);
   const hangUp = useMutation({
     mutationFn: (id: number) => api.hangUpCall(id),
-    onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
+    onSuccess: (c) => {
+      qc.setQueryData(callKey(c.id), c);
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
+    },
     onError: (err) => toast.error(`couldn't hang up · ${err.message}`),
   });
   const recordMode: CallRecordMode = callsMe.data?.record ?? false;
   const startRecording = useMutation({
     mutationFn: (id: number) => api.recordCall(id),
-    onSuccess: (c) => qc.setQueryData(callKey(c.id), c),
+    onSuccess: (c) => {
+      qc.setQueryData(callKey(c.id), c);
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
+    },
     onError: (err) => toast.error(`couldn't start recording · ${err.message}`),
   });
   // Its own action: no outcome needed, and open from the history after Save.
@@ -274,6 +296,7 @@ export function DialPanel({
       qc.setQueryData(callKey(c.id), c);
       if (c.id === call?.id) dispatch({ kind: "forget-call" });
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
       toast.success(discardToast(c));
     },
     onError: (err) => toast.error(`couldn't delete the recording · ${err.message}`),
@@ -318,6 +341,8 @@ export function DialPanel({
       void qc.invalidateQueries({ queryKey: ["prospect-calls", row.prospectId] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       void qc.invalidateQueries({ queryKey: ["person", row.prospectId] });
+      // A logged call leaves the live bar.
+      void qc.invalidateQueries({ queryKey: liveCallsKey });
       toast.success(`logged · ${outcomeTitle(req.outcome)}`);
     },
     onError: (err) => toast.error(`couldn't log the call · ${err.message}`),
@@ -409,6 +434,7 @@ export function DialPanel({
                   onRefresh={onRefresh}
                   onRing={() => ring.mutate()}
                   ringing={starting}
+                  blockedReason={blockedReason}
                   className="h-8 px-3 text-[13px]"
                 />
               )}
@@ -707,6 +733,7 @@ export function CallControl({
   onRefresh,
   onRing,
   ringing = false,
+  blockedReason,
   className,
 }: {
   row: Pick<CallListRow, "phone" | "local">;
@@ -718,11 +745,19 @@ export function CallControl({
   /** Bridge mode: ring the member's phone, then this number. */
   onRing?: () => void;
   ringing?: boolean;
+  /** Why Call waits ("Mia is on a call with them"): shown disabled, with this as its title. */
+  blockedReason?: string | null;
   className?: string;
 }) {
   if (!row.phone) return null;
   const hint = windowHint(row, callWindow, now);
   if (hint) return <span className="font-mono text-[11px] text-ink-faint">{hint}</span>;
+  if (blockedReason && (dialMode === "tel" || onRing))
+    return (
+      <Button size="sm" variant="receipt" disabled title={blockedReason} className={className}>
+        <Phone size={11} /> Call
+      </Button>
+    );
   if (dialMode === "bridge") {
     if (!onRing) return null;
     return (
@@ -851,6 +886,8 @@ export function BridgeCallView({
   // whether a call not recorded yet offers Record.
   const recordingNow = live && call.transcriptStatus === "pending";
   const fromAnswer = recordingNow && call.recordedFrom !== "consent";
+  // Whether it records, then where its transcript is: one line, live and after.
+  const rec = recordingState(call, record);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -869,6 +906,9 @@ export function BridgeCallView({
               {formatDuration(call.durationSec)}
             </span>
           )}
+          <span className={cn("font-mono text-[11.5px]", RECORDING_TONE_CLASS[rec.tone])}>
+            {rec.label}
+          </span>
         </div>
         {live && (
           <Button size="sm" variant="danger" disabled={hangingUp} onClick={onHangUp} {...readOnly}>
@@ -917,11 +957,6 @@ export function BridgeCallView({
             They agreed — record
           </Button>
         </ConsentLine>
-      )}
-      {recordingNow && !fromAnswer && (
-        <div className="font-mono text-[11.5px] text-ink-muted" aria-live="polite">
-          ● Recording
-        </div>
       )}
       {!live && call.transcriptStatus === "pending" && (
         <div className="flex items-center gap-2 text-[12px] text-ink-muted">

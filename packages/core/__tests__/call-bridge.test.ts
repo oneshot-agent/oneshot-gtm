@@ -574,11 +574,13 @@ describe("migration v28", () => {
 
   it("adds member, status and transcript_sid to a v27 ledger's calls and keeps its rows", () => {
     expect(LEDGER_MIGRATIONS.find((m) => m.name === "calls-bridge")?.version).toBe(28);
-    expect(LEDGER_SCHEMA_VERSION).toBe(33);
+    expect(LEDGER_SCHEMA_VERSION).toBe(34);
     const first = new Ledger(dbPath);
     const id = first.upsertProspect({ name: "Dana", email: "d@a.test" });
     first.close();
     const raw = new Database(dbPath);
+    // A v27 file has none of the later columns, nor the index over them.
+    raw.exec("DROP INDEX IF EXISTS idx_calls_live");
     for (const col of [
       "member",
       "status",

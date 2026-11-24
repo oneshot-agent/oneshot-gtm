@@ -7,6 +7,8 @@ import type {
   CallListRow,
   CallRecordView,
   CallsMeResponse,
+  LiveCallView,
+  LiveCallsResponse,
   MemberPhoneView,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../src/api/client.ts";
@@ -17,6 +19,7 @@ import {
   TranscriptView,
 } from "../src/components/calls/DialPanel.tsx";
 import { callsMeKey, YourPhoneView } from "../src/components/setup/YourPhone.tsx";
+import { liveCallsKey } from "../src/components/calls/useLiveCalls.ts";
 import { CallsSection } from "../src/components/setup/CallsSection.tsx";
 import { CallsView } from "../src/routes/calls.tsx";
 import {
@@ -688,6 +691,29 @@ describe("the dial panel in bridge mode", () => {
     expect(html).toContain("They didn&#x27;t agree — hang up and delete it");
   });
 
+  it("opens on the call a link names, not the newest unlogged one", () => {
+    client.setQueryData(["me"], signedIn);
+    client.setQueryData(callsMeKey, me());
+    // Only the older call has a suggestion, which shows only in the panel's call view.
+    const older = call({
+      id: 21,
+      status: "ended",
+      transcriptStatus: "ready",
+      transcript,
+      suggestion: { outcome: "interested", note: "", commitments: [] },
+      startedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    const newer = call({ id: 22, status: "ended", transcriptStatus: "pending" });
+    client.setQueryData(["prospect-calls", 1], { calls: [newer, older] });
+    client.setQueryData(callKey(21), older);
+    client.setQueryData(callKey(22), newer);
+    expect(page(data())).not.toContain("Suggested:");
+    const linked = render(
+      <CallsView data={data()} selected={1} selectedCall={21} onOpen={() => {}} />,
+    );
+    expect(linked).toContain("Suggested:");
+  });
+
   it("says a deletion still finishing was requested, not done", () => {
     expect(discardToast({ discard: "done" })).toBe("recording and transcript deleted");
     expect(discardToast({ discard: "pending" })).toMatch(/requested/);
@@ -798,6 +824,63 @@ describe("the dial panel in bridge mode", () => {
     );
     expect(html).toContain("Ringing your phone…");
     expect(html).toContain("Hang up");
+  });
+});
+
+describe("the dial panel and the live bar", () => {
+  const teammateCall = (over: Partial<LiveCallView> = {}): LiveCallView => {
+    const { transcript: _t, ...rest } = call({ id: 21, member: "mia@example.com" });
+    return {
+      ...rest,
+      prospectName: "Dana Reyes",
+      prospectCompany: "Acme Dental",
+      mine: false,
+      ...over,
+    };
+  };
+
+  it("times a connected call from the server's connect time", () => {
+    const html = panelWith(call({ connectedAt: "2026-11-18T16:02:50Z" }));
+    expect(html).toMatch(/aria-label="call time">2:10</);
+  });
+
+  it("always says whether the call records, and plainly when recording is off", () => {
+    expect(panelWith(call(), me({ record: false }))).toContain("Not recorded · recording is off");
+    expect(panelWith(call({ id: 12 }), me({ record: "ask" }))).toContain(
+      "Not recording · ask first",
+    );
+    const ended = panelWith(call({ id: 13, status: "ended", transcriptStatus: "pending" }));
+    expect(ended).toContain("Transcribing…");
+    expect(ended).toContain("Transcript on its way");
+  });
+
+  it("holds Call while a teammate is on a call with them", () => {
+    client.setQueryData(liveCallsKey, {
+      enabled: true,
+      record: "ask",
+      calls: [teammateCall()],
+    } satisfies LiveCallsResponse);
+    client.setQueryData(["me"], signedIn);
+    client.setQueryData(callsMeKey, me());
+    client.setQueryData(["prospect-calls", 1], { calls: [] });
+    const html = page(data());
+    expect(html).toContain('title="Mia is on a call with them"');
+    expect(html).toContain("Mia on a call");
+    privacy.masked = true;
+    const masked = page(data());
+    expect(masked).toContain('title="a teammate is on a call with them"');
+    expect(masked).not.toContain("Mia");
+  });
+
+  it("the call list names your own live call", () => {
+    client.setQueryData(liveCallsKey, {
+      enabled: true,
+      record: "ask",
+      calls: [teammateCall({ mine: true, status: "ringing_prospect" })],
+    } satisfies LiveCallsResponse);
+    const html = render(<CallsView data={data()} selected={undefined} onOpen={() => {}} />);
+    expect(html).toContain("you&#x27;re calling");
+    expect(html).not.toContain("is on a call with them");
   });
 });
 

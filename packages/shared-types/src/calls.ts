@@ -110,6 +110,10 @@ export interface CallRecordView {
   recordedFrom?: "answer" | "consent";
   /** A recording the prospect declined: still being deleted, or deleted. */
   discard?: "pending" | "done";
+  /** When a bridged call was first read connected (ISO): the call's clock, the same on every page. */
+  connectedAt?: string;
+  /** When the recording started (ISO): Record pressed, or the call connecting for one recorded from the answer. */
+  recordingSince?: string;
   transcriptStatus: "none" | "pending" | "ready" | "failed";
   transcript: { speaker: "founder" | "prospect"; text: string; startSec: number }[] | null;
   /** Phase 2: the model's proposal from the transcript; the founder confirms it. */
@@ -153,6 +157,28 @@ export interface LogCallRequest {
  * false: never.
  */
 export type CallRecordMode = "ask" | "always" | false;
+
+/** A call on the live bar: no transcript body, so a poll every few seconds stays small. */
+export interface LiveCallView extends Omit<CallRecordView, "transcript"> {
+  prospectName: string | null;
+  prospectCompany: string | null;
+  /** Placed by the member reading it: they may hang it up, record it and log it. */
+  mine: boolean;
+}
+
+/**
+ * `GET /api/calls/live`: every bridged call in this workspace not over yet,
+ * whoever placed it, then the reader's own calls that ended in the last six
+ * hours with no outcome logged. Reading it moves the reader's own live calls
+ * on, as the dial panel's poll does.
+ */
+export interface LiveCallsResponse {
+  /** Calls on, with the bridge set up; false means the bar has nothing to show. */
+  enabled: boolean;
+  /** How the workspace records (`calls.bridge.record`): what a call not recorded yet is waiting on. */
+  record: CallRecordMode;
+  calls: LiveCallView[];
+}
 
 /**
  * A member's own phone for bridged calls. It rings first, and the prospect

@@ -9,6 +9,7 @@ import type {
   CallBrief,
   CallListResponse,
   CallRecordView,
+  LiveCallsResponse,
   CallsMeResponse,
   LogCallRequest,
   MemberPhoneView,
@@ -597,6 +598,15 @@ export const api = {
   removePhone: () => deleteJson<unknown>("/calls/me/phone"),
   startCall: (req: StartCallRequest) => postJson<CallRecordView>("/calls/start", req),
   call: (id: number) => getJson<CallRecordView>(`/calls/${id}`),
+  /**
+   * The live bar: every call in flight in this workspace, plus your own ended
+   * ones still waiting on an outcome. Reading it moves your own calls on. The
+   * demo has no live calls, so it reads as off there.
+   */
+  callsLive: (): Promise<LiveCallsResponse> =>
+    IS_DEMO
+      ? Promise.resolve({ enabled: false, record: false, calls: [] })
+      : getJson<LiveCallsResponse>("/calls/live"),
   hangUpCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/hangup`, {}),
   /** The prospect agreed: record the connected call from now. */
   recordCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/record`, {}),
