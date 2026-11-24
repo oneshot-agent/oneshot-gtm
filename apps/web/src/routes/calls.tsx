@@ -120,6 +120,9 @@ export function CallsView({
   // Which row is open as of the latest render: a save that finishes after the
   // founder opened someone else must not move them on.
   const openRef = useRef<CallListRow | null>(null);
+  // And which call on it: a save that finishes after the founder opened
+  // another call on the same row must not move them on either.
+  const openCallRef = useRef<number | null>(null);
   // Who is on a call now, from the live bar's read (it polls; this only reads).
   const liveCalls = useLiveCalls()?.calls;
 
@@ -183,6 +186,8 @@ export function CallsView({
 
   const row = selected != null ? findRow(data, selected, selectedPlay) : null;
   openRef.current = row;
+  openCallRef.current = selectedCall ?? null;
+  const panelCall = selectedCall ?? null;
   const next = row ? nextRow(sectionRows(data, row), row) : null;
   const section = (title: string, rows: CallListRow[], empty: string) => (
     <section className="flex flex-col gap-3">
@@ -255,7 +260,11 @@ export function CallsView({
                   saveKeys.current.delete(rowId(logged));
               }}
               onOpen={onOpen}
-              isOpen={(r) => openRef.current != null && sameRow(openRef.current, r)}
+              isOpen={(r) =>
+                openRef.current != null &&
+                sameRow(openRef.current, r) &&
+                openCallRef.current === panelCall
+              }
             />
           ) : selected != null ? (
             <EmptyNote note="This person isn't on the call list: no usable number, or they can't be contacted." />
