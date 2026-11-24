@@ -126,9 +126,11 @@ export function offerAnchorOf(cfg: { offerAnchor?: unknown }): OfferAnchor {
   return cfg.offerAnchor === "prefer-product" ? "prefer-product" : "either";
 }
 
-/** Only the exact string `problem` turns it on; anything else reads as `offer`. */
+/** Only the exact strings `problem` and `mixed` turn it on; anything else reads as `offer`. */
 export function messageOpeningOf(cfg: { messageOpening?: unknown }): MessageOpening {
-  return cfg.messageOpening === "problem" ? "problem" : "offer";
+  return cfg.messageOpening === "problem" || cfg.messageOpening === "mixed"
+    ? cfg.messageOpening
+    : "offer";
 }
 
 /** One of `LLM_REASONING_EFFORTS`; anything else is undefined, the default behaviour. */

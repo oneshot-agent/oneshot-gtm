@@ -935,6 +935,11 @@ export class Ledger {
     return this.drafts.draftUsageByFormat();
   }
 
+  /** Intro email draft outcomes by how they open (see ledger-drafts.ts). */
+  draftUsageByOpening(): Record<string, Record<string, DraftUsage>> {
+    return this.drafts.draftUsageByOpening();
+  }
+
   /** @see ledger-inbox.ts#InboxStore.upsertInboxDraft */
   upsertInboxDraft(input: {
     member?: string | null;

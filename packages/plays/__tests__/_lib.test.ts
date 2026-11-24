@@ -414,6 +414,12 @@ describe("openerStem", () => {
     expect(openerStem("Heya the ramp stalled?")).toBe("heya the");
   });
 
+  it("skips a bet lead, an opening shape rather than a habit", () => {
+    expect(openerStem("Hey Sam,\n\nI'd bet plans go quiet after the visit.")).toBe("plans go");
+    expect(openerStem("Hey Sam,\n\nI bet that claims sit for weeks.")).toBe("claims sit");
+    expect(openerStem("Hey Sam,\n\nI'd like to book every plan.")).toBe("i d");
+  });
+
   it("normalizes case and punctuation, and survives an empty body", () => {
     expect(openerStem("  STILL, curious...  whether\n")).toBe("still curious");
     expect(openerStem("\n\n")).toBe("");

@@ -1088,4 +1088,45 @@ describe("messageOpening on an email follow-up", () => {
     expect(out.body.startsWith(lead)).toBe(true);
     expect(out.flags).toEqual([]);
   });
+  it("mixed: each prospect's follow-up asks for the shape assigned to its step", async () => {
+    cfg["messageOpening"] = "mixed";
+    const { openingLine, openingShapeFor } = await import("../src/_opening.ts");
+    const seen = new Set<string>();
+    for (let i = 0; i < 8; i++) {
+      llm.inputs = new Map();
+      const { id } = preOfferSequence();
+      await preview(id);
+      const input = llm.inputs.get("seq-followup")![0]!;
+      const email = ledger.getProspectById(id)!.email!;
+      const expected = openingLine(openingShapeFor(cfg, email, 1));
+      const found = input.match(/\nOPENING: \w+\n/)?.[0]?.trim() ?? null;
+      expect(found).toBe(expected);
+      seen.add(String(found));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("mixed: the rotation counts emails, so a call between two emails does not move it", async () => {
+    const { priorEmailCount } = await import("../src/_cadence.ts");
+    const { id } = preOfferSequence();
+    const prospect = ledger.getProspectById(id)!;
+    expect(priorEmailCount({ prospect, stepIndex: 1 }, PLAY)).toBe(1);
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 1,
+      channel: "call",
+      status: "sent",
+    });
+    expect(priorEmailCount({ prospect, stepIndex: 2 }, PLAY)).toBe(1);
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: PLAY,
+      stepIndex: 2,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s", body: "b" },
+    });
+    expect(priorEmailCount({ prospect, stepIndex: 3 }, PLAY)).toBe(2);
+  });
 });

@@ -612,6 +612,9 @@ describe("POST /api/setup — offerJudge", () => {
     expect(await post({ messageOpening: "offer" })).toEqual({ status: 200 });
     expect(savedCfg().messageOpening).toBe("offer");
     saveConfigMock.mockClear();
+    expect(await post({ messageOpening: "mixed" })).toEqual({ status: 200 });
+    expect(savedCfg().messageOpening).toBe("mixed");
+    saveConfigMock.mockClear();
     expect(await post({ messageOpening: null })).toEqual({ status: 200 });
     expect(savedCfg().messageOpening).toBeUndefined();
     saveConfigMock.mockClear();

@@ -117,7 +117,7 @@ const ANGLE_ARM_SALT = "angle-arm:";
  * only shifts it by a length-dependent constant and two salted splits of the
  * same email stay correlated; this mix makes the salted buckets independent.
  */
-function mix32(h: number): number {
+export function mix32(h: number): number {
   let x = h >>> 0;
   x ^= x >>> 16;
   x = Math.imul(x, 0x85ebca6b) >>> 0;

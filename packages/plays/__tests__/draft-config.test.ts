@@ -77,7 +77,7 @@ describe("draftConfigKey", () => {
     expect(seen.size).toBe(changes.length + 1);
   });
 
-  it("reads messageOpening on email only, and only `problem` changes the key", () => {
+  it("reads messageOpening on email only, and only `problem` or `mixed` changes the key", () => {
     const linkedin: DraftSurface = { channel: "linkedin", stage: "follow_up" };
     const intro: DraftSurface = { channel: "email", stage: "first_touch" };
     const offer = { ...base, messageOpening: "offer" } as Cfg;
@@ -87,6 +87,10 @@ describe("draftConfigKey", () => {
     expect(key(problem)).not.toBe(key(base));
     expect(key(problem, intro)).not.toBe(key(base, intro));
     expect(key(problem, linkedin)).toBe(key(base, linkedin));
+    const mixed = { ...base, messageOpening: "mixed" } as Cfg;
+    expect(key(mixed)).not.toBe(key(base));
+    expect(key(mixed)).not.toBe(key(problem));
+    expect(key(mixed, linkedin)).toBe(key(base, linkedin));
   });
 
   it("reads an unset greeting and subject case as Hi and sentence case", () => {

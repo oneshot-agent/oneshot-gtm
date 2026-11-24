@@ -266,3 +266,17 @@ it("credits draft replies through index lookups after upgrading, never a scan pe
     ledger.close();
   }
 });
+
+it("splits intro outcomes by opening through index lookups after upgrading", () => {
+  const ledger = existingLedger();
+  try {
+    const query = vi.spyOn(raw(ledger), "query");
+    ledger.draftUsageByOpening();
+    const sql = query.mock.calls.map(([s]) => s).find((s) => s.includes("opening_key"))!;
+    const details = plan(raw(ledger), sql);
+    expect(details).toMatch(/SEARCH d2 USING (COVERING )?INDEX/);
+    expect(details).not.toMatch(/^SCAN (d2|p)$/m);
+  } finally {
+    ledger.close();
+  }
+});

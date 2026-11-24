@@ -910,3 +910,57 @@ describe("channel", () => {
     ]);
   });
 });
+
+describe("draft versions by opening", () => {
+  it("records how each email version opens and splits intro outcomes by it", () => {
+    const play = "design-partner-loi";
+    const q1 = enqueue("o1@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({
+        body: "Hey Sam,\n\nOnly 47% of plans finish. I can book them.",
+        sent: true,
+        dryRun: false,
+      }),
+      sentBy: "human",
+    });
+    const q2 = enqueue("o2@x.dev", play);
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ body: "Hey Ana,\n\nDo plans go quiet? I can book them." }),
+    });
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ body: "Hey Ana,\n\nI can book every open plan. Worth it?" }),
+      discardReason: "regenerate",
+    });
+    const p1 = ledger.upsertProspect({ name: "O1", email: "o1@x.dev", company: null, source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: p1,
+      playName: play,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.markLatestStepReplied({ prospectId: p1, playName: play });
+
+    const usage = ledger.draftUsageByOpening()[play]!;
+    expect(Object.keys(usage).toSorted()).toEqual(["figure", "offer", "question"]);
+    expect(usage["figure"]).toMatchObject({ sent: 1, replied: 1 });
+    expect(usage["question"]).toMatchObject({ regenerated: 1, sent: 0 });
+    expect(usage["offer"]).toMatchObject({ open: 1 });
+  });
+
+  it("leaves non-email versions without an opening", () => {
+    const id = ledger.enqueueTarget({
+      playName: "x-amplify-dm",
+      payload: { handle: "sam" },
+      dedupeKey: "x:sam",
+      source: "test",
+      channel: "x",
+    });
+    ledger.setQueueDraft({ id: id!, draft: draft({ body: "Do you ship agents?" }) });
+    const rows = rawDb().query("SELECT channel, opening_key FROM draft_versions").all();
+    expect(rows).toEqual([{ channel: "x", opening_key: null }]);
+  });
+});
