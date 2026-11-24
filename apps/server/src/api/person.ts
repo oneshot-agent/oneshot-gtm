@@ -114,7 +114,11 @@ export function personRoute(req: Request): Response {
   // Rows linked by id and rows that name their email, as a row resolves to
   // a prospect; the opened row is added if neither matched it.
   const rows = prospect ? ledger.listQueueRowsForProspect(prospect.id, prospect.email) : [];
-  if (row && !rows.some((r) => r.id === row.id)) rows.push(row);
+  const opened = row;
+  if (opened && !rows.some((r) => r.id === opened.id)) rows.push(opened);
+  // A prospect with no linked row reads research from, and researches for,
+  // the newest row that names their email. An opened row always stays.
+  row ??= rows[0] ?? null;
 
   const body: PersonView = {
     prospect: prospect

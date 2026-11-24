@@ -221,6 +221,10 @@ describe("GET /api/person", () => {
       .map((t) => t.playName)
       .toSorted();
     expect(surfaced).toEqual(["job-change", "show-hn"]);
+    // No linked row: the newest email-matched one is the row Research reads for.
+    const newest = ledger.listQueueRowsForProspect(pid, "lee@acme.test")[0];
+    expect(newest?.play_name).toBe("job-change");
+    expect(body.queueId).toBe(newest?.id);
   });
 
   it("flags a bounce on the address the row sends to, even when the prospect's differs", async () => {
