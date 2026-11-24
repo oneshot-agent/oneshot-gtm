@@ -18,13 +18,11 @@ export function openingPool(
 }
 
 /**
- * The opening an email to `email` is asked for at `stepIndex` (0 = the first
- * email). `offer` (unset) always opens on the offer and `problem` always on a
- * bet. `mixed` gives each prospect a stable arm, and each follow-up moves to
- * the next shape so no reader gets the same opening twice in a row.
- * `emailIndex` counts emails, not cadence steps: a call or letter between
- * two emails does not move the rotation. `briefText` is the brief the writer
- * is given, so a figure is only asked for when it can see one.
+ * The opening asked for on the `emailIndex`th email to `email` (0 = first).
+ * `offer` (unset) opens on the offer, `problem` on a bet. `mixed` gives each
+ * prospect a stable arm and moves one shape per email, never per cadence
+ * step, so no reader gets one opening twice in a row. `briefText` is the
+ * brief the writer sees: a figure is only asked for when it holds one.
  */
 export function openingShapeFor(
   cfg: { messageOpening?: unknown; productBrief?: unknown },
