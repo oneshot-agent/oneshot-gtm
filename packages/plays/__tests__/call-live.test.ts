@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../core/src/ledger.ts";
-import { getSharedDb, type BridgeCallState, type CallBridge } from "@oneshot-gtm/core";
+import {
+  CallBridgeError,
+  getSharedDb,
+  type BridgeCallState,
+  type CallBridge,
+} from "@oneshot-gtm/core";
 
 // The live bar's read (`liveCalls`) and the one-call-at-a-time guard on
 // `startBridgedCall`, over a real in-memory ledger and a fake provider.
@@ -305,5 +310,45 @@ describe("Stop recording", () => {
       status: 409,
     });
     expect(bridge.setRecordingPaused).not.toHaveBeenCalled();
+  });
+
+  it("applies a quick Stop then Record in the order pressed, even when Stop is slow", async () => {
+    const id = recorded();
+    const bridge = fakeBridge(connected);
+    const order: boolean[] = [];
+    let releaseStop!: () => void;
+    bridge.setRecordingPaused = vi.fn(async (_sid: string, paused: boolean) => {
+      if (paused) await new Promise<void>((r) => (releaseStop = r));
+      order.push(paused);
+    });
+    const stop = setBridgedRecordingPaused(id, true, { bridge });
+    const record = setBridgedRecordingPaused(id, false, { bridge });
+    await new Promise((r) => setTimeout(r, 5));
+    releaseStop();
+    await stop;
+    expect((await record).recordingPaused).toBeUndefined();
+    expect(order).toEqual([true, false]);
+    expect(ledger.getCall(id)?.recordingPaused).toBeUndefined();
+  });
+
+  it("sends the next press when Twilio did not confirm the last one", async () => {
+    const id = recorded();
+    const bridge = fakeBridge(connected);
+    bridge.setRecordingPaused = vi
+      .fn()
+      .mockRejectedValueOnce(new CallBridgeError("timed out", 502, undefined, true))
+      .mockResolvedValue(undefined);
+    await expect(setBridgedRecordingPaused(id, true, { bridge })).rejects.toMatchObject({
+      status: 502,
+      message: expect.stringMatching(/did not confirm/),
+    });
+    // Nothing recorded as stopped: the ledger still says recording.
+    expect(ledger.getCall(id)?.recordingPaused).toBeUndefined();
+    // Record now: the ledger already reads recording, but Twilio may have paused, so it is sent.
+    await setBridgedRecordingPaused(id, false, { bridge });
+    expect(bridge.setRecordingPaused).toHaveBeenCalledTimes(2);
+    // Confirmed now: a second Record has nothing to send.
+    await setBridgedRecordingPaused(id, false, { bridge });
+    expect(bridge.setRecordingPaused).toHaveBeenCalledTimes(2);
   });
 });

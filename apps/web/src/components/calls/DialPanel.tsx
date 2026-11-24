@@ -281,7 +281,9 @@ export function DialPanel({
   const recordMode: CallRecordMode = callsMe.data?.record ?? false;
   const startRecording = useMutation({
     mutationFn: (id: number) => api.recordCall(id),
-    onSuccess: (c) => {
+    onSuccess: async (c) => {
+      // A poll that read the call before this must not write the old state back.
+      await qc.cancelQueries({ queryKey: callKey(c.id), exact: true });
       qc.setQueryData(callKey(c.id), c);
       void qc.invalidateQueries({ queryKey: liveCallsKey });
     },
@@ -289,7 +291,9 @@ export function DialPanel({
   });
   const stopRecording = useMutation({
     mutationFn: (id: number) => api.stopRecording(id),
-    onSuccess: (c) => {
+    onSuccess: async (c) => {
+      // A poll that read the call before this must not write the old state back.
+      await qc.cancelQueries({ queryKey: callKey(c.id), exact: true });
       qc.setQueryData(callKey(c.id), c);
       void qc.invalidateQueries({ queryKey: liveCallsKey });
     },

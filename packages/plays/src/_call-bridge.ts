@@ -938,12 +938,35 @@ export async function setBridgedRecordingPaused(
   paused: boolean,
   opts: { bridge?: CallBridge | null } = {},
 ): Promise<CallRecordView> {
+  // One stop or resume per call at a time, in the order pressed: a slow
+  // Stop must never land after a Record and mark the call stopped.
+  const prev = recordingOps.get(callId) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => applyRecordingPaused(callId, paused, opts));
+  const tail = run.catch(() => undefined);
+  recordingOps.set(callId, tail);
+  void tail.then(() => {
+    if (recordingOps.get(callId) === tail) recordingOps.delete(callId);
+  });
+  return run;
+}
+
+/** Stop/resume requests per call, chained so they reach the provider and the ledger in order. */
+const recordingOps = new Map<number, Promise<unknown>>();
+/** Calls whose last stop/resume the provider may or may not have applied: the next press is sent. */
+const recordingUnsure = new Set<number>();
+
+async function applyRecordingPaused(
+  callId: number,
+  paused: boolean,
+  opts: { bridge?: CallBridge | null },
+): Promise<CallRecordView> {
   const ledger = getLedger();
   const call = ledger.getBridgedCall(callId);
   if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
   if (call.view.transcriptStatus !== "pending" || call.discardPending)
     throw new CallBridgeRequestError("nothing is being recorded on this call", 409);
-  if ((call.view.recordingPaused === true) === paused) return call.view;
+  if ((call.view.recordingPaused === true) === paused && !recordingUnsure.has(callId))
+    return call.view;
   if (call.view.status !== "connected")
     throw new CallBridgeRequestError(
       `${paused ? "Stop recording" : "Record"} works only while you are connected to them`,
@@ -954,8 +977,16 @@ export async function setBridgedRecordingPaused(
   try {
     await bridge.setRecordingPaused(call.callSid, paused);
   } catch (err) {
+    if (err instanceof CallBridgeError && err.uncertain) {
+      recordingUnsure.add(callId);
+      throw new CallBridgeRequestError(
+        `Twilio did not confirm the recording ${paused ? "stopped" : "started again"}; press it again`,
+        502,
+      );
+    }
     throw providerError(err);
   }
+  recordingUnsure.delete(callId);
   ledger.updateBridgedCall(callId, { recordingPaused: paused });
   logEvent(paused ? "call.recording_stopped" : "call.recording_resumed", { call_id: callId });
   return ledger.getCall(callId)!;
