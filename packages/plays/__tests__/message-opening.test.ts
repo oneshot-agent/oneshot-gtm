@@ -213,3 +213,13 @@ describe("messageOpening: mixed", () => {
     );
   });
 });
+
+describe("the question opening rule", () => {
+  it("ties the question to the offer and quotes no example line to copy", () => {
+    const rule = loadPrompt("_offer-first")
+      .split("\n")
+      .find((l) => l.startsWith("**Question opening"))!;
+    expect(rule).toContain("the problem the `OFFER` solves");
+    expect(rule).not.toMatch(/\("[^"]+\?"\)/);
+  });
+});
