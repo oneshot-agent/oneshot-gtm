@@ -33,6 +33,9 @@ export function LiveCallBar() {
   return <LiveCallRows calls={calls} record={data.record} now={now} />;
 }
 
+/** Your ended calls shown as rows; the rest are counted. */
+const ENDED_SHOWN = 3;
+
 /** The bar's rows, apart from the poll so it renders from data alone. */
 export function LiveCallRows({
   calls,
@@ -44,15 +47,27 @@ export function LiveCallRows({
   now: number;
 }) {
   if (calls.length === 0) return null;
+  // Every live call shows; of your ended ones waiting on an outcome, the
+  // newest few do, and the rest are counted with a way to the Calls page.
+  const live = calls.filter((c) => isLive(c));
+  const ended = calls.filter((c) => !isLive(c));
+  const more = ended.length - ENDED_SHOWN;
   return (
     <div
       role="status"
       aria-label="calls"
       className="divide-y divide-ink-rule border-b border-ink-rule bg-ink-bg-deep/70 font-mono text-[11px] text-ink-muted ln-mono"
     >
-      {calls.map((c) => (
+      {[...live, ...ended.slice(0, ENDED_SHOWN)].map((c) => (
         <LiveCallRow key={c.id} call={c} record={record} now={now} />
       ))}
+      {more > 0 && (
+        <div className="px-6 py-1.5">
+          <Link to="/calls" className="text-ink-cream underline-offset-2 hover:underline">
+            +{more} more {more === 1 ? "call" : "calls"} to log
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

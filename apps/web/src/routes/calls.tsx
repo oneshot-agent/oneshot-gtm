@@ -57,14 +57,22 @@ function CallsPage() {
   const { prospect, play, call } = Route.useSearch();
   const navigate = Route.useNavigate();
   const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
-  const open = (row: RowKey | null) =>
+  const open = (row: RowKey | null) => {
+    // Reopening the row already open keeps the call it shows, so its panel
+    // (and the note typed in it) stays; another row starts fresh.
+    const same = row != null && row.prospectId === prospect && (row.playName ?? undefined) === play;
     void navigate({
       search:
         row == null
           ? {}
-          : { prospect: row.prospectId, ...(row.playName ? { play: row.playName } : {}) },
+          : {
+              prospect: row.prospectId,
+              ...(row.playName ? { play: row.playName } : {}),
+              ...(same && call ? { call } : {}),
+            },
       replace: true,
     });
+  };
   return (
     <CallsView
       data={query.data}

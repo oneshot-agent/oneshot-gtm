@@ -183,7 +183,8 @@ describe("my unlogged calls on a busy team", () => {
       bridge: fakeBridge(connected),
       now: NOW,
     });
-    expect(theirs.calls).toHaveLength(3);
+    // Every unlogged one stays on their bar until it is logged, not only the newest few.
+    expect(theirs.calls).toHaveLength(5);
     expect(theirs.calls.every((c) => c.mine)).toBe(true);
   });
 });

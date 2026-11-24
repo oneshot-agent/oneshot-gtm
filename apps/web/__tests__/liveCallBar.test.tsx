@@ -107,6 +107,16 @@ describe("the live call bar", () => {
     expect(html).toContain("Hang up");
   });
 
+  it("shows a few of your unlogged calls and counts the rest, linking to Calls", () => {
+    const ended = (id: number) =>
+      live({ id, status: "ended", durationSec: 60, transcriptStatus: "ready", playName: null });
+    const html = bar(on([live({ id: 1 }), ended(2), ended(3), ended(4), ended(5), ended(6)]));
+    expect(html.match(/Log outcome/g)).toHaveLength(3);
+    expect(html).toContain("Hang up");
+    expect(html).toContain("+2 more calls to log");
+    expect(html).toMatch(/href="\/calls\??"/);
+  });
+
   it("says when your call isn't recorded, and Log outcome once it ended", () => {
     expect(bar(on([live({ transcriptStatus: "none" })]))).toContain("Not recording · ask first");
     client.clear();

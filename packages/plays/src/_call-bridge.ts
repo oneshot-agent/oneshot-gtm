@@ -538,8 +538,14 @@ export function assertCallActor(
 
 /** Ended calls without an outcome stay on the member's bar this long, as long as a transcript may take. */
 const OWN_ENDED_MS = TRANSCRIPT_GIVE_UP_MS;
-/** The member's own ended calls the bar shows at most. */
-const OWN_ENDED_LIMIT = 3;
+/**
+ * The member's own unlogged ended calls the bar reads at most: every one
+ * stays until logged (the bar shows a few and counts the rest); this only
+ * bounds a runaway list.
+ */
+const OWN_ENDED_LIMIT = 100;
+/** The member's own calls read from the provider per poll. */
+const OWN_READ_LIMIT = 4;
 
 /**
  * The live bar for one member: every bridged call in the workspace not over
@@ -565,8 +571,10 @@ export async function liveCalls(
   const mine = (m: string | null) => memberKeyOf(m) === me;
   const bridge = bridgeFor(opts);
   const own = read().filter((r) => mine(r.view.member));
+  // Read from the provider: live calls, and the newest few ended ones whose
+  // transcript is still on its way. Older ones are left to the sweep.
   if (bridge)
-    for (const r of own.slice(0, OWN_ENDED_LIMIT + 1)) {
+    for (const r of own.slice(0, OWN_READ_LIMIT)) {
       await refreshBridgedCall(r.view.id, { bridge, now }).catch((err: unknown) =>
         logEvent(
           "call.live_read_failed",
@@ -577,9 +585,7 @@ export async function liveCalls(
     }
   const rows = read();
   const live = rows.filter((r) => !TERMINAL.has(r.view.status ?? ""));
-  const ended = rows
-    .filter((r) => TERMINAL.has(r.view.status ?? "") && mine(r.view.member))
-    .slice(0, OWN_ENDED_LIMIT);
+  const ended = rows.filter((r) => TERMINAL.has(r.view.status ?? "") && mine(r.view.member));
   // No transcript body: the bar polls every few seconds and never shows one.
   const out: LiveCallView[] = [];
   for (const r of [...live, ...ended]) {
