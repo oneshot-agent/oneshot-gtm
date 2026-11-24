@@ -36,6 +36,7 @@ import {
   sqliteToIso,
   type DraftDiscardReason,
   type QueueListFilters,
+  type ProspectRecord,
   type QueueOfferSkipFilter,
   type QueueRow,
   type QueueSearchOpts,
@@ -578,7 +579,10 @@ function payloadEmail(row: QueueRow): string | null {
 }
 
 /** The prospect a queue row resolves to: its FK, else the payload's email. */
-function resolveProspectId(ledger: ReturnType<typeof getLedger>, row: QueueRow): number | null {
+export function resolveProspectId(
+  ledger: ReturnType<typeof getLedger>,
+  row: QueueRow,
+): number | null {
   if (row.prospect_id != null) return row.prospect_id;
   const email = payloadEmail(row);
   return email ? (ledger.findProspectByEmail(email)?.id ?? null) : null;
@@ -607,7 +611,7 @@ function hasReplied(history: {
  * (issue #929), with the attribution a per-event read makes, so two events
  * on the same play|step (a re-run cadence) each keep their own check.
  */
-function deliveriesForEvents(
+export function deliveriesForEvents(
   ledger: ReturnType<typeof getLedger>,
   events: ReadonlyArray<{ id: number }>,
 ): Map<number, SendDeliveryView> {
@@ -618,6 +622,34 @@ function deliveriesForEvents(
     // A ledger without the delivery table reads as no checks.
     return new Map();
   }
+}
+
+/**
+ * Whether this person may be contacted, for the /prospects drawer and the
+ * person pane alike. The prospect record wins; without one, the row's payload
+ * email and the gate's verdict on the payload stand in. `history` is the
+ * prospect's full history: `sequenceEvents` is every non-queued step, a
+ * superset of the conversation view's, so a `replied` step is in it.
+ */
+export function contactFlags(
+  ledger: ReturnType<typeof getLedger>,
+  row: QueueRow | null,
+  prospect: ProspectRecord | null,
+  history: Parameters<typeof hasReplied>[0],
+): QueueRowDetail["flags"] {
+  const flagEmail = prospect?.email ?? (row ? payloadEmail(row) : null);
+  const contactSuppressed = flagEmail ? ledger.contactSuppressionFor(flagEmail) : null;
+  return {
+    replied: prospect ? hasReplied(history) : false,
+    bounced: flagEmail ? ledger.suppressionFor(flagEmail) != null : false,
+    contactSuppressed: contactSuppressed?.kind ?? null,
+    breakupHold: flagEmail ? ledger.breakupReviveHoldFor(flagEmail) != null : false,
+    // A row that was never emailed only carries the gate's verdict on its payload.
+    icpReject:
+      prospect != null
+        ? prospect.icp_verdict === "reject"
+        : row != null && payloadString(row, "icpVerdict") === "reject",
+  };
 }
 
 /**
@@ -632,7 +664,6 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
 
-  const email = payloadEmail(row);
   const prospectId = resolveProspectId(ledger, row);
   const prospect = prospectId != null ? ledger.getProspectById(prospectId) : null;
   const linkedBy = row.prospect_id != null ? "prospect_id" : "email";
@@ -658,15 +689,13 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
   const replies = prospect ? ledger.listInboxRepliesForProspect(prospect.id) : [];
   const channelEvents = prospect ? ledger.listChannelEventsForProspect(prospect.id) : [];
   const timeline = buildProspectTimeline({
-    row,
+    rows: [row],
     sequenceEvents,
     replies,
     channelEvents,
     outcomes: prospect ? ledger.listDealOutcomesForProspect(prospect.id) : [],
     deliveries,
   });
-  const flagEmail = prospect?.email ?? email;
-  const contactSuppressed = flagEmail ? ledger.contactSuppressionFor(flagEmail) : null;
   const body: QueueRowDetail = {
     row: browseRow,
     prospect:
@@ -679,20 +708,7 @@ export function queueRowDetailRoute(req: Request, params: Record<string, string>
         : null,
     cadences,
     timeline,
-    flags: {
-      // From the history above: `sequenceEvents` is every non-queued step,
-      // a superset of the conversation view's, so a `replied` step is in it.
-      replied: prospect ? hasReplied({ replies, channelEvents, sequenceEvents }) : false,
-      bounced: flagEmail ? ledger.suppressionFor(flagEmail) != null : false,
-      contactSuppressed: contactSuppressed?.kind ?? null,
-      breakupHold: flagEmail ? ledger.breakupReviveHoldFor(flagEmail) != null : false,
-      // The prospect record wins; a row that was never emailed only carries
-      // the gate's verdict on its payload.
-      icpReject:
-        prospect != null
-          ? prospect.icp_verdict === "reject"
-          : payloadString(row, "icpVerdict") === "reject",
-    },
+    flags: contactFlags(ledger, row, prospect, { replies, channelEvents, sequenceEvents }),
   };
   return jsonResponse(body, 200, req);
 }

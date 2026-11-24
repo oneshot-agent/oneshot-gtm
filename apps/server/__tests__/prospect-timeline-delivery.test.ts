@@ -41,7 +41,7 @@ const dup: SendDeliveryView = {
 describe("buildProspectTimeline delivery checks", () => {
   it("adds a mismatch as its own entry with the copy times", () => {
     const out = buildProspectTimeline({
-      row,
+      rows: [row],
       sequenceEvents: [event as never],
       replies: [],
       channelEvents: [],
@@ -56,7 +56,7 @@ describe("buildProspectTimeline delivery checks", () => {
   it("a clean check adds nothing", () => {
     expect(deliveryNote({ ...dup, status: "ok", observed: 1 })).toBeNull();
     const out = buildProspectTimeline({
-      row,
+      rows: [row],
       sequenceEvents: [event as never],
       replies: [],
       channelEvents: [],

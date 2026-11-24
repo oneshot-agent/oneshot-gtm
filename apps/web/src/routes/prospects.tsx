@@ -5,7 +5,6 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   describeDecision,
-  type CadenceView,
   type DecidedByFilter,
   type ProspectBrowseRow,
   type ProspectSortKey,
@@ -39,7 +38,7 @@ import {
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { suggestRejectReason, type RejectReasonSource } from "../lib/rejectReason.ts";
 import { RejectReasonFields } from "../components/queue/RejectReasonFields.tsx";
-import { PersonDossier } from "../components/queue/PersonDossier.tsx";
+import { PersonPane } from "../components/person/PersonPane.tsx";
 import { ProductResearch } from "../components/queue/ProductResearch.tsx";
 import { ProspectOffer } from "../components/queue/ProspectOffer.tsx";
 import { queueEvidence } from "../lib/queueEvidence.ts";
@@ -495,6 +494,7 @@ function DetailPanel({ id }: { id: number }) {
     void qc.invalidateQueries({ queryKey: ["prospects"] });
     void qc.invalidateQueries({ queryKey: ["queue"] });
     void qc.invalidateQueries({ queryKey: ["home"] });
+    void qc.invalidateQueries({ queryKey: ["person"] });
   };
   const approve = useMutation({
     // A plain approve records no fit judgment; "as fit" is the explicit choice (#813).
@@ -530,23 +530,8 @@ function DetailPanel({ id }: { id: number }) {
     row?.prospect?.icpVerdictReason ?? payloadString(row?.payload, "icpVerdictReason");
 
   const fitReason = row ? fitReasonFor(row.payload) : null;
-  const title = d?.prospect?.title ?? titleFor(row?.payload);
-  const company = d?.prospect?.company ?? companyFor(row?.payload);
-  // The prospect column is polymorphic (LinkedIn, X or GitHub) and written
-  // unvalidated; run it through the same guard as the payload so a stored
-  // `javascript:` value can never become an href.
-  const linkedinUrl =
-    linkedinUrlFor({ linkedinUrl: d?.prospect?.linkedinUrl }) ?? linkedinUrlFor(row?.payload);
   const caseRows: CaseListRow[] = row
     ? [
-        {
-          key: "who",
-          value:
-            [title, company ? maskDeep(company, masked, "company") : null]
-              .filter(Boolean)
-              .join(" · ") || "no title or company on record",
-        },
-        ...(linkedinUrl ? [{ key: "linkedin", value: "profile", href: linkedinUrl }] : []),
         ...(icpVerdict || icpReason
           ? [
               {
@@ -698,14 +683,6 @@ function DetailPanel({ id }: { id: number }) {
             {row.decidedAt && (
               <span className="font-mono text-[11px] text-ink-faint">{timeAgo(row.decidedAt)}</span>
             )}
-            {d.flags.icpReject && <Badge tone="blocked">off-icp</Badge>}
-            {d.flags.bounced && <Badge tone="blocked">hard bounce</Badge>}
-            {d.flags.contactSuppressed && (
-              <Badge tone="blocked">
-                {d.flags.contactSuppressed === "unsubscribe" ? "unsubscribed" : "mailbox gone"}
-              </Badge>
-            )}
-            {d.flags.breakupHold && <Badge tone="blocked">do not contact</Badge>}
           </div>
           {/* Freeform: an auto-reject reason routinely names the person and
               their company, which structured masking cannot reach, so under
@@ -740,48 +717,9 @@ function DetailPanel({ id }: { id: number }) {
           <ProspectOffer rowId={row.id} payload={row.payload} editable={false} />
           <Rule />
           <CaseList rows={caseRows} />
-          <PersonDossier rowId={row.id} />
-          <ProductResearch payload={row.payload} />
-          {d.cadences.length > 0 && (
-            <>
-              <Rule />
-              <div>
-                <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                  cadences
-                </div>
-                <ul className="flex flex-col gap-1 text-[12px] text-ink-cream-2">
-                  {d.cadences.map((c) => (
-                    <CadenceLine key={`${c.prospectId}-${c.playName}`} c={c} />
-                  ))}
-                </ul>
-              </div>
-            </>
-          )}
           <Rule />
-          <div>
-            <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-              history
-            </div>
-            <ol className="flex flex-col gap-1">
-              {d.timeline.map((ev) => (
-                <li
-                  key={`${ev.at}|${ev.kind}|${ev.label}`}
-                  className="flex items-baseline gap-3 text-[12px] leading-4"
-                >
-                  <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
-                    {timeAgo(ev.at)}
-                  </span>
-                  <span className="shrink-0 whitespace-nowrap text-ink-cream-2">{ev.label}</span>
-                  {ev.playName && ev.playName !== row.playName && (
-                    <span className="font-mono text-[11px] text-ink-faint">{ev.playName}</span>
-                  )}
-                  {ev.detail && !masked && (
-                    <span className="min-w-0 truncate text-ink-muted">{ev.detail}</span>
-                  )}
-                </li>
-              ))}
-            </ol>
-          </div>
+          <PersonPane queueId={row.id} />
+          <ProductResearch payload={row.payload} />
           <PayloadJson value={maskDeep(row.payload, masked)} />
         </CaseSection>
       }
@@ -816,24 +754,6 @@ function DetailPanel({ id }: { id: number }) {
         )
       }
     />
-  );
-}
-
-function CadenceLine({ c }: { c: CadenceView }) {
-  return (
-    <li className="flex items-center gap-2">
-      <span>{c.playName}</span>
-      <Badge
-        tone={c.status === "replied" ? "receipt" : c.status === "active" ? "signal" : "neutral"}
-      >
-        {c.status}
-      </Badge>
-      <span className="font-mono text-[11px] text-ink-faint">
-        step {Math.min(c.currentStep + 1, c.followupCount + 1)}/{c.followupCount + 1}
-        {c.nextDueAt && c.status === "active" ? ` · next ${timeAgo(c.nextDueAt)}` : ""}
-        {c.stopReason ? ` · ${c.stopReason.replace(/_/g, " ")}` : ""}
-      </span>
-    </li>
   );
 }
 

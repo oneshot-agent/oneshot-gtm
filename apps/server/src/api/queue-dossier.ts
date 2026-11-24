@@ -38,13 +38,19 @@ function strings(v: unknown): string[] {
   return out;
 }
 
+/** One set of inputs research may have been bought with. */
+export interface ResearchCandidate {
+  url: string | null;
+  email: string | null;
+}
+
 /**
  * The full cached `deepResearchPerson` result for this row, looked up by the
  * same inputs research buys with. Read past the purchase expiry: this is for
  * display, and a stale dossier with its date beats none.
  */
 function cachedResearch(
-  candidates: { url: string | null; email: string | null }[],
+  candidates: ResearchCandidate[],
 ): { result: JsonRecord; fetchedAt: string } | null {
   for (const c of candidates) {
     for (const input of [{ socialMediaUrl: c.url ?? undefined }, { email: c.email ?? undefined }]) {
@@ -131,14 +137,23 @@ function experienceFrom(orgs: ReturnType<typeof organizationsFromResearch>): Dos
   return [...views.filter((v) => v.current), ...views.filter((v) => !v.current)];
 }
 
-/** The full dossier behind a queue row. Read-only: never buys research or a newsfeed. */
-export function buildQueueDossier(payload: unknown): QueueDossierView {
+/**
+ * The full dossier behind a queue row. Read-only: never buys research or a
+ * newsfeed. `fallback` is tried after the row's own inputs: the person pane
+ * passes the prospect's LinkedIn URL and email, so a person with no queue row
+ * (payload null) still finds research bought for them.
+ */
+export function buildQueueDossier(
+  payload: unknown,
+  fallback: ResearchCandidate[] = [],
+): QueueDossierView {
   const p = record(payload) ?? {};
   const summary = record(p["personResearch"]);
   const seed = record(summary?.["seed"]);
   const candidates = [
     { url: str(seed?.["url"]), email: str(seed?.["email"]) },
     { url: str(p["linkedinUrl"]) ?? str(summary?.["linkedinUrl"]), email: str(p["email"]) },
+    ...fallback,
   ];
   const full = cachedResearch(candidates);
   const result = full?.result ?? null;

@@ -754,6 +754,13 @@ export class QueueStore {
     );
   }
 
+  /** Every queue row linked to a prospect, newest first (same order as `getQueueRowForProspect`). */
+  listQueueRowsForProspect(prospectId: number): QueueRow[] {
+    return this.db
+      .query("SELECT * FROM target_queue WHERE prospect_id = ? ORDER BY found_at DESC, id DESC")
+      .all(prospectId) as QueueRow[];
+  }
+
   /**
    * The two halves of a search filter. `inner` only needs the queue row
    * (status, play, decided_by), unqualified so it applies to `target_queue`

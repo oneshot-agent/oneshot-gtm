@@ -32,6 +32,7 @@ export function ReadOnOpen({ row }: { row: QueueRowView }) {
     // /prospects detail read the same research.
     void qc.invalidateQueries({ queryKey: ["queue"] });
     void qc.invalidateQueries({ queryKey: ["queue-dossier", id] });
+    void qc.invalidateQueries({ queryKey: ["person"] });
     void qc.invalidateQueries({ queryKey: ["prospects"] });
     if (redrafted) void qc.invalidateQueries({ queryKey: ["queue-drafts", id] });
   };

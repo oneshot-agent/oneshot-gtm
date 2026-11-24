@@ -2509,6 +2509,11 @@ export class Ledger {
     return this.queue.getQueueRowForProspect(prospectId);
   }
 
+  /** @see ledger-queue.ts#QueueStore.listQueueRowsForProspect */
+  listQueueRowsForProspect(prospectId: number): QueueRow[] {
+    return this.queue.listQueueRowsForProspect(prospectId);
+  }
+
   /** @see ledger-queue.ts#QueueStore.searchQueue */
   searchQueue(opts: QueueSearchOpts): { rows: QueueSearchRow[]; total: number | null } {
     return this.queue.searchQueue(opts);

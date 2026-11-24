@@ -1,11 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
-import { useState } from "react";
 import type { DossierPostView, QueueDossierView } from "@oneshot-gtm/shared-types";
-import { api } from "../../api/client.ts";
 import { timeAgo } from "../../lib/cn.ts";
-import { usePrivacy } from "../../lib/privacy.tsx";
-import { Disclosure } from "../ledger/CaseList.tsx";
 
 /** Posts shown before the list stops; the newest carry the signal. */
 const POST_CAP = 10;
@@ -78,7 +73,7 @@ function Post({ post, index }: { post: DossierPostView; index: number }) {
   );
 }
 
-/** The dossier body; exported for tests. */
+/** Everything the research cache holds on a person; the person pane shows it behind "Full dossier". */
 export function DossierBody({ dossier }: { dossier: QueueDossierView }) {
   const { person, experience, education, company, posts } = dossier;
   const linkedin = safeUrl(person.linkedinUrl);
@@ -217,37 +212,5 @@ export function DossierBody({ dossier }: { dossier: QueueDossierView }) {
         </p>
       )}
     </div>
-  );
-}
-
-/**
- * The full person research behind a row and their recent posts. Loaded only
- * once opened, so a page of collapsed rows costs nothing; never buys anything.
- */
-export function PersonDossier({ rowId }: { rowId: number }) {
-  const { masked } = usePrivacy();
-  const [open, setOpen] = useState(false);
-  const query = useQuery({
-    queryKey: ["queue-dossier", rowId],
-    queryFn: () => api.queueDossier(rowId),
-    enabled: open && !masked,
-    staleTime: 60_000,
-  });
-  return (
-    <section aria-label="Dossier" className="min-w-0 border-t border-ink-rule pt-4">
-      <Disclosure label="Dossier" onToggle={setOpen}>
-        {masked ? (
-          <p className="mt-2 text-[12px] text-ink-muted">Dossier hidden in privacy mode.</p>
-        ) : query.isPending ? (
-          <p className="mt-2 text-[12px] text-ink-muted">Loading dossier…</p>
-        ) : query.isError ? (
-          <p className="mt-2 text-[12px] text-ink-muted">
-            Couldn&apos;t load the dossier: {(query.error as Error).message}
-          </p>
-        ) : (
-          <DossierBody dossier={query.data} />
-        )}
-      </Disclosure>
-    </section>
   );
 }

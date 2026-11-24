@@ -349,7 +349,7 @@ it("send draft preserves another member's approval and draft editor", async () =
   expect(describeDecision(view)).toBe(`approved by ${owner}`);
   expect(
     buildProspectTimeline({
-      row: saved,
+      rows: [saved],
       sequenceEvents: [],
       replies: [],
       channelEvents: [],

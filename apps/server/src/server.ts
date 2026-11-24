@@ -8,6 +8,7 @@ import {
   findQueuePhonesRoute,
 } from "./api/queue-phone.ts";
 import { queueDossierRoute } from "./api/queue-dossier.ts";
+import { personRoute } from "./api/person.ts";
 import { readProfileRoute } from "./api/queue-read-profile.ts";
 import {
   repliesRoute,
@@ -232,6 +233,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/calls/:id/discard-recording", discardRecordingRoute),
   route("POST", "/api/prospects/:id/call", logCallRoute),
   route("GET", "/api/prospects/:id/calls", prospectCallsRoute),
+  route("GET", "/api/person", personRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
   route("GET", "/api/prospects/:id/linkedin-friend", linkedInFriendRoute),
   route("POST", "/api/prospects/:id/linkedin-friend/draft", linkedInFriendDraftRoute),
