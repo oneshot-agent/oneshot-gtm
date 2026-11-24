@@ -617,12 +617,14 @@ describe("Your phone", () => {
 });
 
 describe("the dial panel in bridge mode", () => {
-  it("while connected: the timer, Hang up, the consent line, and Save waits", () => {
+  it("while connected: the timer, Hang up, Stop recording, and Save waits", () => {
     const html = panelWith(call({ status: "connected", transcriptStatus: "pending" }));
     expect(html).toContain("Connected");
     expect(html).toContain('aria-label="call time"');
     expect(html).toContain("Hang up");
-    expect(html).toContain(CONSENT_LINE);
+    expect(html).toContain("Stop recording");
+    // Recorded from the answer: nothing to ask first.
+    expect(html).not.toContain(CONSENT_LINE);
     expect(html).toContain("save once the call ends");
     // Call is hidden while one is live.
     expect(html).not.toContain('title="Rings your phone, then theirs"');
@@ -666,7 +668,8 @@ describe("the dial panel in bridge mode", () => {
       recordedFrom: "answer",
     });
     const live = panelWith(fromAnswer, me({ record: "ask" }));
-    expect(live).toContain("Say this first, the call is recorded");
+    expect(live).toContain("● Recording");
+    expect(live).toContain("Stop recording");
     expect(live).not.toContain("They agreed — record");
     const ended = panelWith(
       call({
@@ -684,11 +687,26 @@ describe("the dial panel in bridge mode", () => {
     expect(recordingDeletable(call({ transcriptStatus: "failed" }))).toBe(true);
   });
 
-  it("offers to hang up and delete while a call recorded from the answer is live", () => {
-    const html = panelWith(
+  it("stops a recording without hanging up, and offers Record again once stopped", () => {
+    const recording = panelWith(
       call({ status: "connected", transcriptStatus: "pending", recordedFrom: "answer" }),
     );
-    expect(html).toContain("They didn&#x27;t agree — hang up and delete it");
+    expect(recording).toContain("Stop recording");
+    expect(recording).not.toContain("hang up and delete it");
+    const stopped = panelWith(
+      call({
+        id: 12,
+        status: "connected",
+        transcriptStatus: "pending",
+        recordedFrom: "answer",
+        recordingPaused: true,
+      }),
+    );
+    expect(stopped).toContain("Recording stopped");
+    expect(stopped).toMatch(/title="Record the rest of the call again"[^>]*>(<[^>]*>)*Record</);
+    expect(stopped).not.toContain("Stop recording");
+    // Nothing to stop while it only rings, or once it ended.
+    expect(panelWith(call({ id: 13, status: "ringing_prospect" }))).not.toContain("Stop recording");
   });
 
   it("opens on the call a link names, not the newest unlogged one", () => {

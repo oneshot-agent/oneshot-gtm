@@ -125,6 +125,7 @@ function fakeBridge(over: Partial<CallBridge> = {}): Fake {
     start: vi.fn(async () => ({ callSid: "CA1" })),
     connect: vi.fn(async () => {}),
     startRecording: vi.fn(async () => {}),
+    setRecordingPaused: vi.fn(async () => {}),
     removeCallerId: vi.fn(async (phone: string) => {
       fake.verified.delete(phone);
     }),

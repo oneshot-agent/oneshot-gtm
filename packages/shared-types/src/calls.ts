@@ -114,6 +114,8 @@ export interface CallRecordView {
   connectedAt?: string;
   /** When the recording started (ISO): Record pressed, or the call connecting for one recorded from the answer. */
   recordingSince?: string;
+  /** The member pressed Stop recording; Record resumes it. What was recorded before is kept. */
+  recordingPaused?: true;
   transcriptStatus: "none" | "pending" | "ready" | "failed";
   transcript: { speaker: "founder" | "prospect"; text: string; startSec: number }[] | null;
   /** Phase 2: the model's proposal from the transcript; the founder confirms it. */

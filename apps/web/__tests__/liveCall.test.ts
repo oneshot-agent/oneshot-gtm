@@ -34,7 +34,10 @@ const live = (over: Partial<LiveCallView> = {}): LiveCallView => ({
   mine: true,
   ...over,
 });
-type Rec = Pick<CallRecordView, "status" | "transcriptStatus" | "recordedFrom" | "discard">;
+type Rec = Pick<
+  CallRecordView,
+  "status" | "transcriptStatus" | "recordedFrom" | "discard" | "recordingPaused"
+>;
 const rec = (over: Partial<Rec> = {}): Rec => ({
   status: "connected",
   transcriptStatus: "none",
@@ -52,6 +55,9 @@ describe("recordingState", () => {
     ).toBe("● Recording");
     expect(recordingState(rec({ discard: "pending" }), "always").label).toBe("Deleting recording…");
     expect(recordingState(rec({ discard: "done" }), "always").label).toBe("Recording deleted");
+    expect(
+      recordingState(rec({ transcriptStatus: "pending", recordingPaused: true }), "always"),
+    ).toEqual({ label: "Recording stopped", tone: "muted" });
     expect(recordingState(rec(), "ask")).toEqual({
       label: "Not recording · ask first",
       tone: "warn",

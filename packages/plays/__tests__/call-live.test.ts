@@ -13,8 +13,14 @@ vi.mock("@oneshot-gtm/core", async () => {
   return { ...actual, getLedger: () => ledger, loadConfig: () => cfg, logEvent: () => {} };
 });
 
-const { liveCalls, startBridgedCall, refreshBridgedCall, settleBridgedCallWork } =
-  await import("../src/_call-bridge.ts");
+const {
+  liveCalls,
+  startBridgedCall,
+  refreshBridgedCall,
+  settleBridgedCallWork,
+  setBridgedRecordingPaused,
+  startBridgedRecording,
+} = await import("../src/_call-bridge.ts");
 
 const MEMBER = "+14155550111";
 const TEAMMATE = "mia@example.com";
@@ -34,6 +40,7 @@ function fakeBridge(state: BridgeCallState): CallBridge & { status: ReturnType<t
     start: vi.fn(async () => ({ callSid: "CAnew" })),
     connect: vi.fn(async () => {}),
     startRecording: vi.fn(async () => {}),
+    setRecordingPaused: vi.fn(async () => {}),
     removeCallerId: vi.fn(async () => {}),
     deleteRecording: vi.fn(async () => {}),
     transcriptsFor: vi.fn(async () => []),
@@ -242,5 +249,61 @@ describe("one call at a time", () => {
     release();
     expect(await first).toEqual(expect.any(Number));
     expect(bridge.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Stop recording", () => {
+  function recorded(status: "connected" | "ringing_prospect" = "connected"): number {
+    const id = call({
+      prospectId: prospect("Dana", "dana@acme.test"),
+      member: null,
+      status,
+      startedAt: ago(MIN),
+    });
+    ledger.updateBridgedCall(id, { transcriptStatus: "pending", recordingFrom: "answer" });
+    return id;
+  }
+
+  it("pauses the recording without hanging up, and Record resumes it", async () => {
+    cfg = { calls: { enabled: true, bridge: { provider: "twilio", record: "always" } } };
+    const id = recorded();
+    const bridge = fakeBridge(connected);
+    expect((await setBridgedRecordingPaused(id, true, { bridge })).recordingPaused).toBe(true);
+    expect(bridge.setRecordingPaused).toHaveBeenLastCalledWith(
+      ledger.getBridgedCall(id)?.callSid,
+      true,
+    );
+    expect(bridge.hangUp).not.toHaveBeenCalled();
+    // Stop again: already stopped, Twilio is not asked twice.
+    await setBridgedRecordingPaused(id, true, { bridge });
+    expect(bridge.setRecordingPaused).toHaveBeenCalledTimes(1);
+    // Record resumes the same recording rather than starting another.
+    const resumed = await startBridgedRecording(id, { bridge });
+    expect(resumed.recordingPaused).toBeUndefined();
+    expect(resumed.transcriptStatus).toBe("pending");
+    expect(bridge.setRecordingPaused).toHaveBeenLastCalledWith(
+      ledger.getBridgedCall(id)?.callSid,
+      false,
+    );
+    expect(bridge.startRecording).not.toHaveBeenCalled();
+  });
+
+  it("refuses when nothing is recorded or the call is not connected", async () => {
+    const bridge = fakeBridge(connected);
+    const notRecorded = call({
+      prospectId: prospect("Lee", "lee@acme.test", "+15126531188"),
+      member: null,
+      status: "connected",
+      startedAt: ago(MIN),
+    });
+    await expect(setBridgedRecordingPaused(notRecorded, true, { bridge })).rejects.toMatchObject({
+      status: 409,
+      message: "nothing is being recorded on this call",
+    });
+    const ringing = recorded("ringing_prospect");
+    await expect(setBridgedRecordingPaused(ringing, true, { bridge })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(bridge.setRecordingPaused).not.toHaveBeenCalled();
   });
 });

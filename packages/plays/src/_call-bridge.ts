@@ -893,6 +893,9 @@ export async function startBridgedRecording(
   if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
   if (!callsOf(loadConfig()).bridge?.record)
     throw new CallBridgeRequestError("recording is off for this workspace", 409);
+  // Stopped earlier on this call: Record resumes the same recording.
+  if (call.view.transcriptStatus === "pending" && call.view.recordingPaused && !call.discardPending)
+    return setBridgedRecordingPaused(callId, false, opts);
   if (call.view.transcriptStatus !== "none" || call.discardPending) return call.view;
   const bridge = bridgeFor(opts);
   if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
@@ -921,6 +924,40 @@ export async function startBridgedRecording(
     throw providerError(err);
   }
   logEvent("call.recording_started", { call_id: callId });
+  return ledger.getCall(callId)!;
+}
+
+/**
+ * Stop recording a connected call, or resume it (`paused` false). The call
+ * stays up; what was recorded before Stop is kept and transcribed after the
+ * call, and a stopped stretch is left out. Works the same whether the
+ * recording started from the answer or from Record.
+ */
+export async function setBridgedRecordingPaused(
+  callId: number,
+  paused: boolean,
+  opts: { bridge?: CallBridge | null } = {},
+): Promise<CallRecordView> {
+  const ledger = getLedger();
+  const call = ledger.getBridgedCall(callId);
+  if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
+  if (call.view.transcriptStatus !== "pending" || call.discardPending)
+    throw new CallBridgeRequestError("nothing is being recorded on this call", 409);
+  if ((call.view.recordingPaused === true) === paused) return call.view;
+  if (call.view.status !== "connected")
+    throw new CallBridgeRequestError(
+      `${paused ? "Stop recording" : "Record"} works only while you are connected to them`,
+      409,
+    );
+  const bridge = bridgeFor(opts);
+  if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
+  try {
+    await bridge.setRecordingPaused(call.callSid, paused);
+  } catch (err) {
+    throw providerError(err);
+  }
+  ledger.updateBridgedCall(callId, { recordingPaused: paused });
+  logEvent(paused ? "call.recording_stopped" : "call.recording_resumed", { call_id: callId });
   return ledger.getCall(callId)!;
 }
 

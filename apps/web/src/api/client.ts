@@ -608,8 +608,10 @@ export const api = {
       ? Promise.resolve({ enabled: false, record: false, calls: [] })
       : getJson<LiveCallsResponse>("/calls/live"),
   hangUpCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/hangup`, {}),
-  /** The prospect agreed: record the connected call from now. */
+  /** Record the connected call from now, or resume it after Stop recording. */
   recordCall: (id: number) => postJson<CallRecordView>(`/calls/${id}/record`, {}),
+  /** Stop recording a connected call; `recordCall` resumes it. */
+  stopRecording: (id: number) => postJson<CallRecordView>(`/calls/${id}/stop-recording`, {}),
   /** The prospect declined recording: delete it and its transcript. */
   discardRecording: (id: number) => postJson<CallRecordView>(`/calls/${id}/discard-recording`, {}),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>

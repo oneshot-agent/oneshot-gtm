@@ -574,7 +574,7 @@ describe("migration v28", () => {
 
   it("adds member, status and transcript_sid to a v27 ledger's calls and keeps its rows", () => {
     expect(LEDGER_MIGRATIONS.find((m) => m.name === "calls-bridge")?.version).toBe(28);
-    expect(LEDGER_SCHEMA_VERSION).toBe(34);
+    expect(LEDGER_SCHEMA_VERSION).toBe(35);
     const first = new Ledger(dbPath);
     const id = first.upsertProspect({ name: "Dana", email: "d@a.test" });
     first.close();

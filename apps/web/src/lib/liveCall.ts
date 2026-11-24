@@ -29,12 +29,17 @@ export const RECORDING_TONE_CLASS: Record<RecordingTone, string> = {
  * recorded now (or what it waits on); after, where its transcript is.
  */
 export function recordingState(
-  call: Pick<CallRecordView, "status" | "transcriptStatus" | "recordedFrom" | "discard">,
+  call: Pick<
+    CallRecordView,
+    "status" | "transcriptStatus" | "recordedFrom" | "discard" | "recordingPaused"
+  >,
   mode: CallRecordMode,
 ): { label: string; tone: RecordingTone } {
   if (call.discard === "pending") return { label: "Deleting recording…", tone: "muted" };
   if (call.discard === "done") return { label: "Recording deleted", tone: "muted" };
   if (isLive(call)) {
+    if (call.transcriptStatus === "pending" && call.recordingPaused)
+      return { label: "Recording stopped", tone: "muted" };
     if (call.transcriptStatus === "pending") return { label: "● Recording", tone: "recording" };
     if (mode === "ask") return { label: "Not recording · ask first", tone: "warn" };
     if (mode === "always") return { label: "Records when they answer", tone: "muted" };

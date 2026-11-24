@@ -87,6 +87,7 @@ interface CallRow {
   recording_requested_at?: string | null;
   discard_next_at?: string | null;
   connected_at?: string | null;
+  recording_paused?: number;
 }
 
 /** A bridged call's live states (`CallRecordView.status`). */
@@ -134,6 +135,7 @@ function toView(row: CallRow): CallRecordView {
       ? { recordedFrom: row.recording_from }
       : {}),
     ...(row.connected_at ? { connectedAt: row.connected_at } : {}),
+    ...(row.recording_paused === 1 ? { recordingPaused: true as const } : {}),
     // A consent recording starts when Record was pressed; one from the
     // answer starts when the call connected.
     ...(row.recording_from === "consent" && row.recording_requested_at
@@ -357,6 +359,8 @@ export function updateBridgedCall(
     /** The recording was asked for: how, and when (`recording_requested_at`). */
     recordingFrom?: "answer" | null;
     recordingRequestedAt?: string | null;
+    /** Stop recording pressed (true) or Record pressed again (false). */
+    recordingPaused?: boolean;
   },
 ): void {
   const write = (cols: Array<[string, string | number | null | undefined]>, where: string) => {
@@ -385,6 +389,10 @@ export function updateBridgedCall(
       ["recording_sid", patch.recordingSid],
       ["recording_from", patch.recordingFrom],
       ["recording_requested_at", patch.recordingRequestedAt],
+      [
+        "recording_paused",
+        patch.recordingPaused === undefined ? undefined : patch.recordingPaused ? 1 : 0,
+      ],
       ["transcript_sid", patch.transcriptSid],
       ["transcript_status", patch.transcriptStatus],
       [
