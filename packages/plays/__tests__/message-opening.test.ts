@@ -220,7 +220,18 @@ describe("the question opening rule", () => {
       .split("\n")
       .find((l) => l.startsWith("**Question opening"))!;
     expect(rule).toContain("the problem the `OFFER` solves");
-    // No quoted question at all, in parentheses or not, straight or curly quotes.
-    expect(rule).not.toMatch(/["“][^"”]*\?["”]/);
+    // No quoted question at all: double or single, straight or curly. A single
+    // quote only opens after a space or bracket, so contractions do not count.
+    const quotedQuestion = /["“][^"”]*\?["”]|(?:^|[\s(])['‘][^'’]*\?['’]/;
+    expect(rule).not.toMatch(quotedQuestion);
+    for (const sample of [
+      'like ("Is X late?")',
+      "like 'Is X late?' here",
+      "like ‘Is X late?’ here",
+      "like “Is X late?” here",
+    ]) {
+      expect(sample).toMatch(quotedQuestion);
+    }
+    expect("they'll ask whether it's late? no").not.toMatch(quotedQuestion);
   });
 });
