@@ -220,6 +220,7 @@ describe("the question opening rule", () => {
       .split("\n")
       .find((l) => l.startsWith("**Question opening"))!;
     expect(rule).toContain("the problem the `OFFER` solves");
-    expect(rule).not.toMatch(/\("[^"]+\?"\)/);
+    // No quoted question at all, in parentheses or not, straight or curly quotes.
+    expect(rule).not.toMatch(/["“][^"”]*\?["”]/);
   });
 });
