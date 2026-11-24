@@ -369,4 +369,15 @@ describe("Stop recording", () => {
     expect(ledger.getCall(id)?.recordingPaused).toBeUndefined();
     expect(vi.mocked(bridge.setRecordingPaused).mock.calls.map((c) => c[1])).toEqual([true, false]);
   });
+
+  it("answers 409 to Stop once a stopped call has ended", async () => {
+    const id = recorded();
+    const bridge = fakeBridge(connected);
+    await setBridgedRecordingPaused(id, true, { bridge });
+    ledger.updateBridgedCall(id, { status: "ended" });
+    await expect(setBridgedRecordingPaused(id, true, { bridge })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(bridge.setRecordingPaused).toHaveBeenCalledTimes(1);
+  });
 });

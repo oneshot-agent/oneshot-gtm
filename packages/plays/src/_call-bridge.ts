@@ -966,13 +966,13 @@ async function applyRecordingPaused(
   if (!call) throw new CallBridgeRequestError("bridged call not found", 404);
   if (call.view.transcriptStatus !== "pending" || call.discardPending)
     throw new CallBridgeRequestError("nothing is being recorded on this call", 409);
-  if ((call.view.recordingPaused === true) === paused && !recordingUnsure.has(callId))
-    return call.view;
   if (call.view.status !== "connected")
     throw new CallBridgeRequestError(
       `${paused ? "Stop recording" : "Record"} works only while you are connected to them`,
       409,
     );
+  if ((call.view.recordingPaused === true) === paused && !recordingUnsure.has(callId))
+    return call.view;
   const bridge = bridgeFor(opts);
   if (!bridge) throw new CallBridgeRequestError(KEYS_MISSING, 409);
   try {
