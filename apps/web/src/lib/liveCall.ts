@@ -32,7 +32,8 @@ export function recordingState(
   call: Pick<CallRecordView, "status" | "transcriptStatus" | "recordedFrom" | "discard">,
   mode: CallRecordMode,
 ): { label: string; tone: RecordingTone } {
-  if (call.discard != null) return { label: "Recording deleted", tone: "muted" };
+  if (call.discard === "pending") return { label: "Deleting recording…", tone: "muted" };
+  if (call.discard === "done") return { label: "Recording deleted", tone: "muted" };
   if (isLive(call)) {
     if (call.transcriptStatus === "pending") return { label: "● Recording", tone: "recording" };
     if (mode === "ask") return { label: "Not recording · ask first", tone: "warn" };

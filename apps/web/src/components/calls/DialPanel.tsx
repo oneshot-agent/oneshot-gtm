@@ -118,6 +118,7 @@ export function dialledNumber(
  */
 export function DialPanel({
   row,
+  openCallId,
   next,
   dialMode,
   window: callWindow,
@@ -131,6 +132,8 @@ export function DialPanel({
   isOpen,
 }: {
   row: CallListRow;
+  /** The call this panel opens on (a link to that call); else the one it resumes. */
+  openCallId?: number;
   next: CallListRow | null;
   dialMode: CallListResponse["dialMode"];
   window: CallListResponse["window"];
@@ -202,7 +205,7 @@ export function DialPanel({
   const [ringPhone, setRingPhone] = useState<string | null>(null);
   // The resumed call stays the one the draft is for, even when a newer one
   // shows up; a tel: call started here ends resuming for this panel.
-  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const [pinnedId, setPinnedId] = useState<number | null>(openCallId ?? null);
   const [noResume, setNoResume] = useState(false);
   const callId = panelCallId({ startedId, pinnedId, noResume }, history.data?.calls, me.data);
   useEffect(() => {

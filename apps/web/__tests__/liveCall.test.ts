@@ -50,7 +50,8 @@ describe("recordingState", () => {
     expect(
       recordingState(rec({ transcriptStatus: "pending", recordedFrom: "answer" }), false).label,
     ).toBe("● Recording");
-    expect(recordingState(rec({ discard: "pending" }), "always").label).toBe("Recording deleted");
+    expect(recordingState(rec({ discard: "pending" }), "always").label).toBe("Deleting recording…");
+    expect(recordingState(rec({ discard: "done" }), "always").label).toBe("Recording deleted");
     expect(recordingState(rec(), "ask")).toEqual({
       label: "Not recording · ask first",
       tone: "warn",

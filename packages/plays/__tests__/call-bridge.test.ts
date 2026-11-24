@@ -101,6 +101,7 @@ function endLiveCalls(): void {
   for (const r of ledger.listLiveCalls({
     sinceIso: IN_WINDOW.toISOString(),
     liveSinceIso: "1970-01-01T00:00:00.000Z",
+    endedMember: "",
     endedLimit: 0,
   }))
     ledger.updateBridgedCall(r.view.id, { status: "ended" });

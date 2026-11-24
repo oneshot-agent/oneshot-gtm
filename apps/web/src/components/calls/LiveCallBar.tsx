@@ -85,7 +85,11 @@ function LiveCallRow({
   const shownSec = sec ?? (!live && c.durationSec != null ? c.durationSec : null);
   const open = {
     to: "/calls" as const,
-    search: { prospect: c.prospectId, ...(c.playName ? { play: c.playName } : {}) },
+    search: {
+      prospect: c.prospectId,
+      ...(c.playName ? { play: c.playName } : {}),
+      call: c.id,
+    },
   };
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 px-6 py-1.5">

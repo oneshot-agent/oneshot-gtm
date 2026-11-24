@@ -419,6 +419,7 @@ async function refuseWhileLive(
       .listLiveCalls({
         sinceIso: now.toISOString(),
         liveSinceIso: new Date(now.getTime() - LIVE_CALL_MAX_MS).toISOString(),
+        endedMember: me,
         endedLimit: 0,
       })
       .map((r) => r.view)
@@ -542,12 +543,9 @@ const OWN_ENDED_LIMIT = 3;
 
 /**
  * The live bar for one member: every bridged call in the workspace not over
- * yet, whoever placed it, then the member's own calls that ended without an
- * outcome. The member's own calls are read from the provider first (as the
- * dial panel's poll reads them), so a call keeps moving from any page: the
- * prospect is dialled once their phone is answered, and the transcript is
- * advanced after hangup. Teammates' calls are shown as stored; their own
- * pages move them.
+ * yet, then the member's own ended calls with no outcome. Their own calls are
+ * read from the provider first, as the dial panel's poll does, so a call keeps
+ * moving from any page. Teammates' calls are shown as stored.
  */
 export async function liveCalls(
   member: string | null,
@@ -561,6 +559,8 @@ export async function liveCalls(
     getLedger().listLiveCalls({
       sinceIso: new Date(now.getTime() - OWN_ENDED_MS).toISOString(),
       liveSinceIso: new Date(now.getTime() - LIVE_CALL_MAX_MS).toISOString(),
+      endedMember: me,
+      endedLimit: OWN_ENDED_LIMIT,
     });
   const mine = (m: string | null) => memberKeyOf(m) === me;
   const bridge = bridgeFor(opts);

@@ -101,7 +101,8 @@ describe("the live call bar", () => {
     expect(html).toContain("On a call with Dana Reyes");
     expect(html).toContain("2:10");
     expect(html).toContain("● Recording");
-    expect(html).toContain('href="/calls?prospect=1&amp;play=post-funding"');
+    // The link names the call, so Log outcome opens this call, not another unlogged one.
+    expect(html).toContain('href="/calls?prospect=1&amp;play=post-funding&amp;call=7"');
     expect(html).toContain(">Open</a>");
     expect(html).toContain("Hang up");
   });
@@ -115,7 +116,7 @@ describe("the live call bar", () => {
     expect(ended).toContain("Call with Dana Reyes ended");
     expect(ended).toContain("3:04");
     expect(ended).toContain("Transcript ready");
-    expect(ended).toContain('href="/calls?prospect=1"');
+    expect(ended).toContain('href="/calls?prospect=1&amp;call=7"');
     expect(ended).toContain("Log outcome");
     expect(ended).not.toContain("Hang up");
   });

@@ -33,6 +33,8 @@ interface CallsSearch {
   prospect?: number;
   /** Its play, for a Due row: a person can be due in two. */
   play?: string;
+  /** The call to open the panel on (the live bar's link): a person can have two unlogged. */
+  call?: number;
 }
 
 export const Route = createFileRoute("/calls")({
@@ -41,13 +43,18 @@ export const Route = createFileRoute("/calls")({
     const id = Number(search["prospect"]);
     if (!Number.isInteger(id) || id <= 0) return {};
     const play = search["play"];
-    return typeof play === "string" && play ? { prospect: id, play } : { prospect: id };
+    const call = Number(search["call"]);
+    return {
+      prospect: id,
+      ...(typeof play === "string" && play ? { play } : {}),
+      ...(Number.isInteger(call) && call > 0 ? { call } : {}),
+    };
   },
   component: CallsPage,
 });
 
 function CallsPage() {
-  const { prospect, play } = Route.useSearch();
+  const { prospect, play, call } = Route.useSearch();
   const navigate = Route.useNavigate();
   const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
   const open = (row: RowKey | null) =>
@@ -64,6 +71,7 @@ function CallsPage() {
       error={query.error}
       selected={prospect}
       {...(play ? { selectedPlay: play } : {})}
+      {...(call ? { selectedCall: call } : {})}
       onOpen={open}
     />
   );
@@ -75,12 +83,15 @@ export function CallsView({
   error,
   selected,
   selectedPlay,
+  selectedCall,
   onOpen,
 }: {
   data: CallListResponse | undefined;
   error?: Error | null;
   selected: number | undefined;
   selectedPlay?: string;
+  /** Open the panel on this call rather than the one it would resume. */
+  selectedCall?: number;
   onOpen: (row: RowKey | null) => void;
 }) {
   // Each row's next save id, kept here so a panel that remounts while its
@@ -226,8 +237,10 @@ export function CallsView({
         >
           {row ? (
             <DialPanel
-              key={rowId(row)}
+              // A different call asked for on the same row is a new panel, not this one's pin.
+              key={`${rowId(row)}|${selectedCall ?? ""}`}
               row={row}
+              {...(selectedCall ? { openCallId: selectedCall } : {})}
               next={next}
               dialMode={data.dialMode}
               window={data.window}

@@ -691,6 +691,29 @@ describe("the dial panel in bridge mode", () => {
     expect(html).toContain("They didn&#x27;t agree — hang up and delete it");
   });
 
+  it("opens on the call a link names, not the newest unlogged one", () => {
+    client.setQueryData(["me"], signedIn);
+    client.setQueryData(callsMeKey, me());
+    // Only the older call has a suggestion, which shows only in the panel's call view.
+    const older = call({
+      id: 21,
+      status: "ended",
+      transcriptStatus: "ready",
+      transcript,
+      suggestion: { outcome: "interested", note: "", commitments: [] },
+      startedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+    });
+    const newer = call({ id: 22, status: "ended", transcriptStatus: "pending" });
+    client.setQueryData(["prospect-calls", 1], { calls: [newer, older] });
+    client.setQueryData(callKey(21), older);
+    client.setQueryData(callKey(22), newer);
+    expect(page(data())).not.toContain("Suggested:");
+    const linked = render(
+      <CallsView data={data()} selected={1} selectedCall={21} onOpen={() => {}} />,
+    );
+    expect(linked).toContain("Suggested:");
+  });
+
   it("says a deletion still finishing was requested, not done", () => {
     expect(discardToast({ discard: "done" })).toBe("recording and transcript deleted");
     expect(discardToast({ discard: "pending" })).toMatch(/requested/);

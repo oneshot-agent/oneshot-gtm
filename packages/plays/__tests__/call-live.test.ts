@@ -165,6 +165,29 @@ describe("liveCalls", () => {
   });
 });
 
+describe("my unlogged calls on a busy team", () => {
+  it("are not crowded out by teammates' newer unlogged calls", async () => {
+    const kim = prospect("Kim", "kim@acme.test", "+15126531189");
+    const myOld = call({
+      prospectId: kim,
+      member: null,
+      status: "ended",
+      startedAt: ago(2 * HOUR),
+    });
+    for (let i = 0; i < 5; i++)
+      call({ prospectId: kim, member: TEAMMATE, status: "ended", startedAt: ago(10 * MIN + i) });
+    const out = await liveCalls(null, { bridge: fakeBridge(connected), now: NOW });
+    expect(out.calls.map((c) => c.id)).toEqual([myOld]);
+    // A teammate with a differently cased address still reads only theirs.
+    const theirs = await liveCalls(" Mia@Example.com ", {
+      bridge: fakeBridge(connected),
+      now: NOW,
+    });
+    expect(theirs.calls).toHaveLength(3);
+    expect(theirs.calls.every((c) => c.mine)).toBe(true);
+  });
+});
+
 describe("one call at a time", () => {
   const start = (prospectId: number, bridge: CallBridge) =>
     startBridgedCall({ prospectId, member: null, now: NOW, bridge }).then(

@@ -415,9 +415,8 @@ export interface LiveCallRow {
 
 /**
  * What the live bar is built from: every bridged call not over yet (started
- * since `liveSinceIso`), whoever placed it, then bridged calls that ended since `sinceIso` with no outcome
- * logged (the caller keeps the reader's own), newest first. Whose call is
- * whose is decided by the caller, with the members' own key.
+ * since `liveSinceIso`), whoever placed it, then the member's own bridged
+ * calls that ended since `sinceIso` with no outcome logged, newest first.
  */
 export function listLiveCalls(
   db: Database,
@@ -426,6 +425,8 @@ export function listLiveCalls(
     sinceIso: string;
     /** Live calls started from this time on: an older one still marked live is stale, not live. */
     liveSinceIso: string;
+    /** Whose ended calls: the member's key (trimmed, lowercased email), "" for the unlisted owner. */
+    endedMember: string;
     endedLimit?: number;
   },
 ): LiveCallRow[] {
@@ -445,10 +446,11 @@ export function listLiveCalls(
       `${select}
         WHERE c.provider = 'twilio' AND c.status = 'ended' AND c.outcome IS NULL
           AND c.started_at >= ?
+          AND (CASE WHEN ? = '' THEN c.member IS NULL ELSE LOWER(TRIM(c.member)) = ? END)
         ORDER BY c.started_at DESC, c.id DESC
         LIMIT ?`,
     )
-    .all(input.sinceIso, input.endedLimit ?? 50) as Joined[];
+    .all(input.sinceIso, input.endedMember, input.endedMember, input.endedLimit ?? 3) as Joined[];
   return [...live, ...ended].map((r) => ({
     view: toView(r),
     prospectName: r.p_name,
