@@ -310,6 +310,8 @@ function RunPage() {
         search: {
           status: "approved",
           play: playName,
+          ...(search.show ? { show: search.show } : {}),
+          ...(search.channel ? { channel: search.channel } : {}),
           ...(search.role ? { role: search.role } : {}),
           ...(search.size ? { size: search.size } : {}),
         },
@@ -324,6 +326,8 @@ function RunPage() {
     aggregate.flagged,
     globalNavigate,
     playName,
+    search.show,
+    search.channel,
     search.role,
     search.size,
   ]);

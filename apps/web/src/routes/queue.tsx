@@ -3240,7 +3240,7 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
   if (filterActive) {
     return (
       <div className="p-5">
-        <EmptyNote note="No queue rows match this filter. Try a different status or play above to see other rows." />
+        <EmptyNote note="No queue rows match this filter. Try a different status, play, show, channel, role or size above to see other rows." />
       </div>
     );
   }
