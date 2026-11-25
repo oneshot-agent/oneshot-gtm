@@ -587,7 +587,7 @@ function RunPage() {
             </p>
             <Button
               className="mt-2"
-              disabled={running || resolvingContacts}
+              disabled={running || resolvingContacts || hydrating}
               onClick={() => void recoverContacts()}
               {...readOnly}
             >
