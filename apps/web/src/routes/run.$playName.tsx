@@ -115,6 +115,10 @@ function RunPage() {
   // fetch returned zero. Surfaces a one-line empty-state hint so the
   // founder isn't confused by the schema's default empty row.
   const [hydrationEmpty, setHydrationEmpty] = useState(false);
+  // True while approved rows load from the queue: the form waits for them.
+  const [hydrating, setHydrating] = useState(
+    search.fromQueue === "1" && search.runId == null && schema != null,
+  );
   const [missingContactIds, setMissingContactIds] = useState<number[]>([]);
   const [resolvingContacts, setResolvingContacts] = useState(false);
 
@@ -124,6 +128,7 @@ function RunPage() {
   const hydrateFromQueue = useCallback(
     async (cancelledRef?: { cancelled: boolean }): Promise<void> => {
       if (!schema) return;
+      setHydrating(true);
       try {
         // `ids` (drain-selected) narrows to exactly the founder's pick. play +
         // status stay on as a guard: a hand-edited URL can't pull another
@@ -183,6 +188,8 @@ function RunPage() {
       } catch (err) {
         if (cancelledRef?.cancelled) return;
         fail(`failed to load approved targets from queue: ${(err as Error).message}`);
+      } finally {
+        if (!cancelledRef?.cancelled) setHydrating(false);
       }
     },
     [
@@ -548,7 +555,7 @@ function RunPage() {
             <button
               type="button"
               onClick={() => void hydrateFromQueue()}
-              disabled={running || resolvingContacts}
+              disabled={running || resolvingContacts || hydrating}
               title="Re-load approved rows from the queue (drops your in-form edits)"
               className="ml-2 inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream disabled:opacity-40"
             >
@@ -587,6 +594,11 @@ function RunPage() {
               {resolvingContacts ? "Finding emails…" : "Find missing emails"}
             </Button>
           </div>
+        )}
+        {hydrating && (
+          <p className="mt-3 flex items-center gap-1.5 font-mono text-[12px] text-ink-muted">
+            <Loader2 size={12} className="animate-spin" /> loading approved rows from the queue…
+          </p>
         )}
         {hydrationEmpty && (
           <p className="mt-3 font-mono text-[12px] text-ink-spend-2">
@@ -629,85 +641,88 @@ function RunPage() {
         )}
       </section>
 
-      {schema.extras && (
-        <RunLedgerSection eyebrow="Run options">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {schema.extras.map((f) => (
-              <Field key={f.key} label={f.label} hint={f.hint ?? ""}>
-                <Input
-                  type={f.type === "textarea" ? "text" : f.type}
-                  required={!!f.required}
-                  placeholder={f.placeholder ?? ""}
-                  value={extras[f.key] ?? ""}
-                  onChange={(e) => setExtras((s) => ({ ...s, [f.key]: e.target.value }))}
-                />
-              </Field>
+      {/* Rows load from the queue in the background: editing them before they land would be overwritten. */}
+      <fieldset disabled={hydrating} aria-busy={hydrating} className="contents">
+        {schema.extras && (
+          <RunLedgerSection eyebrow="Run options">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {schema.extras.map((f) => (
+                <Field key={f.key} label={f.label} hint={f.hint ?? ""}>
+                  <Input
+                    type={f.type === "textarea" ? "text" : f.type}
+                    required={!!f.required}
+                    placeholder={f.placeholder ?? ""}
+                    value={extras[f.key] ?? ""}
+                    onChange={(e) => setExtras((s) => ({ ...s, [f.key]: e.target.value }))}
+                  />
+                </Field>
+              ))}
+            </div>
+          </RunLedgerSection>
+        )}
+
+        <RunLedgerSection
+          eyebrow={`Targets · ${rows.length}`}
+          action={
+            <Button variant="secondary" size="sm" onClick={addRow}>
+              <Plus size={12} /> add row
+            </Button>
+          }
+        >
+          <div className="flex flex-col gap-5">
+            {rows.map((row, rowIdx) => (
+              <div
+                // eslint-disable-next-line react/no-array-index-key
+                key={`row-${rowIdx}`}
+                className="border-l-2 border-ink-rule pl-4"
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="font-mono text-[11px] text-ink-faint">target #{rowIdx + 1}</span>
+                  {rows.length > 1 && (
+                    <Button variant="ghost" size="sm" onClick={() => removeRow(rowIdx)}>
+                      <Trash2 size={12} />
+                    </Button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {schema.fields.map((f) =>
+                    f.type === "textarea" ? (
+                      <Field
+                        key={f.key}
+                        label={f.label + (f.required ? " *" : "")}
+                        hint={f.hint ?? ""}
+                        className="md:col-span-2"
+                      >
+                        <Textarea
+                          required={!!f.required}
+                          placeholder={f.placeholder ?? ""}
+                          value={row[f.key] ?? ""}
+                          onChange={(e) => updateRow(rowIdx, f.key, e.target.value)}
+                          rows={3}
+                        />
+                      </Field>
+                    ) : (
+                      <Field
+                        key={f.key}
+                        label={f.label + (f.required ? " *" : "")}
+                        hint={f.hint ?? ""}
+                      >
+                        <Input
+                          type={f.type}
+                          required={!!f.required}
+                          placeholder={f.placeholder ?? ""}
+                          value={row[f.key] ?? ""}
+                          onChange={(e) => updateRow(rowIdx, f.key, e.target.value)}
+                        />
+                      </Field>
+                    ),
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         </RunLedgerSection>
-      )}
-
-      <RunLedgerSection
-        eyebrow={`Targets · ${rows.length}`}
-        action={
-          <Button variant="secondary" size="sm" onClick={addRow}>
-            <Plus size={12} /> add row
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-5">
-          {rows.map((row, rowIdx) => (
-            <div
-              // eslint-disable-next-line react/no-array-index-key
-              key={`row-${rowIdx}`}
-              className="border-l-2 border-ink-rule pl-4"
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <span className="font-mono text-[11px] text-ink-faint">target #{rowIdx + 1}</span>
-                {rows.length > 1 && (
-                  <Button variant="ghost" size="sm" onClick={() => removeRow(rowIdx)}>
-                    <Trash2 size={12} />
-                  </Button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {schema.fields.map((f) =>
-                  f.type === "textarea" ? (
-                    <Field
-                      key={f.key}
-                      label={f.label + (f.required ? " *" : "")}
-                      hint={f.hint ?? ""}
-                      className="md:col-span-2"
-                    >
-                      <Textarea
-                        required={!!f.required}
-                        placeholder={f.placeholder ?? ""}
-                        value={row[f.key] ?? ""}
-                        onChange={(e) => updateRow(rowIdx, f.key, e.target.value)}
-                        rows={3}
-                      />
-                    </Field>
-                  ) : (
-                    <Field
-                      key={f.key}
-                      label={f.label + (f.required ? " *" : "")}
-                      hint={f.hint ?? ""}
-                    >
-                      <Input
-                        type={f.type}
-                        required={!!f.required}
-                        placeholder={f.placeholder ?? ""}
-                        value={row[f.key] ?? ""}
-                        onChange={(e) => updateRow(rowIdx, f.key, e.target.value)}
-                      />
-                    </Field>
-                  ),
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </RunLedgerSection>
+      </fieldset>
 
       <section
         className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
@@ -777,7 +792,11 @@ function RunPage() {
           )}
         </div>
         {mode === "edit" && (
-          <Button onClick={submit} disabled={running || resolvingContacts} {...readOnly}>
+          <Button
+            onClick={submit}
+            disabled={running || resolvingContacts || hydrating}
+            {...readOnly}
+          >
             <Play size={14} />
             {running
               ? "Running…"
