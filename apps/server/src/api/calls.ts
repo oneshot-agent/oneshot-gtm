@@ -26,7 +26,13 @@ import {
   setBridgedRecordingPaused,
   verifyMemberPhone,
 } from "@oneshot-gtm/plays";
-import { isCallOutcome, type LogCallRequest } from "@oneshot-gtm/shared-types";
+import {
+  isCallOutcome,
+  isRoleGroup,
+  isSizeBucket,
+  type LogCallRequest,
+  type ProspectMetricFilter,
+} from "@oneshot-gtm/shared-types";
 import { currentMember } from "../members.ts";
 import { jsonResponse } from "../server.ts";
 
@@ -40,9 +46,20 @@ const MAX_PHONE_CHARS = 64;
 /** A save's id from the dashboard. */
 const CLIENT_KEY_RE = /^[A-Za-z0-9_-]{8,64}$/;
 
+/** `?role=` and `?size=`; an unknown value is an error, as on the queue list. */
+function metricFilters(url: URL): ProspectMetricFilter | { error: string } {
+  const role = url.searchParams.get("role") ?? "";
+  const size = url.searchParams.get("size") ?? "";
+  if (role && !isRoleGroup(role)) return { error: `unknown role filter: ${role}` };
+  if (size && !isSizeBucket(size)) return { error: `unknown size filter: ${size}` };
+  return { ...(role ? { role } : {}), ...(size ? { size } : {}) } as ProspectMetricFilter;
+}
+
 export function listCallsRoute(req: Request): Response {
+  const filter = metricFilters(new URL(req.url));
+  if ("error" in filter) return jsonResponse({ error: filter.error }, 400, req);
   try {
-    const out = listCalls();
+    const out = listCalls(new Date(), filter);
     const member = currentMember(req);
     const bridged = out.dialMode === "bridge" && member != null && memberCanBridge(member.email);
     return jsonResponse({ ...out, dialMode: bridged ? "bridge" : "tel" }, 200, req);

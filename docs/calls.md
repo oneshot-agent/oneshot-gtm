@@ -30,6 +30,8 @@ Two lists:
 
 Both lists apply the same gates as sending: the company do-not-contact list, an opt-out on any channel, an ICP reject and a meeting already held. A bounced email does not stop a call.
 
+**Role** and **Size** above the lists narrow both, the same way as on the Queue: role from the person's title, size from the staff count research found or the locations the finder counted. A filtered Call list still fills up to 200 people; it checks the first 10,000 people with a number and says so if it stopped there. The Due list has neither limit. Each row shows the staff and location counts when known.
+
 The local time comes from the number's prefix (libphonenumber's time-zone data). People keep their numbers when they move, so treat it as a hint. A number that could be in several zones must be inside the window in all of them; when they never share an hour of it, the row stays outside the window.
 
 ## The brief

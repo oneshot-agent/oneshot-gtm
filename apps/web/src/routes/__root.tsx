@@ -150,7 +150,7 @@ function RootLayout() {
   // so opening the page starts from it.
   const callsQuery = useQuery({
     queryKey: ["calls"],
-    queryFn: api.calls,
+    queryFn: () => api.calls(),
     refetchInterval: 60_000,
     retry: false,
   });

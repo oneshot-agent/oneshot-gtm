@@ -1,6 +1,10 @@
 import {
   isQueueShow,
+  isRoleGroup,
+  isSizeBucket,
   type LearningKind,
+  type RoleGroup,
+  type SizeBucket,
   type QueueOrder,
   type QueueShow,
 } from "@oneshot-gtm/shared-types";
@@ -8,7 +12,7 @@ import type { QueueChannelFilter, QueueStatusFilter } from "./queue-helpers.ts";
 import { isLearningKind } from "./learning.ts";
 
 /**
- * /queue filters live in the URL (`?status=&play=&order=&show=&channel=`) so back/forward and
+ * /queue filters live in the URL (`?status=&play=&order=&show=&channel=&role=&size=`) so back/forward and
  * reload keep them, and the last set is remembered in localStorage so a bare
  * `/queue` link (sidebar, `q`, palette) lands where the founder left off. Each
  * workspace is its own origin, so each keeps its own filters.
@@ -20,6 +24,10 @@ export interface QueueSearch {
   /** The Show filter: offer ready, has draft, ready to send, held, no draft. */
   show?: QueueShow;
   channel?: QueueChannelFilter;
+  /** The person's role group (leader, operations, …), from their title. */
+  role?: RoleGroup;
+  /** The company's staff or location bucket. */
+  size?: SizeBucket;
   /** Deep link into the learning review card (#813): one kind, optionally one prospect. Never remembered. */
   learning?: LearningKind;
   prospectId?: number;
@@ -49,6 +57,10 @@ export function validateQueueSearch(search: Record<string, unknown>): QueueSearc
   if (isQueueShow(show)) out.show = show;
   const channel = search["channel"];
   if (channel === "email" || channel === "linkedin") out.channel = channel;
+  const role = search["role"];
+  if (isRoleGroup(role)) out.role = role;
+  const size = search["size"];
+  if (isSizeBucket(size)) out.size = size;
   const learning = search["learning"];
   if (isLearningKind(learning)) out.learning = learning;
   const prospectId = Number(search["prospectId"]);
@@ -62,7 +74,9 @@ export function hasQueueFilters(search: QueueSearch): boolean {
     search.play != null ||
     search.order != null ||
     search.show != null ||
-    search.channel != null
+    search.channel != null ||
+    search.role != null ||
+    search.size != null
   );
 }
 
@@ -133,5 +147,7 @@ export function queueFiltersKey(filters: QueueSearch): string {
     filters.order ?? "",
     filters.show ?? "",
     filters.channel ?? "",
+    filters.role ?? "",
+    filters.size ?? "",
   ]);
 }

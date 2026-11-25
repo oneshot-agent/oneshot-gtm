@@ -1,4 +1,12 @@
-import { isQueueShow, parseQueueIds, type QueueShow } from "@oneshot-gtm/shared-types";
+import {
+  isQueueShow,
+  isRoleGroup,
+  isSizeBucket,
+  parseQueueIds,
+  type QueueShow,
+  type RoleGroup,
+  type SizeBucket,
+} from "@oneshot-gtm/shared-types";
 
 interface RunSearch {
   fromQueue?: "1";
@@ -10,11 +18,13 @@ interface RunSearch {
    */
   ids?: number[];
   /**
-   * The /queue Show/Channel filters the drain was opened under: hydration
+   * The /queue Show/Channel/role/size filters the drain was opened under: hydration
    * loads only the approved rows they list, `order=oldest` oldest first.
    */
   show?: QueueShow;
   channel?: "email" | "linkedin";
+  role?: RoleGroup;
+  size?: SizeBucket;
   order?: "oldest";
   /**
    * In-progress / done / interrupted mode: fetch GET /api/runs/:runId and render
@@ -46,6 +56,8 @@ export function validateRunSearch(search: Record<string, unknown>): RunSearch {
   if (search["channel"] === "email" || search["channel"] === "linkedin") {
     out.channel = search["channel"];
   }
+  if (isRoleGroup(search["role"])) out.role = search["role"];
+  if (isSizeBucket(search["size"])) out.size = search["size"];
   if (search["order"] === "oldest") out.order = "oldest";
   if (search["dryRun"] === "0" || search["dryRun"] === 0) out.dryRun = "0";
   if (search["dryRun"] === "1" || search["dryRun"] === 1) out.dryRun = "1";

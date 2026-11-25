@@ -49,8 +49,16 @@ import {
   type QueueShow,
   type QueueStatusView,
   type TriggerView,
+  type RoleGroup,
+  type SizeBucket,
+  type CompanySize,
   QUEUE_SHOWS,
+  ROLE_GROUPS,
+  SIZE_BUCKETS,
+  companySizeLabel,
+  companySizeOf,
 } from "@oneshot-gtm/shared-types";
+import { ProspectMetricSelects } from "../components/ProspectMetricSelects.tsx";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -81,6 +89,7 @@ import {
   drainButtonState,
   drainSelectionState,
   filteredBulkState,
+  loadedBulkTotal,
   isQueueFilterActive,
   mergeRowMeta,
   pendingSplit,
@@ -297,6 +306,8 @@ interface DrainModalState {
   filter?: {
     show?: QueueShow;
     channel?: QueueChannelFilter;
+    role?: RoleGroup;
+    size?: SizeBucket;
     order?: "oldest";
     label: string;
     count: string;
@@ -310,11 +321,29 @@ const SORT_LABELS: Record<QueueOrder, string> = {
   ranked: "Highest score first",
 };
 
-/** "Offer ready · Email": the Show and Channel filters that are on, for a button or a confirm. */
-function filterLabel(show: QueueShow | null, channel: QueueChannelFilter | null): string {
-  return [show ? QUEUE_SHOW_LABELS[show] : null, channel ? CHANNEL_LABELS[channel] : null]
+/** "Offer ready · Email · Operations": the filters that are on, for a button or a confirm. */
+function filterLabel(
+  show: QueueShow | null,
+  channel: QueueChannelFilter | null,
+  role: RoleGroup | null = null,
+  size: SizeBucket | null = null,
+): string {
+  return [
+    show ? QUEUE_SHOW_LABELS[show] : null,
+    channel ? CHANNEL_LABELS[channel] : null,
+    role ? ROLE_GROUPS.find((g) => g.key === role)?.label : null,
+    size ? SIZE_BUCKETS.find((b) => b.key === size)?.label : null,
+  ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** " · 131 staff · 3 locations" after a row's signal; locations left out when the signal names them. */
+function RowSizeLabel({ size, signal }: { size: CompanySize; signal: string | null }) {
+  const named = signal != null && /\blocations?\b/i.test(signal);
+  const text = companySizeLabel(named ? (size.staff ? { staff: size.staff } : {}) : size);
+  if (!text) return null;
+  return <span className="font-mono text-[10.5px] text-ink-faint"> · {text}</span>;
 }
 
 interface EditingState {
@@ -334,6 +363,8 @@ function QueuePage() {
   const orderOverride = search.order ?? null;
   const showFilter = search.show ?? null;
   const channelFilter = search.channel ?? null;
+  const roleFilter = search.role ?? null;
+  const sizeFilter = search.size ?? null;
   const setFilters = (patch: QueueSearch): void => {
     void queueNavigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
   };
@@ -367,8 +398,19 @@ function QueuePage() {
       order: search.order,
       show: search.show,
       channel: search.channel,
+      role: search.role,
+      size: search.size,
     });
-  }, [settled, search.status, search.play, search.order, search.show, search.channel]);
+  }, [
+    settled,
+    search.status,
+    search.play,
+    search.order,
+    search.show,
+    search.channel,
+    search.role,
+    search.size,
+  ]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
@@ -402,7 +444,16 @@ function QueuePage() {
   // A page at a time: the server filters and counts before it cuts the page,
   // and "show more" reads the next one at `offset` under the same filters.
   const queueQuery = useInfiniteQuery({
-    queryKey: ["queue", statusFilter, playFilter, orderOverride, showFilter, channelFilter],
+    queryKey: [
+      "queue",
+      statusFilter,
+      playFilter,
+      orderOverride,
+      showFilter,
+      channelFilter,
+      roleFilter,
+      sizeFilter,
+    ],
     queryFn: ({ pageParam }) =>
       api.queue(
         queueRequest({
@@ -411,6 +462,8 @@ function QueuePage() {
           orderOverride,
           show: showFilter,
           channel: channelFilter,
+          role: roleFilter,
+          size: sizeFilter,
           limit: QUEUE_PAGE_SIZE,
           offset: pageParam,
         }),
@@ -518,10 +571,18 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't reject · ${err.message}`),
   });
   const approveAll = useMutation({
-    mutationFn: (vars: { play?: string; show?: QueueShow; channel?: QueueChannelFilter }) =>
+    mutationFn: (vars: {
+      play?: string;
+      show?: QueueShow;
+      channel?: QueueChannelFilter;
+      role?: RoleGroup;
+      size?: SizeBucket;
+    }) =>
       api.approveAllQueue(vars.play, {
         ...(vars.show ? { show: vars.show } : {}),
         ...(vars.channel ? { channel: vars.channel } : {}),
+        ...(vars.role ? { role: vars.role } : {}),
+        ...(vars.size ? { size: vars.size } : {}),
       }),
     onSuccess: (data) => {
       setApproveFilteredOpen(false);
@@ -596,6 +657,8 @@ function QueuePage() {
     else if (drainModal.filter) {
       if (drainModal.filter.show) search["show"] = drainModal.filter.show;
       if (drainModal.filter.channel) search["channel"] = drainModal.filter.channel;
+      if (drainModal.filter.role) search["role"] = drainModal.filter.role;
+      if (drainModal.filter.size) search["size"] = drainModal.filter.size;
       if (drainModal.filter.order) search["order"] = drainModal.filter.order;
     }
     void navigate({
@@ -678,28 +741,32 @@ function QueuePage() {
 
   // Under a Show/Channel filter, "Approve pending" and "Batch send…" act on
   // the filtered rows only, and say how many.
-  const filtered = showFilter != null || channelFilter != null;
-  const activeFilterLabel = filterLabel(showFilter, channelFilter);
+  const filtered =
+    showFilter != null || channelFilter != null || roleFilter != null || sizeFilter != null;
+  const activeFilterLabel = filterLabel(showFilter, channelFilter, roleFilter, sizeFilter);
+  const bulk = loadedBulkTotal(total, totalIsLowerBound, rows.length);
   const approveFiltered = filteredBulkState({
     filtered,
     statusFilter,
     acts: "pending",
-    total,
-    lowerBound: totalIsLowerBound,
+    total: bulk.total,
+    lowerBound: bulk.lowerBound,
     format: formatCount,
   });
   const drainFiltered = filteredBulkState({
     filtered,
     statusFilter,
     acts: "approved",
-    total,
-    lowerBound: totalIsLowerBound,
+    total: bulk.total,
+    lowerBound: bulk.lowerBound,
     format: formatCount,
   });
   const approveAllVars = {
     ...(playFilter === "all" ? {} : { play: playFilter }),
     ...(showFilter ? { show: showFilter } : {}),
     ...(channelFilter ? { channel: channelFilter } : {}),
+    ...(roleFilter ? { role: roleFilter } : {}),
+    ...(sizeFilter ? { size: sizeFilter } : {}),
   };
   const resetView = (): void => setExpanded(null);
 
@@ -806,6 +873,14 @@ function QueuePage() {
             <option value="email">{CHANNEL_LABELS.email}</option>
             <option value="linkedin">{CHANNEL_LABELS.linkedin}</option>
           </Select>
+          <ProspectMetricSelects
+            role={roleFilter}
+            size={sizeFilter}
+            onChange={(patch) => {
+              setFilters(patch);
+              resetView();
+            }}
+          />
           <span className="font-mono text-[11px] text-ink-faint" data-testid="queue-count">
             {queueData
               ? queueCountLine({
@@ -868,6 +943,8 @@ function QueuePage() {
                         filter: {
                           ...(showFilter ? { show: showFilter } : {}),
                           ...(channelFilter ? { channel: channelFilter } : {}),
+                          ...(roleFilter ? { role: roleFilter } : {}),
+                          ...(sizeFilter ? { size: sizeFilter } : {}),
                           ...(effectiveOrder === "oldest" ? { order: "oldest" as const } : {}),
                           label: activeFilterLabel,
                           count: drainFiltered.label,
@@ -892,9 +969,29 @@ function QueuePage() {
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp
-            filterActive={isQueueFilterActive(statusFilter, playFilter) || filtered}
-          />
+          <>
+            <EmptyQueueHelp
+              filterActive={isQueueFilterActive(statusFilter, playFilter) || filtered}
+            />
+            {/* A filtered scan can stop at its read limit with no match yet: let it go on. */}
+            {queueQuery.hasNextPage && (
+              <div className="px-6 py-2">
+                <button
+                  type="button"
+                  disabled={queueQuery.isFetchingNextPage}
+                  onClick={() => void queueQuery.fetchNextPage()}
+                  className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                >
+                  {queueQuery.isFetchingNextPage ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <ChevronDown size={11} />
+                  )}
+                  none matched yet · search further
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
@@ -1259,6 +1356,7 @@ export function QueueRow({
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
   const title = titleFor(row.payload);
+  const size = companySizeOf(row.payload);
   const linkedinUrl = linkedinUrlFor(row.payload);
   const phone = phoneFor(row.payload);
   const eventTitle = eventTitleFor(row.payload);
@@ -1372,11 +1470,14 @@ export function QueueRow({
         <IdentityCell
           identity={{ name, email, title, company, linkedinUrl, phone }}
           line2={
-            signalLabel ? (
-              <SignalLabel tone={eventPassed ? "blocked" : "muted"}>{signalLabel}</SignalLabel>
-            ) : (
-              <span className="text-ink-faint">no signal on this row</span>
-            )
+            <>
+              {signalLabel ? (
+                <SignalLabel tone={eventPassed ? "blocked" : "muted"}>{signalLabel}</SignalLabel>
+              ) : (
+                <span className="text-ink-faint">no signal on this row</span>
+              )}
+              <RowSizeLabel size={size} signal={signalLabel} />
+            </>
           }
         />
         <td className="whitespace-nowrap py-[10px] pr-6 leading-4 text-ink-cream-2">
@@ -3139,7 +3240,7 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
   if (filterActive) {
     return (
       <div className="p-5">
-        <EmptyNote note="No queue rows match this filter. Try a different status or play above to see other rows." />
+        <EmptyNote note="No queue rows match this filter. Try a different status, play, show, channel, role or size above to see other rows." />
       </div>
     );
   }

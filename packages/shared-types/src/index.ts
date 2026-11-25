@@ -2665,6 +2665,7 @@ export * from "./linkedin-measure.ts";
 export * from "./offer-similarity.ts";
 export * from "./linkedin-template.ts";
 export * from "./calls.ts";
+export * from "./prospect-metrics.ts";
 
 /** GET /api/linkedin/invites: LinkedIn invites left today (workspace share and account). */
 export interface LinkedInInviteQuotaView {

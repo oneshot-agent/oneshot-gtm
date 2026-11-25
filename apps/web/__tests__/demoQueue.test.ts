@@ -106,6 +106,12 @@ describe("demo /queue", () => {
     expect(third).toMatchObject({ nextOffset: 120, hasMore: false });
     expect(ready).toMatchObject({ nextOffset: 40, hasMore: false });
 
+    // No row names a title or a size: every one is "other" and of unknown size.
+    expect((await page({ role: "other" })).total).toBe(120);
+    expect((await page({ role: "leader" })).total).toBe(0);
+    expect((await page({ size: "unknown", channel: "linkedin" })).total).toBe(30);
+    expect((await page({ size: "staff:1-50" })).total).toBe(0);
+
     const both = await page({ show: "no-draft", channel: "email", offset: 10 });
     expect(both.total).toBe(doc.rows.filter((r, i) => i % 3 !== 0 && i % 4 !== 0).length);
     expect(both.rows).toHaveLength(both.total! - 10);

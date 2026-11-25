@@ -10,7 +10,12 @@ import {
   type CallListRow,
   type CallOutcome,
   type CallRecordView,
+  type CompanySize,
   type LogCallRequest,
+  type ProspectMetricFilter,
+  companySizeOf,
+  matchesProspectMetrics,
+  roleGroupOf,
 } from "@oneshot-gtm/shared-types";
 import {
   CALL_REPLY_OUTCOMES,
@@ -63,6 +68,8 @@ export const CALL_LIST_LIMIT = 200;
 /** Ranked candidates read per page while filling the call list, and at most this many pages. */
 const CALL_CANDIDATE_PAGE = 400;
 const CALL_CANDIDATE_PAGES = 5;
+/** With a role or size filter most candidates drop out: read further (10,000 at 400 a page). */
+const CALL_CANDIDATE_PAGES_FILTERED = 25;
 
 /** Days a `not_now` holds the cadence when the founder picks no date. */
 const NOT_NOW_DEFAULT_DAYS = 14;
@@ -696,11 +703,17 @@ function tierReason(c: CallCandidate): string {
  */
 export function listCalls(
   now: Date = new Date(),
-  /** Tests: a smaller list and page. */
-  opts: { limit?: number; pageSize?: number } = {},
+  /** `role`/`size` filter both sections; tests: a smaller list and page. */
+  opts: ProspectMetricFilter & { limit?: number; pageSize?: number } = {},
 ): CallListResponse {
   const limit = opts.limit ?? CALL_LIST_LIMIT;
   const pageSize = opts.pageSize ?? CALL_CANDIDATE_PAGE;
+  const filter: ProspectMetricFilter = { role: opts.role, size: opts.size };
+  const metrics = (title: string | null, size: CompanySize) => ({
+    roleGroup: roleGroupOf(title),
+    ...(size.staff ? { staff: size.staff } : {}),
+    ...(size.sites ? { sites: size.sites } : {}),
+  });
   const cfg = loadConfig();
   const calls = callsOf(cfg);
   const base = {
@@ -733,16 +746,36 @@ export function listCalls(
   });
   // One opt-out read for every due row, not one per row.
   const allowed = ledger.callAllowedIds([...new Set(dueCalls.map((d) => d.cad.prospect_id))]);
+  const dueRows = dueCalls
+    .filter(
+      ({ cad }) => allowed.has(cad.prospect_id) && !blocked(cad.prospect_id, cad.prospect_email),
+    )
+    .map(({ cad, next }) => ({ cad, next, phone: phoneForCall(cad.prospect_id, cfg) }));
+  // The size comes from the cadence's queue row, all read at once; none is unknown.
+  const sizeRows = ledger.getQueueRowsByIds([
+    ...new Set(dueRows.flatMap((d) => d.cad.queue_id ?? d.phone.queueId ?? [])),
+  ]);
+  const sizeOf = (queueId: number | null): CompanySize => {
+    const raw = queueId == null ? undefined : sizeRows.get(queueId)?.payload_json;
+    if (!raw) return {};
+    try {
+      return companySizeOf(JSON.parse(raw));
+    } catch {
+      return {};
+    }
+  };
   // One row per due cadence: a person due in two plays has two, each logging its own step.
-  for (const { cad, next } of dueCalls) {
-    if (!allowed.has(cad.prospect_id) || blocked(cad.prospect_id, cad.prospect_email)) continue;
-    const phone = phoneForCall(cad.prospect_id, cfg);
+  for (const { cad, next, phone } of dueRows) {
+    // A person filtered out of Due stays out of the call list too.
     dueIds.add(cad.prospect_id);
+    const size = sizeOf(cad.queue_id ?? phone.queueId);
+    if (!matchesProspectMetrics(filter, cad.prospect_title, size)) continue;
     due.push({
       prospectId: cad.prospect_id,
       name: cad.prospect_name,
       title: cad.prospect_title,
       company: cad.prospect_company,
+      ...metrics(cad.prospect_title, size),
       phone: phone.phone,
       queueId: phone.queueId,
       local: local(phone.phone),
@@ -763,6 +796,7 @@ export function listCalls(
     wrong: ReadonlySet<string> | undefined,
   ): CallListRow | null => {
     if (blocked(c.prospectId, c.email)) return null;
+    if (!matchesProspectMetrics(filter, c.title, c.size)) return null;
     const phone = pickCallPhone(
       { prospectPhone: c.prospectPhone, queuePhone: c.queuePhone, queueId: c.queueId },
       wrong,
@@ -774,6 +808,7 @@ export function listCalls(
       name: c.name,
       title: c.title,
       company: c.company,
+      ...metrics(c.title, c.size),
       phone: phone.phone,
       queueId: phone.queueId ?? c.queueId,
       local: local(phone.phone),
@@ -786,10 +821,13 @@ export function listCalls(
       lastCall: null,
     };
   };
-  // The limit counts rows that pass the company list and have a usable
-  // number: page through the ranked candidates, in order, until it is met
+  // The limit counts rows that pass the company list and the role/size filter
+  // and have a usable number: page through the ranked candidates, in order, until it is met
   // or they run out (bounded; the first page is normally enough).
-  for (let page = 0; page < CALL_CANDIDATE_PAGES && list.length < limit; page++) {
+  const filtered = filter.role != null || filter.size != null;
+  const pages = filtered ? CALL_CANDIDATE_PAGES_FILTERED : CALL_CANDIDATE_PAGES;
+  let unread = false;
+  for (let page = 0; page < pages && list.length < limit; page++) {
     const candidates = ledger.listCallCandidates({
       limit: pageSize,
       offset: page * pageSize,
@@ -805,6 +843,8 @@ export function listCalls(
       if (row) list.push(row);
     }
     if (candidates.length < pageSize) break;
+    // The last allowed page was full: candidates past it were never checked.
+    if (page === pages - 1 && list.length < limit) unread = true;
   }
 
   const ids = [...due, ...list].map((r) => r.prospectId);
@@ -814,5 +854,5 @@ export function listCalls(
     row.lastCall = lastCalls.get(row.prospectId) ?? null;
     if (row.section === "due") row.lastTouchAt = touches.get(row.prospectId) ?? null;
   }
-  return { ...base, due, list };
+  return { ...base, due, list, ...(filtered && unread ? { listScanCapped: true } : {}) };
 }

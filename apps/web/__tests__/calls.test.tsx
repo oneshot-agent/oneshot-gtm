@@ -11,7 +11,7 @@ import {
   saveCall,
 } from "../src/components/calls/DialPanel.tsx";
 import { CallStepActions } from "../src/components/calls/CallStepActions.tsx";
-import { CallsView } from "../src/routes/calls.tsx";
+import { CallsView, validateCallsSearch, withCallsFilter } from "../src/routes/calls.tsx";
 import {
   beginCall,
   defaultHoldUntil,
@@ -19,6 +19,7 @@ import {
   inCallWindow,
   dialReducer,
   findRow,
+  rowKeptOutOfFilter,
   logCallRequest,
   newSaveKey,
   nextRow,
@@ -78,6 +79,7 @@ const row = (over: Partial<CallListRow> = {}): CallListRow => ({
   name: "Dana Reyes",
   title: "COO",
   company: "Acme Dental",
+  roleGroup: "operations",
   phone: "+15125551234",
   queueId: 10,
   local: { zones: ["America/Chicago"], localTime: "10:05", inWindow: true, opensAt: null },
@@ -251,6 +253,108 @@ describe("Calls page", () => {
     expect(`${button![1]}${button![2]}`).not.toContain('disabled=""');
     expect(html).not.toContain("Ring my phone");
     expect(html).not.toContain("tel:");
+  });
+});
+
+describe("Calls page: role and size filters", () => {
+  it("renders the Role and Size selects when the page can filter", () => {
+    const html = render(
+      <CallsView
+        data={data()}
+        selected={undefined}
+        onOpen={() => {}}
+        role="operations"
+        size={null}
+        onFilter={() => {}}
+      />,
+    );
+    expect(html).toContain('aria-label="Filter by role"');
+    expect(html).toContain('aria-label="Filter by company size"');
+    expect(html).toContain('<optgroup label="Locations">');
+    expect(html).toMatch(/<option value="operations" selected="">/);
+    expect(page(data())).not.toContain("Filter by role");
+  });
+
+  it("keeps the selects while loading and after a failed filtered load, and says when a scan was capped", () => {
+    const filtering = {
+      onOpen: () => {},
+      role: "operations" as const,
+      size: null,
+      onFilter: () => {},
+    };
+    const loading = render(<CallsView data={undefined} selected={undefined} {...filtering} />);
+    expect(loading).toContain('aria-label="Filter by role"');
+    const failed = render(
+      <CallsView data={undefined} error={new Error("boom")} selected={undefined} {...filtering} />,
+    );
+    expect(failed).toContain('aria-label="Filter by role"');
+    expect(failed).toContain("couldn&#x27;t load calls · boom");
+    const capped = render(
+      <CallsView data={{ ...data(), listScanCapped: true }} selected={undefined} {...filtering} />,
+    );
+    expect(capped).toContain("Only the first 10,000 people with a number were checked");
+  });
+
+  it("keeps the open row when a filter leaves it out, and only then", () => {
+    const open = row({ prospectId: 4, title: "COO", sites: 3 });
+    expect(rowKeptOutOfFilter(open, 4, undefined, { role: "leader" })).toBe(open);
+    expect(rowKeptOutOfFilter(open, 4, undefined, { size: "sites:21+" })).toBe(open);
+    // A row the filter still admits left the list for another reason: it closes.
+    expect(rowKeptOutOfFilter(open, 4, undefined, { role: "operations" })).toBeNull();
+    expect(rowKeptOutOfFilter(open, 4, undefined, {})).toBeNull();
+    expect(rowKeptOutOfFilter(open, 5, undefined, { role: "leader" })).toBeNull();
+    expect(rowKeptOutOfFilter(null, 4, undefined, { role: "leader" })).toBeNull();
+  });
+
+  it("marks kept results as updating instead of a final empty list", () => {
+    const html = render(
+      <CallsView
+        data={data({ due: [], list: [] })}
+        selected={undefined}
+        onOpen={() => {}}
+        role="finance"
+        size={null}
+        onFilter={() => {}}
+        updating
+      />,
+    );
+    expect(html).toContain("updating…");
+    expect(html).not.toContain("in this filter.");
+  });
+
+  it("shows the company size after the title and company", () => {
+    const html = page(data({ due: [row({ staff: 131, sites: 3 })], list: [] }));
+    expect(html).toContain("COO · Acme Dental · 131 staff · 3 locations");
+    expect(page(data({ due: [row()], list: [] }))).toContain("COO · Acme Dental</div>");
+  });
+
+  it("reads role and size from the URL, dropping unknown values", () => {
+    expect(validateCallsSearch({ role: "operations", size: "sites:2-5" })).toEqual({
+      role: "operations",
+      size: "sites:2-5",
+    });
+    expect(validateCallsSearch({ role: "boss", size: "huge", prospect: "4", play: "p" })).toEqual({
+      prospect: 4,
+      play: "p",
+    });
+  });
+
+  it("a filter change keeps the open row; All clears the field", () => {
+    const open = { prospect: 4, play: "p", role: "operations" as const };
+    expect(withCallsFilter(open, { size: "unknown" })).toEqual({ ...open, size: "unknown" });
+    expect(withCallsFilter(open, { role: undefined })).toEqual({ prospect: 4, play: "p" });
+  });
+
+  it("sends the filter to the server", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify(data()), { status: 200 }));
+    await api.calls({ role: "finance", size: "staff:51-200" });
+    expect(String(fetchMock.mock.calls[0]![0])).toMatch(
+      /\/calls\?role=finance&size=staff%3A51-200$/,
+    );
+    await api.calls();
+    expect(String(fetchMock.mock.calls[1]![0])).toMatch(/\/calls$/);
   });
 });
 

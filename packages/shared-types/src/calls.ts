@@ -4,6 +4,7 @@
  * in the workspace with a number. Outcomes reuse the reply labels where they
  * mean the same thing, so replies and the funnel count a call like an email.
  */
+import type { RoleGroup } from "./prospect-metrics.ts";
 
 /** What the founder logs after a call. */
 export const CALL_OUTCOMES = [
@@ -59,6 +60,12 @@ export interface CallListRow {
   name: string | null;
   title: string | null;
   company: string | null;
+  /** The job function the title names (`roleGroupOf`). */
+  roleGroup: RoleGroup;
+  /** Company staff count from person research, when known. */
+  staff?: number;
+  /** Company location count from the local-business finder, when known. */
+  sites?: number;
   /** E.164, or null when no usable number (the row then offers Find phone). */
   phone: string | null;
   /** The prospect's queue row, for #1034's Find phone button; null when none. */
@@ -86,6 +93,8 @@ export interface CallListResponse {
   window: { start: string; end: string; weekdays: boolean };
   due: CallListRow[];
   list: CallListRow[];
+  /** A role or size filter stopped at its read limit before the candidates ran out: the list may miss later matches. */
+  listScanCapped?: boolean;
 }
 
 /** A logged call (the `calls` table). */

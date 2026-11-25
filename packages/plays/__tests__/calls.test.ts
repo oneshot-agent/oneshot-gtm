@@ -446,6 +446,95 @@ describe("listCalls", () => {
   });
 });
 
+describe("listCalls: role and size filters", () => {
+  const person = (n: number, title: string, payload: Record<string, unknown> | null = null) => {
+    const id = ledger.upsertProspect({
+      name: `P${n}`,
+      email: `p${n}@a${n}.test`,
+      title,
+      phone: `+1512653${1200 + n}`,
+    });
+    if (payload) {
+      const qid = ledger.enqueueTarget({
+        playName: "p",
+        payload: { email: `p${n}@a${n}.test`, ...payload },
+        dedupeKey: `p${n}`,
+        source: "s",
+      })!;
+      ledger.setQueueProspectId(qid, id);
+    }
+    return id;
+  };
+
+  it("keeps only the role asked for and still fills the list past the first page", () => {
+    callsOn();
+    // Newest first: the five leaders fill the first two pages of two.
+    const ops = [person(0, "COO"), person(1, "Director of Operations")];
+    for (let i = 2; i < 7; i++) person(i, "CEO");
+    const out = listCalls(new Date(), { role: "operations", limit: 2, pageSize: 2 });
+    expect(out.list.map((r) => r.prospectId)).toEqual([ops[1], ops[0]]);
+    expect(out.list.every((r) => r.roleGroup === "operations")).toBe(true);
+    expect(listCalls(new Date(), { limit: 2, pageSize: 2 }).list[0]!.roleGroup).toBe("leader");
+  });
+
+  it("reads 25 pages under a filter, and says when matches may lie past them", () => {
+    callsOn();
+    const ops = person(0, "COO");
+    for (let i = 1; i <= 52; i++) person(i, "CEO");
+    const capped = listCalls(new Date(), { role: "operations", pageSize: 2 });
+    expect(capped.list).toEqual([]);
+    expect(capped.listScanCapped).toBe(true);
+    const found = listCalls(new Date(), { role: "operations", pageSize: 3 });
+    expect(found.list.map((r) => r.prospectId)).toEqual([ops]);
+    expect(found).not.toHaveProperty("listScanCapped");
+    expect(listCalls(new Date(), { pageSize: 2 })).not.toHaveProperty("listScanCapped");
+  });
+
+  it("filters by size, an unknown size included, and puts the counts on the row", () => {
+    callsOn();
+    const small = person(0, "Owner", { personResearch: { company: { employeeCount: 12 } } });
+    const group = person(1, "Owner", { siteCount: 4 });
+    const bare = person(2, "Owner");
+    const ids = (filter: Parameters<typeof listCalls>[1]) =>
+      listCalls(new Date(), filter)
+        .list.map((r) => r.prospectId)
+        .toSorted();
+    expect(ids({ size: "staff:1-50" })).toEqual([small]);
+    expect(ids({ size: "sites:2-5" })).toEqual([group]);
+    expect(ids({ size: "unknown" })).toEqual([bare]);
+    const rows = listCalls().list;
+    expect(rows.find((r) => r.prospectId === small)).toMatchObject({ staff: 12 });
+    expect(rows.find((r) => r.prospectId === group)).toMatchObject({ sites: 4 });
+    expect(rows.find((r) => r.prospectId === bare)).not.toHaveProperty("staff");
+  });
+
+  it("filters the due rows on the cadence's title and its queue row's size", () => {
+    callsOn();
+    const id = ledger.upsertProspect({
+      name: "Dana Smith",
+      email: "dana@acme.test",
+      title: "Chief Operating Officer",
+      company: "Acme",
+    });
+    const qid = ledger.enqueueTarget({
+      playName: PLAY,
+      payload: { email: "dana@acme.test", siteCount: 8 },
+      dedupeKey: "dana",
+      source: "s",
+    })!;
+    enrollInCadence({ prospectId: id, playName: PLAY, queueId: qid });
+    atCallStep(id);
+    expect(listCalls(new Date(), { role: "operations" }).due).toMatchObject([
+      { prospectId: id, roleGroup: "operations", sites: 8 },
+    ]);
+    expect(listCalls(new Date(), { size: "sites:6-20" }).due).toHaveLength(1);
+    expect(listCalls(new Date(), { role: "finance" }).due).toEqual([]);
+    expect(listCalls(new Date(), { size: "unknown" }).due).toEqual([]);
+    // Filtered out of Due, the person is not moved to the call list either.
+    expect(listCalls(new Date(), { role: "finance" }).list).toEqual([]);
+  });
+});
+
 describe("the call brief", () => {
   const prospect = () => ledger.getProspectById(ledger.upsertProspect({ name: "Dana Smith" }))!;
 

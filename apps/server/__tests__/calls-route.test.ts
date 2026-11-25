@@ -65,6 +65,31 @@ describe("GET /api/calls", () => {
     const body = await listCallsRoute(new Request("http://localhost/api/calls")).json();
     expect(body.list.map((r: { prospectId: number }) => r.prospectId)).toEqual([id]);
   });
+
+  it("filters by ?role= and ?size=, and refuses an unknown value", async () => {
+    const coo = ledger.upsertProspect({
+      name: "Dana",
+      email: "d@a.test",
+      title: "COO",
+      phone: "+15126531187",
+    });
+    ledger.upsertProspect({ name: "Lee", email: "l@b.test", title: "CEO", phone: "+15126531188" });
+    const ids = async (qs: string) =>
+      (await listCallsRoute(new Request(`http://localhost/api/calls?${qs}`)).json()).list.map(
+        (r: { prospectId: number }) => r.prospectId,
+      );
+    expect(await ids("role=operations")).toEqual([coo]);
+    expect(await ids("role=operations&size=staff:1-50")).toEqual([]);
+    expect(await ids("size=unknown")).toHaveLength(2);
+    for (const [qs, error] of [
+      ["role=boss", "unknown role filter: boss"],
+      ["size=huge", "unknown size filter: huge"],
+    ]) {
+      const res = listCallsRoute(new Request(`http://localhost/api/calls?${qs}`));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error });
+    }
+  });
 });
 
 describe("POST /api/prospects/:id/call", () => {
