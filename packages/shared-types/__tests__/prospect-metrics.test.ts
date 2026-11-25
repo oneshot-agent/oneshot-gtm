@@ -111,9 +111,15 @@ describe("filter helpers", () => {
   it("reads a payload's title and size", () => {
     const payload = { title: "COO", siteCount: 4 };
     expect(payloadTitleOf(payload)).toBe("COO");
-    expect(payloadTitleOf({ currentRole: "Chief Operating Officer at Shore Lake Dental" })).toBe(
-      "Chief Operating Officer at Shore Lake Dental",
-    );
+    expect(
+      payloadTitleOf({
+        currentRole: "Chief Operating Officer at Digital Dental",
+        personResearch: {
+          currentRole: { title: "Chief Operating Officer", company: "Digital Dental" },
+        },
+      }),
+    ).toBe("Chief Operating Officer");
+    expect(payloadTitleOf({ currentRole: "Chief Operating Officer at Digital Dental" })).toBeNull();
     expect(payloadTitleOf({ title: " " })).toBeNull();
     expect(payloadMatchesMetrics({ role: "operations", size: "sites:2-5" }, payload)).toBe(true);
     expect(payloadMatchesMetrics({ role: "leader" }, payload)).toBe(false);

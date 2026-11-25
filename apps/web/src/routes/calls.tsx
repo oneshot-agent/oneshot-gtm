@@ -23,6 +23,7 @@ import {
   beginCall,
   canDial,
   findRow,
+  rowKeptOutOfFilter,
   localTimeNow,
   saveKeyOf,
   nextRow,
@@ -128,6 +129,7 @@ function CallsPage() {
       role={role ?? null}
       size={size ?? null}
       onFilter={(patch) => void navigate({ search: withCallsFilter(search, patch), replace: true })}
+      updating={query.isPlaceholderData}
     />
   );
 }
@@ -143,6 +145,7 @@ export function CallsView({
   role = null,
   size = null,
   onFilter,
+  updating = false,
 }: {
   data: CallListResponse | undefined;
   error?: Error | null;
@@ -155,6 +158,8 @@ export function CallsView({
   size?: SizeBucket | null;
   /** Shows the Role and Size filters; called with the field changed. */
   onFilter?: (patch: MetricPatch) => void;
+  /** The rows are the previous filter's, kept while this one loads. */
+  updating?: boolean;
 }) {
   // Each row's next save id, kept here so a panel that remounts while its
   // save runs retries with the same one; a logged save or a new call takes
@@ -203,6 +208,7 @@ export function CallsView({
   const filters = onFilter ? (
     <div className="flex flex-wrap items-center gap-2">
       <ProspectMetricSelects role={role} size={size} onChange={onFilter} />
+      {updating && <span className="font-mono text-[11px] text-ink-faint">updating…</span>}
     </div>
   ) : null;
 
@@ -255,7 +261,12 @@ export function CallsView({
     );
   }
 
-  const row = selected != null ? findRow(data, selected, selectedPlay) : null;
+  const row =
+    (selected != null ? findRow(data, selected, selectedPlay) : null) ??
+    rowKeptOutOfFilter(openRef.current, selected, selectedPlay, {
+      ...(role ? { role } : {}),
+      ...(size ? { size } : {}),
+    });
   openRef.current = row;
   openCallRef.current = selectedCall ?? null;
   const panelCall = selectedCall ?? null;
@@ -305,14 +316,22 @@ export function CallsView({
           {section(
             "Due",
             data.due,
-            filtered ? "No cadence calls due in this filter." : "No cadence calls due.",
+            updating
+              ? "Loading…"
+              : filtered
+                ? "No cadence calls due in this filter."
+                : "No cadence calls due.",
           )}
           {section(
             "Call list",
             data.list,
-            filtered ? "Nobody else with a number in this filter." : "Nobody else with a number.",
+            updating
+              ? "Loading…"
+              : filtered
+                ? "Nobody else with a number in this filter."
+                : "Nobody else with a number.",
           )}
-          {data.listScanCapped && (
+          {data.listScanCapped && !updating && (
             <div className="-mt-6 text-[12px] text-ink-faint">
               Only the first 10,000 people with a number were checked against this filter.
             </div>

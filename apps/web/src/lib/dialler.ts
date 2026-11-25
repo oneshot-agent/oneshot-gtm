@@ -1,9 +1,11 @@
 import {
   CALL_OUTCOMES,
+  matchesProspectMetrics,
   type CallListResponse,
   type CallListRow,
   type CallOutcome,
   type LogCallRequest,
+  type ProspectMetricFilter,
 } from "@oneshot-gtm/shared-types";
 
 /**
@@ -141,6 +143,28 @@ export function findRow(
 ): CallListRow | null {
   const rows = [...data.due, ...data.list].filter((r) => r.prospectId === prospectId);
   return (playName ? rows.find((r) => r.playName === playName) : rows[0]) ?? null;
+}
+
+/**
+ * The open row a Role or Size filter has just left out: kept on screen (with
+ * its panel and unsaved note) while the founder works it. Only a row the
+ * active filter excludes is kept; a row that left the list for any other
+ * reason closes as before.
+ */
+export function rowKeptOutOfFilter(
+  kept: CallListRow | null,
+  prospectId: number | undefined,
+  playName: string | undefined,
+  filter: ProspectMetricFilter,
+): CallListRow | null {
+  if (!kept || prospectId == null || kept.prospectId !== prospectId) return null;
+  if (playName && kept.playName !== playName) return null;
+  if (!filter.role && !filter.size) return null;
+  const size = {
+    ...(kept.staff ? { staff: kept.staff } : {}),
+    ...(kept.sites ? { sites: kept.sites } : {}),
+  };
+  return matchesProspectMetrics(filter, kept.title, size) ? null : kept;
 }
 
 /** "4:07" */

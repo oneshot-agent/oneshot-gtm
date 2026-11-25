@@ -135,12 +135,16 @@ export interface ProspectMetricFilter {
   size?: SizeBucket;
 }
 
-/** The person's title on a queue payload: `title`, else `jobTitle`, else research's current role. */
+/**
+ * The person's title on a queue payload: `title`, else `jobTitle`, else the
+ * title of research's current role (never the rendered "X at Company" line,
+ * whose employer name could read as a role).
+ */
 export function payloadTitleOf(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const p = payload as Record<string, unknown>;
-  for (const key of ["title", "jobTitle", "currentRole"]) {
-    const v = p[key];
+  const research = p.personResearch as { currentRole?: { title?: unknown } } | undefined;
+  for (const v of [p.title, p.jobTitle, research?.currentRole?.title]) {
     if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;

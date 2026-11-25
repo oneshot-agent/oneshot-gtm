@@ -170,6 +170,19 @@ export function filteredBulkState(input: {
 }
 
 /**
+ * The filtered total the bulk buttons count: page one's total, raised to the
+ * rows loaded so far when a scan that stopped short counted fewer (a floor).
+ */
+export function loadedBulkTotal(
+  total: number | undefined,
+  lowerBound: boolean,
+  loaded: number,
+): { total: number | undefined; lowerBound: boolean } {
+  if (total == null) return { total, lowerBound };
+  return { total: Math.max(total, loaded), lowerBound: lowerBound || loaded > total };
+}
+
+/**
  * Pending rows split the way /queue shows them: `review` is the pending list
  * (rows with no strong offer left out), `noOffer` is those rows.
  */

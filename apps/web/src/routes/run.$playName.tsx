@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type RunPlayEvent, type RunPlayRequest, type RunRecord } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
+import { readQueueBatch } from "../lib/queueBatch.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
@@ -128,19 +129,23 @@ function RunPage() {
         // status stay on as a guard: a hand-edited URL can't pull another
         // play's rows into this play's form, and a row that got sent between
         // the click and the load drops out instead of being re-sent.
-        const res = await api.queue({
-          forRun: true,
-          play: playName,
-          status: "approved",
-          ...(search.ids ? { ids: search.ids } : {}),
-          // The page's filters narrow the batch in the server query, before the limit.
-          ...(search.show ? { show: search.show } : {}),
-          ...(search.channel ? { channel: search.channel } : {}),
-          ...(search.role ? { role: search.role } : {}),
-          ...(search.size ? { size: search.size } : {}),
-          ...(search.order ? { order: search.order } : {}),
-          limit: search.ids ? Math.max(1, search.ids.length) : (search.limit ?? 50),
-        });
+        const limit = search.ids ? Math.max(1, search.ids.length) : (search.limit ?? 50);
+        const request = (offset: number) =>
+          api.queue({
+            forRun: true,
+            play: playName,
+            status: "approved",
+            ...(search.ids ? { ids: search.ids } : {}),
+            // The page's filters narrow the batch in the server query, before the limit.
+            ...(search.show ? { show: search.show } : {}),
+            ...(search.channel ? { channel: search.channel } : {}),
+            ...(search.role ? { role: search.role } : {}),
+            ...(search.size ? { size: search.size } : {}),
+            ...(search.order ? { order: search.order } : {}),
+            limit,
+            ...(offset ? { offset } : {}),
+          });
+        const res = await readQueueBatch(request, limit);
         if (cancelledRef?.cancelled) return;
         setMissingContactIds(
           res.rows
@@ -300,12 +305,28 @@ function RunPage() {
     if (returnIn == null) return;
     if (returnIn <= 0) {
       toast.success(dryRunReturnSummary(aggregate.drafts, aggregate.flagged));
-      void globalNavigate({ to: "/queue", search: { status: "approved", play: playName } });
+      void globalNavigate({
+        to: "/queue",
+        search: {
+          status: "approved",
+          play: playName,
+          ...(search.role ? { role: search.role } : {}),
+          ...(search.size ? { size: search.size } : {}),
+        },
+      });
       return;
     }
     const timer = setTimeout(() => setReturnIn((n) => (n == null ? null : n - 1)), 1000);
     return () => clearTimeout(timer);
-  }, [returnIn, aggregate.drafts, aggregate.flagged, globalNavigate, playName]);
+  }, [
+    returnIn,
+    aggregate.drafts,
+    aggregate.flagged,
+    globalNavigate,
+    playName,
+    search.role,
+    search.size,
+  ]);
 
   if (!schema) {
     return (

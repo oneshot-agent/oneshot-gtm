@@ -10,6 +10,7 @@ import {
   isQueueFilterActive,
   pendingSplit,
   filteredBulkState,
+  loadedBulkTotal,
   queueCountLine,
   queuePlayList,
   queueRequest,
@@ -75,6 +76,13 @@ describe("sort, show and channel", () => {
         offset: 0,
       }),
     ).toEqual({ status: "pending", offerSkip: "exclude", limit: 50 });
+  });
+
+  it("raises a floored bulk total to the rows found on later pages", () => {
+    expect(loadedBulkTotal(0, true, 7)).toEqual({ total: 7, lowerBound: true });
+    expect(loadedBulkTotal(40, false, 40)).toEqual({ total: 40, lowerBound: false });
+    expect(loadedBulkTotal(40, false, 50)).toEqual({ total: 50, lowerBound: true });
+    expect(loadedBulkTotal(undefined, false, 5)).toEqual({ total: undefined, lowerBound: false });
   });
 
   it("sends the role and size filters", () => {

@@ -89,6 +89,7 @@ import {
   drainButtonState,
   drainSelectionState,
   filteredBulkState,
+  loadedBulkTotal,
   isQueueFilterActive,
   mergeRowMeta,
   pendingSplit,
@@ -743,20 +744,21 @@ function QueuePage() {
   const filtered =
     showFilter != null || channelFilter != null || roleFilter != null || sizeFilter != null;
   const activeFilterLabel = filterLabel(showFilter, channelFilter, roleFilter, sizeFilter);
+  const bulk = loadedBulkTotal(total, totalIsLowerBound, rows.length);
   const approveFiltered = filteredBulkState({
     filtered,
     statusFilter,
     acts: "pending",
-    total,
-    lowerBound: totalIsLowerBound,
+    total: bulk.total,
+    lowerBound: bulk.lowerBound,
     format: formatCount,
   });
   const drainFiltered = filteredBulkState({
     filtered,
     statusFilter,
     acts: "approved",
-    total,
-    lowerBound: totalIsLowerBound,
+    total: bulk.total,
+    lowerBound: bulk.lowerBound,
     format: formatCount,
   });
   const approveAllVars = {

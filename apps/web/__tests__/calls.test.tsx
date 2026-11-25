@@ -19,6 +19,7 @@ import {
   inCallWindow,
   dialReducer,
   findRow,
+  rowKeptOutOfFilter,
   logCallRequest,
   newSaveKey,
   nextRow,
@@ -292,6 +293,33 @@ describe("Calls page: role and size filters", () => {
       <CallsView data={{ ...data(), listScanCapped: true }} selected={undefined} {...filtering} />,
     );
     expect(capped).toContain("Only the first 10,000 people with a number were checked");
+  });
+
+  it("keeps the open row when a filter leaves it out, and only then", () => {
+    const open = row({ prospectId: 4, title: "COO", sites: 3 });
+    expect(rowKeptOutOfFilter(open, 4, undefined, { role: "leader" })).toBe(open);
+    expect(rowKeptOutOfFilter(open, 4, undefined, { size: "sites:21+" })).toBe(open);
+    // A row the filter still admits left the list for another reason: it closes.
+    expect(rowKeptOutOfFilter(open, 4, undefined, { role: "operations" })).toBeNull();
+    expect(rowKeptOutOfFilter(open, 4, undefined, {})).toBeNull();
+    expect(rowKeptOutOfFilter(open, 5, undefined, { role: "leader" })).toBeNull();
+    expect(rowKeptOutOfFilter(null, 4, undefined, { role: "leader" })).toBeNull();
+  });
+
+  it("marks kept results as updating instead of a final empty list", () => {
+    const html = render(
+      <CallsView
+        data={data({ due: [], list: [] })}
+        selected={undefined}
+        onOpen={() => {}}
+        role="finance"
+        size={null}
+        onFilter={() => {}}
+        updating
+      />,
+    );
+    expect(html).toContain("updating…");
+    expect(html).not.toContain("in this filter.");
   });
 
   it("shows the company size after the title and company", () => {
