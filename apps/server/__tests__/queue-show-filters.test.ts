@@ -408,3 +408,97 @@ describe("Approve pending with a filter on", () => {
     }
   });
 });
+
+describe("role and size filters", () => {
+  function people(): Record<string, number> {
+    return {
+      coo: row({ payload: { title: "Chief Operating Officer", siteCount: 3 } }),
+      ceo: row({
+        payload: { title: "CEO", personResearch: { company: { employeeCount: 1400 } } },
+      }),
+      cdo: row({ payload: { title: "Chief Digital Officer", siteCount: 40 } }),
+      vpOps: row({ payload: { title: "VP of Operations", offer: OFFER }, draft: DRAFT }),
+      blank: row({ payload: {} }),
+    };
+  }
+
+  it("narrows the plain list and its total", async () => {
+    const p = people();
+    const ops = await list("status=pending&role=operations");
+    expect(sorted(ids(ops))).toEqual(sorted([p.coo!, p.vpOps!]));
+    expect(ops.total).toBe(2);
+    expect(ids(await list("status=pending&role=leader"))).toEqual([p.ceo]);
+    expect(ids(await list("status=pending&role=technology"))).toEqual([p.cdo]);
+    expect(ids(await list("status=pending&size=staff:1000%2B"))).toEqual([p.ceo]);
+    expect(ids(await list("status=pending&size=sites:2-5"))).toEqual([p.coo]);
+    expect(sorted(ids(await list("status=pending&size=unknown")))).toEqual(
+      sorted([p.vpOps!, p.blank!]),
+    );
+    expect(ids(await list("status=pending&role=operations&size=sites:2-5"))).toEqual([p.coo]);
+  });
+
+  it("combines with a show filter and with ranked order", async () => {
+    const p = people();
+    expect(ids(await list("status=pending&show=has-draft&role=operations"))).toEqual([p.vpOps]);
+    expect(ids(await list("status=pending&show=has-draft&role=leader"))).toEqual([]);
+    const ranked = await list("status=pending&order=ranked&role=operations");
+    expect(sorted(ids(ranked))).toEqual(sorted([p.coo!, p.vpOps!]));
+  });
+
+  it("pages a filtered list without skipping or repeating a row", async () => {
+    setShowScanLimitsForTests({ window: 3 });
+    try {
+      const ops: number[] = [];
+      for (let i = 0; i < 7; i++) {
+        ops.push(row({ payload: { title: "COO" } }));
+        row({ payload: { title: "CEO" } });
+      }
+      const seen: number[] = [];
+      let offset = 0;
+      for (let guard = 0; guard < 10; guard++) {
+        const page = await list(`status=pending&role=operations&limit=3&offset=${offset}`);
+        seen.push(...ids(page));
+        if (!page.hasMore) break;
+        offset = page.nextOffset!;
+      }
+      expect(sorted(seen)).toEqual(sorted(ops));
+    } finally {
+      setShowScanLimitsForTests({ window: 200 });
+    }
+  });
+
+  it("refuses an unknown value, and an id pick ignores the filters", async () => {
+    const p = people();
+    expect(listQueueRoute(new Request("http://localhost/api/queue?role=boss")).status).toBe(400);
+    expect(listQueueRoute(new Request("http://localhost/api/queue?size=huge")).status).toBe(400);
+    expect(ids(await list(`ids=${p.ceo}&role=operations`))).toEqual([p.ceo]);
+  });
+
+  it("keeps siteCount on a list row", async () => {
+    const p = people();
+    const body = await list(`ids=${p.coo}`);
+    expect((body.rows[0]!.payload as { siteCount?: number }).siteCount).toBe(3);
+  });
+
+  it("approves only the rows the role and size filters list", async () => {
+    const p = people();
+    const res = await approveAllRoute(
+      new Request("http://localhost/api/queue/approve-all", {
+        method: "POST",
+        body: JSON.stringify({ role: "operations" }),
+      }),
+    );
+    expect(((await res.json()) as { approved: number }).approved).toBe(2);
+    expect(ledger.getQueueRow(p.coo!)?.status).toBe("approved");
+    expect(ledger.getQueueRow(p.vpOps!)?.status).toBe("approved");
+    expect(ledger.getQueueRow(p.ceo!)?.status).toBe("pending");
+    const bad = await approveAllRoute(
+      new Request("http://localhost/api/queue/approve-all", {
+        method: "POST",
+        body: JSON.stringify({ size: "huge" }),
+      }),
+    );
+    expect(bad.status).toBe(400);
+    expect(ledger.getQueueRow(p.ceo!)?.status).toBe("pending");
+  });
+});

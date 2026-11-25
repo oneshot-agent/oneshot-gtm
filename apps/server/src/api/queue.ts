@@ -128,6 +128,12 @@ import {
   type SendDeliveryView,
 } from "@oneshot-gtm/shared-types";
 import { DECISION_REASONS, isDecisionReason, type DecisionReason } from "@oneshot-gtm/shared-types";
+import {
+  isRoleGroup,
+  isSizeBucket,
+  payloadMatchesMetrics,
+  type ProspectMetricFilter,
+} from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
 import { sendsToday } from "./_capacity.ts";
@@ -766,6 +772,48 @@ export function rowMatchesShow(
   return queueRowMatchesShow(show, view, row.last_draft_json == null);
 }
 
+/** A row's parsed payload, or null when it is not JSON. */
+function payloadOf(row: Pick<QueueRow, "payload_json">): unknown {
+  try {
+    return JSON.parse(row.payload_json);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The JS check a list or approve batch finishes with: a `ready`/`held` show
+ * filter, the role and size filters, or both. Null when SQL alone decides.
+ */
+function rowMatcher(
+  show: QueueShow | undefined,
+  metrics: ProspectMetricFilter,
+): ((row: QueueRow) => boolean) | null {
+  const byShow = show && !queueShowIsExact(show) ? show : null;
+  const byMetrics = metrics.role != null || metrics.size != null;
+  if (!byShow && !byMetrics) return null;
+  return (row) =>
+    (!byShow || rowMatchesShow(byShow, row, toView(row))) &&
+    (!byMetrics || payloadMatchesMetrics(metrics, payloadOf(row)));
+}
+
+/** `?role=` and `?size=` of a list or approve request; an unknown value is an error. */
+function metricFilters(
+  role: unknown,
+  size: unknown,
+): { metrics: ProspectMetricFilter } | { error: string } {
+  const metrics: ProspectMetricFilter = {};
+  if (role != null && role !== "") {
+    if (!isRoleGroup(role)) return { error: `unknown role filter: ${String(role)}` };
+    metrics.role = role;
+  }
+  if (size != null && size !== "") {
+    if (!isSizeBucket(size)) return { error: `unknown size filter: ${String(size)}` };
+    metrics.size = size;
+  }
+  return { metrics };
+}
+
 /**
  * Limits on one `ready`/`held` request's scan: rows read per step; once the
  * page is full, candidates read (on a first page, for its total) before the
@@ -803,8 +851,8 @@ function exactPage(rows: QueueRow[], offset: number, total: number, lowerBound: 
 }
 
 /**
- * A `ready`/`held` page: `next` reads the SQL candidates in order, a step at
- * a time from a position; each is checked with `rowMatchesShow` and the page
+ * A JS-filtered page (`ready`/`held`, role, size): `next` reads the SQL
+ * candidates in order, a step at a time from a position; each is checked with `match` and the page
  * is the first `limit` matches from candidate `offset`. Reading on past a
  * held row keeps the page full, up to `showScan.max` candidates a request:
  * a scan that stops there returns what it found, `hasMore` and the position
@@ -812,8 +860,8 @@ function exactPage(rows: QueueRow[], offset: number, total: number, lowerBound: 
  * `showScan.budget`) to count its total, exact when it reached the last
  * candidate and otherwise a floor (`lowerBound`).
  */
-function showPage(
-  show: QueueShow,
+function matchPage(
+  match: (row: QueueRow) => boolean,
   next: (from: number) => { rows: QueueRow[]; done: boolean },
   offset: number,
   limit: number,
@@ -827,7 +875,7 @@ function showPage(
   for (;;) {
     const step = next(pos);
     step.rows.forEach((row, i) => {
-      if (!rowMatchesShow(show, row, toView(row))) return;
+      if (!match(row)) return;
       matched++;
       if (rows.length < limit) {
         rows.push(row);
@@ -870,9 +918,10 @@ export function setApproveScanWindowForTests(rows: number): void {
 function filteredPendingIds(
   ledger: ReturnType<typeof getLedger>,
   filters: QueueListFilters,
+  metrics: ProspectMetricFilter = {},
 ): number[] {
-  const exact = !filters.show || queueShowIsExact(filters.show.show);
-  const show = filters.show?.show;
+  const match = rowMatcher(filters.show?.show, metrics);
+  const exact = match == null;
   const ids: number[] = [];
   for (let offset = 0; ; offset += approveScanWindow) {
     const args: QueueListArgs = {
@@ -884,7 +933,7 @@ function filteredPendingIds(
     };
     const rows = ledger.listQueue(args);
     for (const row of rows) {
-      if (exact || rowMatchesShow(show!, row, toView(row))) ids.push(row.id);
+      if (!match || match(row)) ids.push(row.id);
     }
     if (rows.length < approveScanWindow) return ids;
   }
@@ -985,6 +1034,7 @@ const LIST_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   "seedHandle",
   "signal",
   "signalVerified",
+  "siteCount",
   "sourceLabel",
   "sourceProfileUrl",
   "subjectType",
@@ -1031,7 +1081,7 @@ function rowsInOrder(ledger: ReturnType<typeof getLedger>, ids: number[]): Queue
 function rankedPage(
   ledger: ReturnType<typeof getLedger>,
   window: RankableRow[],
-  show: QueueShow | undefined,
+  match: ((row: QueueRow) => boolean) | null,
   offset: number,
   limit: number,
 ): ListPage {
@@ -1039,7 +1089,7 @@ function rankedPage(
   // A full window may have left rows out: its count is then a floor. Paging
   // ends with the window: rows past it cannot rank.
   const windowFull = window.length >= RANK_WINDOW;
-  if (!show || queueShowIsExact(show)) {
+  if (!match) {
     const page = exactPage(
       rowsInOrder(ledger, ids.slice(offset, offset + limit)),
       offset,
@@ -1048,8 +1098,8 @@ function rankedPage(
     );
     return { ...page, hasMore: page.nextOffset < ids.length };
   }
-  const page = showPage(
-    show,
+  const page = matchPage(
+    match,
     (from) => ({
       rows: rowsInOrder(ledger, ids.slice(from, from + showScan.window)),
       done: from + showScan.window >= ids.length,
@@ -1103,27 +1153,31 @@ export function listQueueRoute(req: Request): Response {
   if (!ids && channelParam && !isOutreachChannel(channelParam)) {
     return jsonResponse({ error: `unknown channel: ${channelParam}` }, 400, req);
   }
+  const metricParams = metricFilters(url.searchParams.get("role"), url.searchParams.get("size"));
+  if (!ids && "error" in metricParams) return jsonResponse({ error: metricParams.error }, 400, req);
   if (!ids) {
     Object.assign(
       filters,
       showChannelFilters(url.searchParams.get("show"), url.searchParams.get("channel")),
     );
   }
-  const show = filters.show?.show;
+  // An id pick ignores every filter; otherwise show, role and size may need a JS pass.
+  const match =
+    ids || "error" in metricParams ? null : rowMatcher(filters.show?.show, metricParams.metrics);
   let page: ListPage | null = null;
   let ordered: QueueRow[];
   if (ids) {
     ordered = ledger.listQueue({ ...filters, ids, limit: Math.max(limit, ids.length) });
   } else if (ranked) {
     const window = ledger.listQueue({ ...filters, limit: RANK_WINDOW, columns: RANK_COLUMNS });
-    page = rankedPage(ledger, window, show, offset, limit);
+    page = rankedPage(ledger, window, match, offset, limit);
     ordered = page.rows;
-  } else if (!show || queueShowIsExact(show)) {
+  } else if (!match) {
     ordered = ledger.listQueue({ ...filters, limit, offset, dir });
     page = exactPage(ordered, offset, ledger.countQueue(filters), false);
   } else {
-    page = showPage(
-      show,
+    page = matchPage(
+      match,
       (from) => {
         const rows = ledger.listQueue({
           ...filters,
@@ -1870,9 +1924,10 @@ export async function suggestRejectReasonRoute(
 }
 
 export async function approveAllRoute(req: Request): Promise<Response> {
-  let body: { play?: string; show?: unknown; channel?: unknown } = {};
+  let body: { play?: string; show?: unknown; channel?: unknown; role?: unknown; size?: unknown } =
+    {};
   try {
-    body = (await req.json()) as { play?: string; show?: unknown; channel?: unknown };
+    body = (await req.json()) as typeof body;
   } catch {
     // empty body is fine
   }
@@ -1883,6 +1938,8 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   if (body.channel !== undefined && body.channel !== null && !isOutreachChannel(body.channel)) {
     return jsonResponse({ error: `unknown channel: ${String(body.channel)}` }, 400, req);
   }
+  const metricParams = metricFilters(body.role, body.size);
+  if ("error" in metricParams) return jsonResponse({ error: metricParams.error }, 400, req);
   const ledger = getLedger();
   // A row whose writer found no strong offer stays pending: it has no offer
   // to send, so approving it would only count a row the drain then holds.
@@ -1895,8 +1952,8 @@ export async function approveAllRoute(req: Request): Promise<Response> {
   // the rows it approves get their posts captured (in the background; the
   // capture re-checks each row is still approved). A `ready`/`held` filter
   // is finished in JS, so the UPDATE is then limited to those ids.
-  const pendingIds = filteredPendingIds(ledger, filters);
-  const exact = !filters.show || queueShowIsExact(filters.show.show);
+  const pendingIds = filteredPendingIds(ledger, filters, metricParams.metrics);
+  const exact = rowMatcher(filters.show?.show, metricParams.metrics) == null;
   const n = ledger.approveAllPending({
     ...(exact ? filters : { ...filters, ids: pendingIds }),
     member: currentMember(req)?.email ?? null,

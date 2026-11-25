@@ -9,9 +9,11 @@ import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import {
   REPLY_INTENTS,
+  companySizeOf,
   type CallBrief,
   type CallOutcome,
   type CallRecordView,
+  type CompanySize,
   type ReplyIntent,
 } from "@oneshot-gtm/shared-types";
 import {
@@ -892,6 +894,8 @@ export interface CallCandidate {
   /** Its play, when tier 3. */
   playName: string | null;
   lastTouchAt: string | null;
+  /** Staff and location counts from the queue row `queueId` names (`companySizeOf`). */
+  size: CompanySize;
 }
 
 const POSITIVE_INTENTS = REPLY_INTENTS.filter((i) => i.polarity === "positive").map((i) => i.label);
@@ -1031,16 +1035,25 @@ export function listCallCandidates(
                 CASE WHEN l.linked_queue_id IS NOT NULL THEN l.linked_queue_phone
                      ELSE mp.phone END AS queue_phone
            FROM linked l LEFT JOIN mail_phone mp ON mp.email = lower(trim(l.email))
+       ),
+       ranked AS (
+         SELECT *,
+                CASE WHEN positive_intent IS NOT NULL AND no_meeting THEN 1
+                     WHEN linkedin_connected THEN 2
+                     WHEN active_play IS NOT NULL THEN 3
+                     ELSE 4 END AS tier
+           FROM base
+          WHERE prospect_phone IS NOT NULL OR queue_phone IS NOT NULL
+          ORDER BY tier ASC, COALESCE(priority, -1) DESC, last_touch IS NULL, last_touch DESC, prospect_id DESC
+          LIMIT ? OFFSET ?
        )
-       SELECT *,
-              CASE WHEN positive_intent IS NOT NULL AND no_meeting THEN 1
-                   WHEN linkedin_connected THEN 2
-                   WHEN active_play IS NOT NULL THEN 3
-                   ELSE 4 END AS tier
-         FROM base
-        WHERE prospect_phone IS NOT NULL OR queue_phone IS NOT NULL
-        ORDER BY tier ASC, COALESCE(priority, -1) DESC, last_touch IS NULL, last_touch DESC, prospect_id DESC
-        LIMIT ? OFFSET ?`,
+       -- The size is read off the page's own queue rows only (a key seek each).
+       SELECT r.*,
+              json_extract(sq.payload_json, '$.siteCount') AS site_count,
+              json_extract(sq.payload_json, '$.personResearch.company.employeeCount') AS employee_count,
+              json_extract(sq.payload_json, '$.personResearch.company.size') AS company_size
+         FROM ranked r LEFT JOIN target_queue sq ON sq.id = r.queue_id AND json_valid(sq.payload_json)
+        ORDER BY r.tier ASC, COALESCE(r.priority, -1) DESC, r.last_touch IS NULL, r.last_touch DESC, r.prospect_id DESC`,
     )
     .all(opts.limit, Math.max(0, Math.trunc(opts.offset ?? 0))) as Array<{
     prospect_id: number;
@@ -1056,6 +1069,9 @@ export function listCallCandidates(
     priority: number | null;
     last_touch: string | null;
     tier: number;
+    site_count: unknown;
+    employee_count: unknown;
+    company_size: unknown;
   }>;
   return rows.map((r) => ({
     prospectId: r.prospect_id,
@@ -1071,6 +1087,10 @@ export function listCallCandidates(
     priority: typeof r.priority === "number" ? r.priority : null,
     playName: r.active_play,
     lastTouchAt: r.last_touch ? sqliteToIso(r.last_touch) : null,
+    size: companySizeOf({
+      siteCount: r.site_count,
+      personResearch: { company: { employeeCount: r.employee_count, size: r.company_size } },
+    }),
   }));
 }
 

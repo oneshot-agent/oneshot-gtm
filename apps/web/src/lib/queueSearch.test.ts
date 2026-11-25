@@ -37,6 +37,20 @@ describe("validateQueueSearch", () => {
     expect(hasQueueFilters({ channel: "email" })).toBe(true);
   });
 
+  it("keeps the role and size filters", () => {
+    expect(validateQueueSearch({ role: "operations", size: "sites:2-5" })).toEqual({
+      role: "operations",
+      size: "sites:2-5",
+    });
+    expect(validateQueueSearch({ role: "boss", size: "huge" })).toEqual({});
+    expect(hasQueueFilters({ role: "leader" })).toBe(true);
+    expect(hasQueueFilters({ size: "unknown" })).toBe(true);
+    expect(queueFiltersKey({ role: "leader" })).not.toBe(queueFiltersKey({}));
+    const storage = memoryStorage();
+    saveQueueFilters({ role: "technology", size: "staff:1000+" }, storage);
+    expect(loadQueueFilters(storage)).toEqual({ role: "technology", size: "staff:1000+" });
+  });
+
   it("drops unknown or malformed values", () => {
     expect(validateQueueSearch({ status: "bogus", play: "", order: "oldest-ish" })).toEqual({});
     expect(validateQueueSearch({ status: 1, play: 2 })).toEqual({});

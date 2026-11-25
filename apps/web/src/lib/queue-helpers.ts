@@ -1,5 +1,8 @@
 import {
+  payloadMatchesMetrics,
   queueRowMatchesShow,
+  type RoleGroup,
+  type SizeBucket,
   type QueueListResponse,
   type QueueOrder,
   type QueueRowView,
@@ -27,6 +30,8 @@ export function queueRequest(input: {
   orderOverride: QueueOrder | null;
   show?: QueueShow | null;
   channel?: QueueChannelFilter | null;
+  role?: RoleGroup | null;
+  size?: SizeBucket | null;
   limit?: number;
   offset?: number;
 }): {
@@ -36,6 +41,8 @@ export function queueRequest(input: {
   order?: QueueOrder;
   show?: QueueShow;
   channel?: QueueChannelFilter;
+  role?: RoleGroup;
+  size?: SizeBucket;
   limit: number;
   offset?: number;
 } {
@@ -54,6 +61,8 @@ export function queueRequest(input: {
     ...(input.orderOverride ? { order: input.orderOverride } : {}),
     ...(input.show ? { show: input.show } : {}),
     ...(input.channel ? { channel: input.channel } : {}),
+    ...(input.role ? { role: input.role } : {}),
+    ...(input.size ? { size: input.size } : {}),
     limit: input.limit ?? 200,
     ...(input.offset ? { offset: input.offset } : {}),
   };
@@ -68,7 +77,7 @@ export const DEMO_QUEUE_LIMIT = 500;
 
 /**
  * A /queue page cut from a captured document, as the server would cut it:
- * the Show and Channel filters (the chips' own predicate,
+ * the Show, Channel, role and size filters (the chips' own predicate,
  * `queueRowMatchesShow`), then `offset` and `limit`, with the server's
  * paging contract (`nextOffset`, `hasMore`). Captured views carry no
  * "never drafted" bit, so No draft reads a row with no usable draft. Ranked
@@ -76,13 +85,24 @@ export const DEMO_QUEUE_LIMIT = 500;
  */
 export function demoQueuePage(
   doc: QueueListResponse,
-  opts: { show?: QueueShow; channel?: QueueChannelFilter; offset?: number; limit?: number },
+  opts: {
+    show?: QueueShow;
+    channel?: QueueChannelFilter;
+    role?: RoleGroup;
+    size?: SizeBucket;
+    offset?: number;
+    limit?: number;
+  },
 ): QueueListResponse {
-  const { show, channel } = opts;
-  const filtered = show != null || channel != null;
+  const { show, channel, role, size } = opts;
+  const metrics = { ...(role ? { role } : {}), ...(size ? { size } : {}) };
+  const filtered = show != null || channel != null || role != null || size != null;
   const rows = filtered
     ? doc.rows.filter(
-        (row) => (!show || queueRowMatchesShow(show, row)) && (!channel || row.channel === channel),
+        (row) =>
+          (!show || queueRowMatchesShow(show, row)) &&
+          (!channel || row.channel === channel) &&
+          payloadMatchesMetrics(metrics, row.payload),
       )
     : doc.rows;
   const offset = Math.max(0, opts.offset ?? 0);

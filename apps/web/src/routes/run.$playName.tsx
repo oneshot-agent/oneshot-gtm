@@ -136,6 +136,8 @@ function RunPage() {
           // The page's filters narrow the batch in the server query, before the limit.
           ...(search.show ? { show: search.show } : {}),
           ...(search.channel ? { channel: search.channel } : {}),
+          ...(search.role ? { role: search.role } : {}),
+          ...(search.size ? { size: search.size } : {}),
           ...(search.order ? { order: search.order } : {}),
           limit: search.ids ? Math.max(1, search.ids.length) : (search.limit ?? 50),
         });
@@ -178,7 +180,17 @@ function RunPage() {
         fail(`failed to load approved targets from queue: ${(err as Error).message}`);
       }
     },
-    [playName, schema, search.limit, search.ids, search.show, search.channel, search.order],
+    [
+      playName,
+      schema,
+      search.limit,
+      search.ids,
+      search.show,
+      search.channel,
+      search.role,
+      search.size,
+      search.order,
+    ],
   );
 
   useEffect(() => {

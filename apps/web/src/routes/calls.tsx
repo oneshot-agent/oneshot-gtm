@@ -1,10 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import type { CallListResponse, CallListRow, LiveCallView } from "@oneshot-gtm/shared-types";
+import {
+  companySizeLabel,
+  isRoleGroup,
+  isSizeBucket,
+  type CallListResponse,
+  type CallListRow,
+  type LiveCallView,
+  type RoleGroup,
+  type SizeBucket,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
 import { NoNumber } from "../components/calls/NoNumber.tsx";
+import { ProspectMetricSelects } from "../components/ProspectMetricSelects.tsx";
 import { useLiveCalls, useSecondTick } from "../components/calls/useLiveCalls.ts";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
@@ -35,28 +45,59 @@ interface CallsSearch {
   play?: string;
   /** The call to open the panel on (the live bar's link): a person can have two unlogged. */
   call?: number;
+  /** Only people in this role group. */
+  role?: RoleGroup;
+  /** Only companies of this size. */
+  size?: SizeBucket;
+}
+
+type MetricPatch = { role?: RoleGroup | undefined; size?: SizeBucket | undefined };
+
+/** The URL's search, unknown values dropped. */
+export function validateCallsSearch(search: Record<string, unknown>): CallsSearch {
+  const role = search["role"];
+  const size = search["size"];
+  const filter = {
+    ...(isRoleGroup(role) ? { role } : {}),
+    ...(isSizeBucket(size) ? { size } : {}),
+  };
+  const id = Number(search["prospect"]);
+  if (!Number.isInteger(id) || id <= 0) return filter;
+  const play = search["play"];
+  const call = Number(search["call"]);
+  return {
+    prospect: id,
+    ...(typeof play === "string" && play ? { play } : {}),
+    ...(Number.isInteger(call) && call > 0 ? { call } : {}),
+    ...filter,
+  };
+}
+
+/** The search with a filter changed: the open row stays, a cleared filter leaves the URL. */
+export function withCallsFilter(search: CallsSearch, patch: MetricPatch): CallsSearch {
+  const next: CallsSearch = { ...search, ...patch };
+  if (!next.role) delete next.role;
+  if (!next.size) delete next.size;
+  return next;
 }
 
 export const Route = createFileRoute("/calls")({
   staticData: { title: "Calls" },
-  validateSearch: (search: Record<string, unknown>): CallsSearch => {
-    const id = Number(search["prospect"]);
-    if (!Number.isInteger(id) || id <= 0) return {};
-    const play = search["play"];
-    const call = Number(search["call"]);
-    return {
-      prospect: id,
-      ...(typeof play === "string" && play ? { play } : {}),
-      ...(Number.isInteger(call) && call > 0 ? { call } : {}),
-    };
-  },
+  validateSearch: validateCallsSearch,
   component: CallsPage,
 });
 
 function CallsPage() {
-  const { prospect, play, call } = Route.useSearch();
+  const search = Route.useSearch();
+  const { prospect, play, call, role, size } = search;
   const navigate = Route.useNavigate();
-  const query = useQuery({ queryKey: ["calls"], queryFn: api.calls, refetchInterval: 60_000 });
+  const query = useQuery({
+    // Unfiltered, it is the nav's own read (__root.tsx), so the page starts from it.
+    queryKey: role || size ? ["calls", role ?? null, size ?? null] : ["calls"],
+    queryFn: () => api.calls({ ...(role ? { role } : {}), ...(size ? { size } : {}) }),
+    refetchInterval: 60_000,
+  });
+  const filter = { ...(role ? { role } : {}), ...(size ? { size } : {}) };
   const open = (row: RowKey | null) => {
     // Reopening the row already open keeps the call it shows, so its panel
     // (and the note typed in it) stays; another row starts fresh.
@@ -64,11 +105,12 @@ function CallsPage() {
     void navigate({
       search:
         row == null
-          ? {}
+          ? filter
           : {
               prospect: row.prospectId,
               ...(row.playName ? { play: row.playName } : {}),
               ...(same && call ? { call } : {}),
+              ...filter,
             },
       replace: true,
     });
@@ -81,6 +123,9 @@ function CallsPage() {
       {...(play ? { selectedPlay: play } : {})}
       {...(call ? { selectedCall: call } : {})}
       onOpen={open}
+      role={role ?? null}
+      size={size ?? null}
+      onFilter={(patch) => void navigate({ search: withCallsFilter(search, patch), replace: true })}
     />
   );
 }
@@ -93,6 +138,9 @@ export function CallsView({
   selectedPlay,
   selectedCall,
   onOpen,
+  role = null,
+  size = null,
+  onFilter,
 }: {
   data: CallListResponse | undefined;
   error?: Error | null;
@@ -101,6 +149,10 @@ export function CallsView({
   /** Open the panel on this call rather than the one it would resume. */
   selectedCall?: number;
   onOpen: (row: RowKey | null) => void;
+  role?: RoleGroup | null;
+  size?: SizeBucket | null;
+  /** Shows the Role and Size filters; called with the field changed. */
+  onFilter?: (patch: MetricPatch) => void;
 }) {
   // Each row's next save id, kept here so a panel that remounts while its
   // save runs retries with the same one; a logged save or a new call takes
@@ -197,6 +249,7 @@ export function CallsView({
   openCallRef.current = selectedCall ?? null;
   const panelCall = selectedCall ?? null;
   const next = row ? nextRow(sectionRows(data, row), row) : null;
+  const filtered = role != null || size != null;
   const section = (title: string, rows: CallListRow[], empty: string) => (
     <section className="flex flex-col gap-3">
       <h2 className="text-[13px] font-medium text-ink-cream">
@@ -237,8 +290,21 @@ export function CallsView({
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <div className="flex min-w-0 flex-col gap-8">
-          {section("Due", data.due, "No cadence calls due.")}
-          {section("Call list", data.list, "Nobody else with a number.")}
+          {onFilter && (
+            <div className="-mb-4 flex flex-wrap items-center gap-2">
+              <ProspectMetricSelects role={role} size={size} onChange={onFilter} />
+            </div>
+          )}
+          {section(
+            "Due",
+            data.due,
+            filtered ? "No cadence calls due in this filter." : "No cadence calls due.",
+          )}
+          {section(
+            "Call list",
+            data.list,
+            filtered ? "Nobody else with a number in this filter." : "Nobody else with a number.",
+          )}
         </div>
         {/* Pinned beside the list, and never taller than the page: the header,
             footer and page padding take about 7rem, so a long brief scrolls
@@ -335,7 +401,9 @@ function CallRow({
           {mask("name", row.name) || "—"}
         </button>
         <div className="truncate text-[12px] text-ink-muted">
-          {[row.title, mask("company", row.company)].filter(Boolean).join(" · ")}
+          {[row.title, mask("company", row.company), companySizeLabel(row)]
+            .filter(Boolean)
+            .join(" · ")}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-ink-muted">
           {row.phone == null ? (

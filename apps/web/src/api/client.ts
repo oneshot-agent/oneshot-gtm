@@ -5,6 +5,7 @@ import type {
   DomainPurchaseView,
 } from "@oneshot-gtm/shared-types";
 import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
+import type { RoleGroup, SizeBucket } from "@oneshot-gtm/shared-types";
 import type {
   CallBrief,
   CallListResponse,
@@ -115,6 +116,7 @@ import type {
   LearningKind,
   LearningProposalsResult,
 } from "@oneshot-gtm/shared-types";
+import { matchesProspectMetrics } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 import {
   applyProspectFilters,
@@ -580,7 +582,20 @@ export const api = {
     >("/setup/linkedin-login/state"),
   meetings: () => getJson<MeetingsResult>("/meetings"),
   // The dialler: who to call, the brief to read, and the outcome the founder logs.
-  calls: () => getJson<CallListResponse>("/calls"),
+  calls: async (filter: { role?: RoleGroup; size?: SizeBucket } = {}) => {
+    // The demo has one capture of the page: its filter is cut from that here.
+    if (IS_DEMO) {
+      const doc = await getJson<CallListResponse>("/calls");
+      const keep = (r: CallListResponse["list"][number]) =>
+        matchesProspectMetrics(filter, r.title, { staff: r.staff, sites: r.sites });
+      return { ...doc, due: doc.due.filter(keep), list: doc.list.filter(keep) };
+    }
+    const q = new URLSearchParams();
+    if (filter.role) q.set("role", filter.role);
+    if (filter.size) q.set("size", filter.size);
+    const qs = q.toString();
+    return getJson<CallListResponse>(qs ? `/calls?${qs}` : "/calls");
+  },
   callBrief: (prospectId: number, opts: { playName?: string | null; regenerate?: boolean } = {}) =>
     postJson<{ brief: CallBrief }>("/calls/brief", {
       prospectId,
@@ -652,6 +667,9 @@ export const api = {
     /** The Show filter, applied before the page is cut. */
     show?: QueueShow;
     channel?: "email" | "linkedin";
+    /** Role group and company size, applied before the page is cut. */
+    role?: RoleGroup;
+    size?: SizeBucket;
     /** Explicit row pick. The "drain selected" path. */
     ids?: number[];
   }) => {
@@ -659,7 +677,7 @@ export const api = {
     // page, Show or Channel filter of it is cut from that document here, as
     // the prospects browse is, so no combination needs a capture of its own.
     if (IS_DEMO && !opts?.forRun && opts?.ids == null) {
-      const { show, channel, offset, limit, ...view } = opts ?? {};
+      const { show, channel, role, size, offset, limit, ...view } = opts ?? {};
       const q = new URLSearchParams();
       if (view.play) q.set("play", view.play);
       if (view.status) q.set("status", view.status);
@@ -670,6 +688,8 @@ export const api = {
         demoQueuePage(doc, {
           ...(show ? { show } : {}),
           ...(channel ? { channel } : {}),
+          ...(role ? { role } : {}),
+          ...(size ? { size } : {}),
           ...(offset ? { offset } : {}),
           ...(limit != null ? { limit } : {}),
         }),
@@ -685,6 +705,8 @@ export const api = {
     if (opts?.order) q.set("order", opts.order);
     if (opts?.show) q.set("show", opts.show);
     if (opts?.channel) q.set("channel", opts.channel);
+    if (opts?.role) q.set("role", opts.role);
+    if (opts?.size) q.set("size", opts.size);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.
@@ -769,15 +791,22 @@ export const api = {
       ...(hint?.hint ? { hint: hint.hint } : {}),
       ...(hint?.decisionReason ? { decisionReason: hint.decisionReason } : {}),
     }),
-  /** Approve pending rows (of one play); `show`/`channel` narrow it to the filtered rows. */
+  /** Approve pending rows (of one play); `show`/`channel`/`role`/`size` narrow it to the filtered rows. */
   approveAllQueue: (
     play?: string,
-    filters: { show?: QueueShow; channel?: "email" | "linkedin" } = {},
+    filters: {
+      show?: QueueShow;
+      channel?: "email" | "linkedin";
+      role?: RoleGroup;
+      size?: SizeBucket;
+    } = {},
   ) =>
     postJson<{ approved: number }>("/queue/approve-all", {
       ...(play ? { play } : {}),
       ...(filters.show ? { show: filters.show } : {}),
       ...(filters.channel ? { channel: filters.channel } : {}),
+      ...(filters.role ? { role: filters.role } : {}),
+      ...(filters.size ? { size: filters.size } : {}),
     }),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
   regenerateDraft: (id: number, rotateAngle = false) =>

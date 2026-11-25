@@ -399,6 +399,39 @@ describe("ledger calls: review fixes", () => {
     expect(ledger.listCallCandidates({ limit: 10 })).toEqual([]);
   });
 
+  it("reads the company's size off the queue row it lists", () => {
+    const linked = ledger.upsertProspect({ name: "L", email: "l@a.test", phone: phone(1) });
+    const qid = ledger.enqueueTarget({
+      playName: "p",
+      payload: {
+        email: "l@a.test",
+        siteCount: 4,
+        personResearch: { company: { employeeCount: 131, size: "51-200" } },
+      },
+      dedupeKey: "l",
+      source: "s",
+    })!;
+    ledger.setQueueProspectId(qid, linked);
+    const mailed = ledger.upsertProspect({ name: "M", email: "m@a.test" });
+    ledger.enqueueTarget({
+      playName: "p",
+      payload: {
+        email: "m@a.test",
+        phone: phone(2),
+        personResearch: { company: { size: "1,001-5,000" } },
+      },
+      dedupeKey: "m",
+      source: "s",
+    });
+    const bare = ledger.upsertProspect({ name: "B", email: "b@a.test", phone: phone(3) });
+    const size = new Map(
+      ledger.listCallCandidates({ limit: 10 }).map((c) => [c.prospectId, c.size]),
+    );
+    expect(size.get(linked)).toEqual({ staff: 131, sites: 4 });
+    expect(size.get(mailed)).toEqual({ staff: 1001 });
+    expect(size.get(bare)).toEqual({});
+  });
+
   it("pages through the ranked list", () => {
     const ids = [1, 2, 3].map((n) =>
       ledger.upsertProspect({ name: `P${n}`, email: `p${n}@a.test`, phone: phone(n) }),

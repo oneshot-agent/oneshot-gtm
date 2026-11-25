@@ -77,6 +77,25 @@ describe("sort, show and channel", () => {
     ).toEqual({ status: "pending", offerSkip: "exclude", limit: 50 });
   });
 
+  it("sends the role and size filters", () => {
+    expect(
+      queueRequest({
+        statusFilter: "pending",
+        playFilter: "all",
+        orderOverride: null,
+        role: "operations",
+        size: "staff:51-200",
+        limit: 50,
+      }),
+    ).toEqual({
+      status: "pending",
+      offerSkip: "exclude",
+      role: "operations",
+      size: "staff:51-200",
+      limit: 50,
+    });
+  });
+
   it("lists every play under the status, not only the page's", () => {
     expect(queuePlayList([{ playName: "beta" }], {}, { alpha: 3, beta: 1 })).toEqual([
       "alpha",
@@ -324,6 +343,47 @@ describe("queue.tsx fixed-props render fixture", () => {
     for (const status of ["pending", "rejected", "expired"] as const) {
       expect(renderStatus(status)).toMatch(/<button[^>]*>[\s\S]*?approve<\/button>/);
     }
+
+    // Staff and locations follow the signal; locations drop out when the signal names them.
+    const renderPayload = (payload: Record<string, unknown>) =>
+      renderToStaticMarkup(
+        createElement(QueueRow, {
+          row: {
+            ...row,
+            playName: "design-partner-loi",
+            payload: {
+              ...(row.payload as Record<string, unknown>),
+              buyerType: "enterprise",
+              ...payload,
+            },
+          },
+          ranked: false,
+          zebra: false,
+          expanded: false,
+          selected: false,
+          anySelected: false,
+          onToggleSelect: () => undefined,
+          onToggle: () => undefined,
+          generating: false,
+          onApprove: () => undefined,
+          onReject: () => undefined,
+          onMove: () => undefined,
+          moveTargets: [],
+          busy: false,
+        }),
+      );
+    const sized = renderPayload({
+      siteCount: 3,
+      personResearch: { company: { employeeCount: 131 } },
+    });
+    expect(sized).toContain("131 staff · 3 locations");
+    const named = renderPayload({
+      siteCount: 3,
+      signal: "3 locations (Main St, Elm St, Oak St)",
+      personResearch: { company: { employeeCount: 131 } },
+    });
+    expect(named).toContain(" · 131 staff");
+    expect(named).not.toContain("131 staff · 3 locations");
     for (const status of ["sent", "approved"] as const) {
       expect(renderStatus(status)).not.toMatch(/approve<\/button>/);
     }
