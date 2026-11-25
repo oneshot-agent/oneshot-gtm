@@ -1666,24 +1666,32 @@ export class SharedDb {
    * Hold `phone` for `member` as being verified, unless another active
    * member (or the unlisted local owner, '') holds it. Checked and written
    * under one write lock, so two workspaces never both claim one number
-   * while the provider is asked. False when someone else holds it.
+   * while the provider is asked. False when someone else holds it. A
+   * verification last touched before `staleBefore` holds nothing.
    */
-  reserveMemberPhone(member: string, phone: string): boolean {
+  reserveMemberPhone(member: string, phone: string, staleBefore = ""): boolean {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const held = this.db
-        .query<{ one: number }, [string, string]>(
+        .query<{ one: number }, [string, string, string]>(
           `SELECT 1 AS one FROM member_phones
             WHERE phone = ? AND member <> ? AND status <> 'failed'
+              AND NOT (status = 'verifying' AND updated_at < ?)
               AND (member = '' OR member IN (SELECT email FROM members WHERE removed_at IS NULL))
             LIMIT 1`,
         )
-        .get(phone, member);
+        .get(phone, member, staleBefore);
       if (held) {
         this.db.exec("ROLLBACK");
         return false;
       }
       const now = new Date().toISOString();
+      this.db.run(
+        `UPDATE member_phones SET status = 'failed', validation_code = NULL, updated_at = ?,
+                error = 'the code was not entered in time; press Verify again', write_token = ?
+          WHERE phone = ? AND member <> ? AND status = 'verifying' AND updated_at < ?`,
+        [now, randomUUID(), phone, member, staleBefore],
+      );
       // A removed member's leftover claim on it holds nothing any more.
       this.db.run(
         `UPDATE member_phones SET status = 'failed', verified_at = NULL, updated_at = ?,
