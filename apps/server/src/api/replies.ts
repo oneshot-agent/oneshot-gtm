@@ -27,6 +27,7 @@ import {
 import {
   generateReplyOptions,
   improveReplyOption,
+  isProspectOffer,
   lintReplyOptions,
   parseReplyAsk,
   type ReplyOptionsContext,
@@ -186,7 +187,12 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     ? ledger
         .listSequenceEventsForProspect(p.id)
         // A known connection's record stands in for an invite: nothing was sent.
-        .filter((e) => e.status === "sent" && !isKnownConnectionMarker(e.metadata_json))
+        // A `replied` step is the message they answered, so it stays in.
+        .filter(
+          (e) =>
+            (e.status === "sent" || e.status === "delivered" || e.status === "replied") &&
+            !isKnownConnectionMarker(e.metadata_json),
+        )
         .flatMap((e) => {
           try {
             const data = JSON.parse(e.metadata_json ?? "{}");
@@ -198,6 +204,7 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     : [];
   const row = p ? ledger.getQueueRowForProspect(p.id) : null;
   let firstTouch: ReplyOptionsContext["firstTouch"] = null;
+  let offer: ReplyOptionsContext["offer"] = null;
   if (row?.status === "sent") {
     try {
       const data = JSON.parse(row.payload_json);
@@ -206,6 +213,8 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
         edge: data.yourEdge ?? "",
         fitReason: data.fitReason ?? "",
       };
+      if (isProspectOffer(data.offer))
+        offer = { offer: data.offer.offer, steps: data.offer.steps, return: data.offer.return };
     } catch {
       /* Older queue rows lack a structured edge. */
     }
@@ -248,6 +257,8 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     casualTexture: false,
     icp: p?.icp_verdict ? { verdict: p.icp_verdict, reason: p.icp_verdict_reason ?? "" } : null,
     firstTouch,
+    offer,
+    intent: t.intent ?? null,
     angleJson: p?.angle_json,
   };
   context.learningKey = ledger.learning.captureContext({

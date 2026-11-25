@@ -616,3 +616,43 @@ it("keeps preference controls workspace scoped and blocks foreign-origin mutatio
     review.db.query("SELECT enabled FROM reply_learning_preferences WHERE id='private'").get(),
   ).toEqual({ enabled: 1 });
 });
+it("gives the options the offer we made, the email they answered, and the classified intent", () => {
+  const ledger = getLedger();
+  const email = "owner@riverside-clinic.example";
+  const prospectId = ledger.upsertProspect({ name: "Ada", email, company: "Riverside Clinic" });
+  const offer = {
+    offer: "Send reminders for next week's appointments at both clinics",
+    steps: "read the booking calendar, send each reminder a day ahead",
+    evidence: [],
+    stage: "small business",
+    level: "role",
+    return: "fewer no-shows, counted against last month's",
+  };
+  const rowId = ledger.enqueueTarget({
+    playName: "reply-options-offer",
+    payload: { name: "Ada", email, company: "Riverside Clinic", yourEdge: "No-shows", offer },
+    dedupeKey: `k-${email}`,
+    source: "find:test",
+  })!;
+  ledger.setQueueProspectId(rowId, prospectId);
+  ledger.setQueueStatus({ id: rowId, status: "sent" });
+  // markLatestStepReplied flips the email they answered to `replied`.
+  ledger.recordSequenceEvent({
+    prospectId,
+    playName: "reply-options-offer",
+    stepIndex: 0,
+    channel: "email",
+    status: "replied",
+    metadata: { subject: "reminders", body: "Could reminders cut your no-shows?" },
+  });
+  const t = { ...seed(), prospectId, intent: "question" as const };
+  const context = replyOptionsContext(t);
+  expect(context.offer).toEqual({
+    offer: offer.offer,
+    steps: offer.steps,
+    return: offer.return,
+  });
+  expect(context.priorOutreach).toEqual(["Could reminders cut your no-shows?"]);
+  expect(context.intent).toBe("question");
+  expect(replyOptionsContext({ ...t, intent: null }).intent).toBeNull();
+});

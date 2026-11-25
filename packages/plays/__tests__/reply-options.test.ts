@@ -5,7 +5,7 @@ vi.mock("@oneshot-gtm/intel", async () => ({
   complete: (...args: unknown[]) => complete(...args),
 }));
 const { generateReplyOptions, improveReplyOption } = await import("../src/reply-options.ts");
-const { buildDraftSystemPrompt, buildDraftUserPrompt, lintLinkedInDrafts } =
+const { buildDraftSystemPrompt, buildDraftUserPrompt, lintLinkedInDrafts, repairInstruction } =
   await import("../src/reply-options-rules.ts");
 const input = {
   channel: "linkedin" as const,
@@ -106,4 +106,89 @@ it("does not lint blank options or judge a set the founder is still filling in",
     input,
   );
   expect(pair.set).toEqual(["near-duplicate:direct+warm"]);
+});
+
+it("shows the offer we made and the classified intent only when the thread has them", () => {
+  const offer = {
+    offer: "Send reminders for next week's appointments at your two clinics",
+    steps: "read the booking calendar, send each reminder a day ahead",
+    return: "fewer no-shows, counted against last month's",
+  };
+  const prompt = buildDraftUserPrompt({ ...input, offer, intent: "question" });
+  expect(prompt).toContain("OFFER WE MADE");
+  expect(prompt).toContain(offer.offer);
+  expect(prompt).toContain(`Steps: ${offer.steps}`);
+  expect(prompt).toContain(`Return: ${offer.return}`);
+  expect(prompt).toContain("INTENT DIRECTIVE (classified: question");
+  const bare = buildDraftUserPrompt(input);
+  expect(bare).not.toContain("OFFER WE MADE");
+  expect(bare).not.toContain("INTENT DIRECTIVE");
+  // A label with no directive adds nothing either.
+  expect(buildDraftUserPrompt({ ...input, intent: "other" })).not.toContain("INTENT DIRECTIVE");
+});
+
+it("offers the scope move and binds the brief's framing", () => {
+  const system = buildDraftSystemPrompt("email");
+  expect(system).toContain("  scope: turn the offer we made into the smallest first step");
+  expect(system).toContain("one of the three moves must be scope");
+  expect(system).toContain("BRIEF FRAMING (binding)");
+  expect(system).toContain("internal tools, modules or features");
+  expect(system).not.toContain("or the move needs it");
+  expect(system).not.toContain("Telling an engineer");
+});
+
+it("flags a price or free claim, but not a negated one or a price the brief states", () => {
+  const lint = (text: string, primaryBrief = input.primaryBrief) =>
+    lintLinkedInDrafts({ direct: text, technical: "", warm: "" }, {}, { ...input, primaryBrief })
+      .perVariant.direct;
+  for (const text of [
+    "The first week is free.",
+    "We'd run it at no cost to you.",
+    "The pilot costs nothing.",
+    "Setup is $0.",
+    "It runs at $40 a month.",
+  ])
+    expect(lint(text), text).toContain("price-or-free");
+  for (const text of [
+    "The pilot is not free, and I'd rather say so now.",
+    "It isn't entirely free.",
+    "Feel free to send the calendar over.",
+    "That would free up your front desk.",
+    "Reminders go out a day ahead.",
+  ])
+    expect(lint(text), text).not.toContain("price-or-free");
+  expect(lint("It runs at $40 a month.", "Reminders for $40 a month.")).not.toContain(
+    "price-or-free",
+  );
+});
+
+it("treats a link without a scheme as a link", () => {
+  const lint = (text: string) =>
+    lintLinkedInDrafts({ direct: text, technical: "", warm: "" }, {}, input).perVariant.direct;
+  expect(lint("The write-up is at example.com/how-it-works.")).toEqual(
+    expect.arrayContaining(["link-not-in-brief", "bare-link"]),
+  );
+  expect(lint("See https://example.com and invented.example/page")).toContain("too-many-links");
+  expect(lint("The brief's page: https://example.com")).not.toContain("link-not-in-brief");
+  // A plain domain and a file extension are not links.
+  for (const text of ["Best, Founder\nexample.com", "It runs on Node.js/Deno today."]) {
+    expect(lint(text)).not.toContain("bare-link");
+    expect(lint(text)).not.toContain("link-not-in-brief");
+  }
+});
+
+it("names the price and bare-link rules in the repair turn only when they failed", () => {
+  const flags = {
+    perVariant: { direct: ["price-or-free"], technical: ["bare-link"], warm: [] },
+    set: [],
+  };
+  const repair = repairInstruction(flags);
+  expect(repair).toContain("free or at no cost");
+  expect(repair).toContain("without https:// is still a link");
+  const clean = repairInstruction({
+    ...flags,
+    perVariant: { ...flags.perVariant, direct: [], technical: [] },
+  });
+  expect(clean).not.toContain("free or at no cost");
+  expect(clean).not.toContain("without https://");
 });

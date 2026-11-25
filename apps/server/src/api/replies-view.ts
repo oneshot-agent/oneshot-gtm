@@ -177,7 +177,10 @@ export function threadContextVersion(
     angle: prospect?.angle_json,
     // Approved guidance moved: a cached generation no longer reflects it (#813).
     learning: guidanceVersionOrZero(),
-    prompt: 1,
+    // The options read the classified intent: a relabel makes them stale.
+    intent: t.intent ?? null,
+    // 2: options see the offer and intent and can take the scope move.
+    prompt: 2,
   });
 }
 

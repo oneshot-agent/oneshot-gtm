@@ -11,11 +11,12 @@
  * force three different positions; the claim-grounding block and the lint
  * gate keep the product description inside the brief.
  */
-import { lintEmail, humanizeDraft } from "./_lib.ts";
+import { lintEmail, humanizeDraft, hardBanFlags, intentDirectiveBlock } from "./_lib.ts";
 import { repeatsPriorText, bodyCommitsTerms, replyWordBudget } from "./reply.ts";
 import { loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { angleBlockFromJson } from "@oneshot-gtm/core";
 import type { ReplyAsk } from "@oneshot-gtm/shared-types";
+import type { ProspectOffer } from "./_prospect-offer.ts";
 
 export type Variant = "direct" | "technical" | "warm";
 export const VARIANTS: readonly Variant[] = ["direct", "technical", "warm"];
@@ -24,6 +25,8 @@ export const VARIANTS: readonly Variant[] = ["direct", "technical", "warm"];
 export const MOVES = {
   answer:
     "answer their actual question or point plainly, using only what PRODUCT BRIEF establishes; a capability the brief names does not license a claim about how it behaves",
+  scope:
+    "turn the offer we made into the smallest first step whose result they can check: what would be done, what is needed from them, how the result is measured and against what, and how the work runs, using only OFFER WE MADE and PRODUCT BRIEF; promise no outcome the inputs do not establish",
   concede:
     "grant the point they got right, where PRODUCT BRIEF does not refute it, and correct any earlier overreach in YOUR turns",
   reframe:
@@ -68,6 +71,10 @@ export interface DraftInput {
   icp?: { verdict: string; reason: string } | null;
   /** The sent queue row that opened the relationship: which edge the first email argued. */
   firstTouch?: { play: string; edge: string; fitReason: string } | null;
+  /** The offer the opening message made (`payload.offer` on that queue row). */
+  offer?: Pick<ProspectOffer, "offer" | "steps" | "return"> | null;
+  /** The classifier's label for their latest message; rendered through `intentDirectiveBlock`. */
+  intent?: string | null;
   /** `prospects.angle_json`, verbatim; rendered through the shared ANGLE block. */
   angleJson?: string | null;
 }
@@ -164,35 +171,44 @@ ${moves}
 - The move decides the substance of the option. The labels are only a secondary texture: direct is the shortest, technical engages one concrete mechanism or tradeoff, warm sounds most like a person. Three wordings of the same position are a failure even when their tone differs.
 - When their latest message challenges something YOU said earlier, or argues a limitation of your approach, one of the three moves must be concede. Use concede only when there is something real to concede: a thumbs-up or a one-word acceptance is not a challenge, and apologising for your own opener is not a concession.
 - When they share a project and there is no honest, specific product fit, use peer for at least one option: engage with what they built using only sourced dossier or thread facts, name one detail that is actually interesting, and ask about their priorities or what is next. Never twist their project into a product pitch. A good peer conversation with no product mention is a successful outcome.
+- When OFFER WE MADE is present and their latest message asks for details, asks how it would work for them, or shows interest in the offer, or INTENT DIRECTIVE classifies it as question or interested, one of the three moves must be scope.
+
+BRIEF FRAMING (binding):
+- When PRODUCT BRIEF says how to describe the product, what to lead with, or what to keep in the background, every option follows it. Detail about controls, safety or how it is governed appears only when they asked how it works or how it is controlled.
+- Never name a product's internal tools, modules or features unless the prospect used that name; say what it does instead.
 
 CLAIM GROUNDING (binding):
 - PRODUCT BRIEF is the only source of product facts. Describe the product in the brief's own terms or in plain words. Never describe it using the prospect's own architecture terms from the thread (their names for its parts, layers, data or behaviour, or anything else), even when it sounds like a fit.
 - If they ask whether the product does or is X and PRODUCT BRIEF does not establish X, do not say yes. Say what it does do and where the boundary is.
-- If they make a correct point that PRODUCT BRIEF does not refute, concede it plainly. "you're right on the split" beats any defence.
+- If they make a correct point that PRODUCT BRIEF does not refute, concede it plainly. "you're right on that" beats any defence.
 - No war stories, no "saved us from", no customer anecdotes, no incidents, no numbers, no roadmap, unless PRODUCT BRIEF states them.
+- Never state or imply a price, or that anything is free or at no cost, unless PRODUCT BRIEF states it.
 - Do not claim research facts unless they appear in the dossier. Treat every URL in the thread as opaque unless its contents are described in the dossier: you may repeat its domain or say they shared it, but never say you opened, checked, saw, liked, or evaluated it, and never attribute a stack, feature, quality, or use case to it without sourced dossier evidence.
-- Links: at most ONE URL per option, and only a URL that appears VERBATIM in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL. Never construct, guess, or adapt a URL. No PRODUCT BRIEF means no links. Include a link only when they asked for it or the move needs it.
+- Links: at most ONE URL per option, and only a URL that appears VERBATIM in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL. Never construct, guess, or adapt a URL. No PRODUCT BRIEF means no links. A link written without https:// is still a link. Include a link only when they asked for one, or FOUNDER CALENDAR URL at ACTION stage.
 
 CAPABILITY VS MECHANISM (binding):
 - PRODUCT BRIEF establishes what the product does. It almost never establishes how a behaviour works: what blocks versus queues, what happens when a limit is reached, ordering, retries, failure modes, or what is synchronous. A capability the brief names is not a mechanism you may describe.
 - Composing two brief phrases into a mechanism is an invention even though every phrase is quoted. "Sends appointment reminders" next to "syncs with your calendar" does not establish what happens when an appointment moves after its reminder went out.
-- When their latest message asks a mechanism question and PRODUCT BRIEF only names the capability, use check for at least one option. Telling an engineer you would confirm the detail is a strong answer; a confident wrong mechanism ends the thread.
+- When their latest message asks a mechanism question and PRODUCT BRIEF only names the capability, use check for at least one option. Telling a technical reader you would confirm the detail is a strong answer; a confident wrong mechanism ends the thread.
 - Never settle an either/or mechanism question ("is it X or Y") by picking a side PRODUCT BRIEF does not state.
 
 LEDGER GROUNDING (present only when the input carries it):
 - ICP GATE is a title-based verdict made before this conversation, with its reason. The thread outranks it: if the thread shows they are the person the ICP describes, treat the gate as stale and say nothing about it. A reject means stay at peer or ask moves and mention the product only when they ask. A pass never licenses a pitch.
 - FIRST TOUCH is the argument the opening email already made. Never re-run that argument or its wording on LinkedIn; every option must add something the email did not say.
+- OFFER WE MADE is what the opening message proposed for their firm. Every option stays consistent with it: never contradict it, swap in a different offer, or add a result, price or term it does not state.
+- INTENT DIRECTIVE is the classified intent of their latest message. Follow it in every option; the rules above still apply.
 - ANGLE is a synthesized read on this prospect. Its "Do NOT say" list is binding: never restate one of those premises, even rephrased. Its Hook is material for a specific opener only when it fits what they actually wrote.
 
 PRESSURE:
-- The objective is to keep a useful conversation moving toward founder discovery, product feedback, adoption, partnership, or a genuine peer relationship. Optimize for the next reply, not an immediate meeting.
+- The objective is to keep a useful conversation moving toward a scoped first step, discovery, product feedback, partnership, or a genuine peer relationship. Optimize for the next reply, not an immediate meeting.
 - Use the smallest next move the conversation has earned:
   1. LIGHT: for a greeting, short answer, polite question, or early exchange, answer plainly and ask one easy, relevant question about what they are building or how they handle the problem. A natural open loop is enough.
   2. INTEREST: after they describe a real problem or meaningful overlap, offer one useful angle and softly test interest in seeing or trying the relevant part. Do not demand time.
-  3. ACTION: only after explicit interest, a concrete use case, partnership language, or several substantive turns, suggest one low-pressure call, hands-on test, introduction, or integration discussion.
+  3. ACTION: only after explicit interest, a concrete use case, partnership language, or several substantive turns, suggest one low-pressure call, hands-on test, introduction, or scoped first step.
 - Do not force a question or CTA into every option. A specific answer that naturally invites a response can end as a statement. Never put multiple asks in one option.
+- Closing question: at most one. The reader can answer it from what they already know, in a line. Never ask them to gather, list, choose or decide something that is our scoping work. When the result belongs to someone other than the reader, ask to bring that person in.
 - The three options may sit at adjacent pressure levels, but none may jump more than one stage beyond what the thread earned. Most early threads should contain zero or one meeting-oriented option, not three.
-- SCHEDULING: FOUNDER CALENDAR URL is the founder's own booking link. Use that exact URL only when the conversation has earned a meeting: they explicitly agree, ask for a call, ask how to schedule, or the thread is already at ACTION stage. Never call it the prospect's calendar and never say the founder will book through it. Invite them naturally to pick a time, for example: "google meet works, grab whatever time works here: {FOUNDER CALENDAR URL}". Do not include the link in early-stage replies, do not ask another discovery question after they accept, do not pitch again, and never invent a time or claim a slot is booked. Keep it to one or two human sentences.
+- SCHEDULING: FOUNDER CALENDAR URL is the founder's own booking link. Use that exact URL only when the conversation has earned a meeting: they explicitly agree, ask for a call, ask how to schedule, or the thread is already at ACTION stage. Never call it the prospect's calendar and never say the founder will book through it. Invite them naturally to pick a time, for example: "here's a link to pick a time: {FOUNDER CALENDAR URL}". Do not include the link in early-stage replies, do not ask another discovery question after they accept, do not pitch again, and never invent a time or claim a slot is booked. Keep it to one or two human sentences.
 - Never invent availability, dates, times, calendar links, documents, actions, follow-ups, or promises.
 
 LEARNED PREFERENCES:
@@ -205,7 +221,7 @@ VOICE:
 - PRIOR OUTREACH includes emails sent to this person across the workspace. Continue that relationship, do not repeat claims, and do not ask for facts they already supplied by email. Never reuse a run of wording from PRIOR OUTREACH or from YOUR earlier turns.
 - Mirror their length and energy. Prefer 20-60 words; never exceed 100. Mention only the product detail needed to answer them.
 
-Before answering, silently verify: read written first; three different moves; concede present when they challenged you; no product claim outside PRODUCT BRIEF; no mechanism described that PRODUCT BRIEF does not state; no prospect vocabulary used as a product description; at most one link and only a verbatim one; register matches YOUR REGISTER; natural pressure for this stage; one ask at most; controlled texture matches its flag; no humanizer violation.
+Before answering, silently verify: read written first; three different moves; concede present when they challenged you; scope present when they asked about the offer; brief framing followed; no internal tool or module names; no product claim outside PRODUCT BRIEF; no price or free claim; no mechanism described that PRODUCT BRIEF does not state; no prospect vocabulary used as a product description; at most one link, only a verbatim one, and only when they asked or it is the calendar at ACTION stage; register matches YOUR REGISTER; natural pressure for this stage; one ask at most; controlled texture matches its flag; no humanizer violation.
 Output only {"read":string,"ask":{"level":"capability"|"mechanism"|null,"question":string|null,"briefAnswers":boolean},"direct":string,"technical":string,"warm":string,"moves":{"direct":string,"technical":string,"warm":string}}.`;
 }
 
@@ -232,6 +248,9 @@ export function buildDraftUserPrompt(i: DraftInput): string {
     i.firstTouch?.edge
       ? `FIRST TOUCH (play ${i.firstTouch.play || "unknown"}; the argument the opening email already made, never re-run it):\n${i.firstTouch.edge}${i.firstTouch.fitReason ? `\nFit reason at queue time: ${i.firstTouch.fitReason}` : ""}`
       : "",
+    i.offer?.offer
+      ? `OFFER WE MADE (what the opening message proposed; every detail must stay consistent with it):\n${i.offer.offer}${i.offer.steps ? `\nSteps: ${i.offer.steps}` : ""}${i.offer.return ? `\nReturn: ${i.offer.return}` : ""}`
+      : "",
     angleBlockFromJson(i.angleJson) ?? "",
     `YOUR REGISTER IN THIS THREAD: ${registerDirective(founderRegister(i.thread))}`,
     `CASUAL TEXTURE: ${i.casualTexture ? "enabled" : "disabled"}`,
@@ -241,6 +260,7 @@ export function buildDraftUserPrompt(i: DraftInput): string {
       ? `LEARNED WRITING PREFERENCES (founder-approved; apply only when relevant):\n${i.learnedPreferences.join("\n")}`
       : "",
     `FOUNDER INSTRUCTION: ${i.steer || "(none)"}`,
+    intentDirectiveBlock(i.intent) ?? "",
     `FULL ${(i.channel || "linkedin").toUpperCase()} THREAD (latest inbound message is the one to answer):\n${transcript}`,
   ]
     .filter(Boolean)
@@ -335,6 +355,48 @@ export function parseAsk(value: unknown): ReplyAsk | undefined {
 }
 // Lint gate
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()"'\]]+/gi;
+/** `domain.tld/path` with no scheme. A path is required, so a signature's plain domain line is not a link. */
+const BARE_URL_RE = /(?<![\w@./:-])(?:[a-z0-9-]+\.)+([a-z]{2,24})\/[^\s<>()"'\]]*/gi;
+/** File extensions that read as a TLD: `Node.js/Deno` is not a link. */
+const NOT_A_TLD =
+  /^(?:js|ts|jsx|tsx|mjs|cjs|py|rb|rs|sh|md|json|ya?ml|txt|html?|css|pdf|png|jpe?g|gif|svg)$/i;
+
+/** Every link in `text`: scheme or www links, and scheme-less ones found in what is left. */
+function linksIn(text: string): { urls: string[]; bare: string[] } {
+  const urls = text.match(URL_RE) ?? [];
+  const rest = text.replace(URL_RE, " ");
+  const bare = [...rest.matchAll(BARE_URL_RE)]
+    .filter((m) => !NOT_A_TLD.test(m[1]!))
+    .map((m) => m[0]);
+  return { urls: [...urls, ...bare], bare };
+}
+
+/** A free or no-cost claim; `$0` that is not the start of a smaller price like `$0.50`. */
+const FREE_RE =
+  /\bfree of charge\b|(?<!\bfeel\s|\bfeels\s|-)\bfree\b(?!-|\s+(?:up|time|of)\b)|\bno[-\s]cost\b|\bat no charge\b|\bcosts? nothing\b|\bfor nothing\b|\$\s?0(?![.,]?\d)/gi;
+/** A negation just before the claim: "not free", "isn't entirely free". */
+const NEGATED_BEFORE = /(?:\b(?:not|never|no longer)|n['’]t)\s+(?:\w+\s+)?$/i;
+
+function claimsFree(body: string): boolean {
+  return [...body.matchAll(FREE_RE)].some(
+    (m) => !NEGATED_BEFORE.test(body.slice(Math.max(0, m.index - 40), m.index)),
+  );
+}
+
+/** Prices PRODUCT BRIEF states, exactly as written: quoting one is not inventing one. */
+function briefPrices(brief: string): string[] {
+  return brief.match(/\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/gi) ?? [];
+}
+
+/**
+ * `price-or-free`: a price PRODUCT BRIEF does not state (the outbound hard
+ * bans, minus their link ban, which the allow-list owns here), or a free or
+ * no-cost claim, which a reply makes far more often than an opener does.
+ */
+function claimsPriceOrFree(body: string, brief: string): boolean {
+  const priced = hardBanFlags(body, briefPrices(brief)).some((f) => f !== "hard-ban:link");
+  return priced || claimsFree(body);
+}
 
 const TRAILING_PUNCT = new Set([".", ",", ";", ":", "!", "?", ")"]);
 
@@ -353,7 +415,7 @@ function normalizeUrl(url: string): string {
 
 function allowedUrls(input: DraftInput): Set<string> {
   const allowed = new Set<string>();
-  for (const url of input.primaryBrief.match(URL_RE) ?? []) allowed.add(normalizeUrl(url));
+  for (const url of linksIn(input.primaryBrief).urls) allowed.add(normalizeUrl(url));
   if (input.founderCalendarUrl) allowed.add(normalizeUrl(input.founderCalendarUrl));
   return allowed;
 }
@@ -393,7 +455,8 @@ export function lintLinkedInDrafts(drafts: Drafts, moves: Moves, input: DraftInp
 
   for (const v of written) {
     const body = drafts[v];
-    const urls = (body.match(URL_RE) ?? []).map(normalizeUrl);
+    const links = linksIn(body);
+    const urls = links.urls.map(normalizeUrl);
     const flags = lintEmail(
       "linkedin",
       body,
@@ -404,10 +467,12 @@ export function lintLinkedInDrafts(drafts: Drafts, moves: Moves, input: DraftInp
     const onlyCalendar = urls.length > 0 && urls.every((u) => u === calendar);
     const out = onlyCalendar ? flags.filter((f) => f !== "calendar-link") : flags;
     if (urls.some((u) => !allowed.has(u))) out.push("link-not-in-brief");
+    if (links.bare.some((u) => !allowed.has(normalizeUrl(u)))) out.push("bare-link");
     if (urls.length > 1) out.push("too-many-links");
     if (repeatsPriorText(body, theirs)) out.push("echoes-them");
     if (repeatsPriorText(body, yours)) out.push("repeats-you");
     if (bodyCommitsTerms(body)) out.push("commits-terms");
+    if (claimsPriceOrFree(body, input.primaryBrief)) out.push("price-or-free");
     perVariant[v] = out;
   }
 
@@ -455,7 +520,7 @@ export function emptyFlags(): DraftFlags {
  * or missing moves are reassigned the first unused move in menu order, so
  * the repair turn can name the exact rewrite instead of restating the rule.
  */
-/** Reassignment preference: moves that fit any thread first; concede and park need a reason the code cannot see. */
+/** Reassignment preference: moves that fit any thread first; concede, park and scope need a reason the code cannot see. */
 const REASSIGN_ORDER: readonly Move[] = [
   "answer",
   "ask",
@@ -464,6 +529,7 @@ const REASSIGN_ORDER: readonly Move[] = [
   "concede",
   "park",
   "check",
+  "scope",
 ];
 
 export function reassignMoves(moves: Moves): Partial<Record<Variant, Move>> {
@@ -507,6 +573,7 @@ export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string 
       flags.set.some((f) => f.startsWith("near-duplicate:") && f.includes(v)),
   );
   const keep = VARIANTS.filter((v) => !rewrites.includes(v));
+  const flagged = (flag: string) => VARIANTS.some((v) => flags.perVariant[v].includes(flag));
   const assignments = (Object.entries(reassigned) as Array<[Variant, Move]>).map(
     ([v, m]) => `${v} must now declare the move ${m} (${MOVES[m]}) and take that position`,
   );
@@ -517,7 +584,13 @@ export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string 
       ? `Rewrite only ${rewrites.join(" and ")}; return ${keep.join(" and ")} word for word as they were, with their moves unchanged.`
       : "Rewrite all three. Each option declares a different move from the menu and takes that position, not a different wording of the same one.",
     "Describe the product only in PRODUCT BRIEF terms; never restate their own vocabulary as a claim about it; concede what they got right.",
-    "At most one link per option and only one that appears verbatim in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL.",
+    "At most one link per option, only when they asked for one or it is FOUNDER CALENDAR URL at ACTION stage, and only one that appears verbatim in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL.",
+    flagged("bare-link")
+      ? "A link written without https:// is still a link: drop it unless it appears verbatim in PRODUCT BRIEF."
+      : "",
+    flagged("price-or-free")
+      ? "Never state or imply a price, or that anything is free or at no cost, unless PRODUCT BRIEF states it."
+      : "",
     `Stay under ${MAX_WORDS} words, keep YOUR REGISTER, and do not reuse a run of wording from their messages or from your earlier turns.`,
     "Same JSON shape, including read, ask and moves.",
   ]

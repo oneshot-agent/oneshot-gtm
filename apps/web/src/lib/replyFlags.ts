@@ -25,6 +25,8 @@ const DRAFT: Record<string, string> = {
   "echoes-them": "repeats their own words back to them",
   "repeats-you": "repeats something you already sent them",
   "commits-terms": "commits to pricing or terms",
+  "price-or-free": "names a price or says something is free",
+  "bare-link": "has a link written without https://",
   "calendar-link": "includes a scheduling link",
   "body-too-long": "runs long for a reply",
   "empty-body": "is empty",
@@ -83,6 +85,7 @@ export function replySetNote(flags: string[]): string | null {
 /** The stance an option takes, in the founder's words rather than the prompt's menu key. */
 const MOVE: Record<string, string> = {
   answer: "Answers their point",
+  scope: "Lays out the first step",
   concede: "Grants what they got right",
   reframe: "Says what it is and is not for them",
   ask: "Asks one question back",
