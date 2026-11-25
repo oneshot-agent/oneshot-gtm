@@ -62,11 +62,14 @@ Without it, Call opens a `tel:` link. With it, Call rings your own phone; when y
    TWILIO_ACCOUNT_SID=AC…      # the account or subaccount
    TWILIO_API_KEY_SID=SK…
    TWILIO_API_KEY_SECRET=…
+   TWILIO_RING_FROM=+1…        # optional: a number on that account
    ```
+
+   Without `TWILIO_RING_FROM`, your phone is rung from your own number, and some carriers reject that as spoofed (Twilio reports the call as busy within seconds). With it, your phone is rung from that number; the prospect still sees yours.
 
 2. Each member verifies their own phone in **Setup → Calls → Your phone**: type the mobile, press Verify, and type the 6-digit code on the screen when Twilio rings you. Your phone is yours across every workspace on the install; nobody else's Call rings it, and another member cannot add it. Removing it also removes it from Twilio, so using it again needs a new code.
 
-No webhook, tunnel or Twilio number is needed: the server asks Twilio for everything and polls. The transcription service is created on the first transcript and shared by every workspace.
+No webhook or tunnel is needed, and a Twilio number only for `TWILIO_RING_FROM`: the server asks Twilio for everything and polls. The transcription service is created on the first transcript and shared by every workspace.
 
 **On every page:** while a call is live, a bar under the header shows who is on it, with whom, how long it has been connected and whether it is being recorded. Your own call has **Open** and **Hang up**. A teammate's call is shown read-only, so you can see who is on a call. After you hang up, the bar keeps your call until its outcome is logged, showing the transcript as it comes (Transcribing…, then Transcript ready). The bar also keeps your call moving: you can leave the Calls page while your phone rings and the prospect is still dialled once you pick up. While your call is connected, the browser tab's title starts with ● On call.
 

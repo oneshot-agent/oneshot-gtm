@@ -27,6 +27,8 @@ export interface TwilioKeys {
   accountSid: string;
   apiKeySid: string;
   apiKeySecret: string;
+  /** A number on the account to ring members from; else their own number calls them, which some carriers refuse as spoofed. */
+  ringFrom?: string;
 }
 
 /** The provider keys from the environment (the workspace's `.env`); null unless all three are set. */
@@ -34,7 +36,9 @@ export function twilioKeysFromEnv(env: NodeJS.ProcessEnv = process.env): TwilioK
   const accountSid = env["TWILIO_ACCOUNT_SID"]?.trim();
   const apiKeySid = env["TWILIO_API_KEY_SID"]?.trim();
   const apiKeySecret = env["TWILIO_API_KEY_SECRET"]?.trim();
-  return accountSid && apiKeySid && apiKeySecret ? { accountSid, apiKeySid, apiKeySecret } : null;
+  if (!accountSid || !apiKeySid || !apiKeySecret) return null;
+  const ringFrom = env["TWILIO_RING_FROM"]?.trim();
+  return { accountSid, apiKeySid, apiKeySecret, ...(ringFrom ? { ringFrom } : {}) };
 }
 
 /** A provider call that failed, with the provider's own message. */
@@ -375,7 +379,7 @@ export class TwilioBridge implements CallBridge {
   }): Promise<{ callSid: string }> {
     const body = await this.request<{ sid?: unknown }>("POST", this.account("Calls.json"), {
       To: input.memberPhone,
-      From: input.memberPhone,
+      From: this.keys.ringFrom ?? input.memberPhone,
       MachineDetection: "Enable",
       Twiml: holdTwiml(input.sayName),
     });

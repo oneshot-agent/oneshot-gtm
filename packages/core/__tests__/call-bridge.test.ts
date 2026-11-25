@@ -72,6 +72,14 @@ describe("keys", () => {
         TWILIO_API_KEY_SECRET: "x",
       }),
     ).toEqual({ accountSid: "AC1", apiKeySid: "SK1", apiKeySecret: "x" });
+    expect(
+      twilioKeysFromEnv({
+        TWILIO_ACCOUNT_SID: "AC1",
+        TWILIO_API_KEY_SID: "SK1",
+        TWILIO_API_KEY_SECRET: "x",
+        TWILIO_RING_FROM: " +15550009999 ",
+      }),
+    ).toEqual({ accountSid: "AC1", apiKeySid: "SK1", apiKeySecret: "x", ringFrom: "+15550009999" });
     expect(callBridgeFromEnv({})).toBeNull();
   });
 });
@@ -190,6 +198,15 @@ describe("TwilioBridge", () => {
         '<Response><Dial callerId="+15550001111" answerOnBridge="true" record="record-from-answer-dual"><Number>+15126531187</Number></Dial></Response>',
     });
     expect(JSON.stringify(sent)).not.toMatch(/Url|StatusCallback/);
+  });
+
+  it("rings the member from the account's number when one is set", async () => {
+    const { fetch, sent } = fakeFetch({
+      [`POST ${ACCOUNT}/Calls.json`]: () => ({ status: 201, body: { sid: "CA1" } }),
+    });
+    const bridge = new TwilioBridge({ ...KEYS, ringFrom: "+15550009999" }, { fetch });
+    await bridge.start({ memberPhone: "+15550001111", sayName: null });
+    expect(sent[0]!.form).toMatchObject({ To: "+15550001111", From: "+15550009999" });
   });
 
   it("puts one deadline on the request and its body; a write that times out is uncertain", async () => {

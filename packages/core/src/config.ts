@@ -766,6 +766,7 @@ export const ENV_ONLY_SECRET_KEYS = [
   "TWILIO_ACCOUNT_SID",
   "TWILIO_API_KEY_SID",
   "TWILIO_API_KEY_SECRET",
+  "TWILIO_RING_FROM",
 ] as const;
 export type EnvOnlySecretKey = (typeof ENV_ONLY_SECRET_KEYS)[number];
 

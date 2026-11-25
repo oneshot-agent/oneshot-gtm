@@ -715,7 +715,10 @@ async function holdStep(
   if (TERMINAL.has(state.status)) {
     ledger.updateUnclaimedCall(id, {
       status: state.status,
-      statusReason: state.status === "failed" ? "your phone did not answer" : ENDED_BEFORE_DIAL,
+      statusReason:
+        state.status === "failed"
+          ? "your phone did not pick up (busy, declined or unanswered)"
+          : ENDED_BEFORE_DIAL,
       transcriptStatus: "none",
     });
     return;

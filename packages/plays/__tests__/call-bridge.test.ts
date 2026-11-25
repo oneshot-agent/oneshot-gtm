@@ -391,7 +391,7 @@ describe("the hold before the prospect is dialled", () => {
     });
     bridge.state = st("failed", null, false, null);
     expect((await refreshBridgedCall(other.id, { bridge, now: IN_WINDOW })).statusReason).toBe(
-      "your phone did not answer",
+      "your phone did not pick up (busy, declined or unanswered)",
     );
     expect(bridge.connect).not.toHaveBeenCalled();
   });
