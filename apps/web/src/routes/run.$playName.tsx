@@ -115,6 +115,8 @@ function RunPage() {
   // fetch returned zero. Surfaces a one-line empty-state hint so the
   // founder isn't confused by the schema's default empty row.
   const [hydrationEmpty, setHydrationEmpty] = useState(false);
+  // The batch read stopped at its request limit before the filter's matches ran out.
+  const [hydrationCapped, setHydrationCapped] = useState(false);
   // True while approved rows load from the queue: the form waits for them.
   const [hydrating, setHydrating] = useState(
     search.fromQueue === "1" && search.runId == null && schema != null,
@@ -152,6 +154,7 @@ function RunPage() {
           });
         const res = await readQueueBatch(request, limit);
         if (cancelledRef?.cancelled) return;
+        setHydrationCapped(res.hasMore === true && res.rows.length < limit);
         setMissingContactIds(
           res.rows
             .filter((r) => {
@@ -598,6 +601,12 @@ function RunPage() {
         {hydrating && (
           <p className="mt-3 flex items-center gap-1.5 font-mono text-[12px] text-ink-muted">
             <Loader2 size={12} className="animate-spin" /> loading approved rows from the queue…
+          </p>
+        )}
+        {hydrationCapped && !hydrating && (
+          <p className="mt-3 font-mono text-[12px] text-ink-spend-2">
+            the queue search stopped before it found {search.limit ?? 50} matching approved rows ·
+            this batch may be short; widen the filter on the queue page to reach the rest
           </p>
         )}
         {hydrationEmpty && (
