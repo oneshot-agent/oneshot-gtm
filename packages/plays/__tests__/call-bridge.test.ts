@@ -1383,6 +1383,40 @@ describe("two members verifying one number at once", () => {
   });
 });
 
+describe("an abandoned verification", () => {
+  it("stops holding the number once its window has passed", async () => {
+    getSharedDb().addMember({ email: "mia@example.com", role: "member" });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const started = new Date("2026-11-18T19:41:00Z");
+      vi.setSystemTime(started);
+      getSharedDb().setMemberPhone({
+        member: "",
+        phone: MEMBER,
+        status: "verifying",
+        validationCode: "123456",
+      });
+      vi.setSystemTime(new Date(started.getTime() + VERIFY_TIMEOUT_MS - 1000));
+      const early = await verifyMemberPhone("mia@example.com", MEMBER, {
+        bridge: fakeBridge(),
+      }).catch((e: unknown) => e);
+      expect(early).toMatchObject({ status: 409 });
+
+      vi.setSystemTime(new Date(started.getTime() + VERIFY_TIMEOUT_MS + 1000));
+      const mine = await verifyMemberPhone("mia@example.com", MEMBER, { bridge: fakeBridge() });
+      expect(mine.status).toBe("verifying");
+      expect(getSharedDb().memberPhone("")).toMatchObject({
+        status: "failed",
+        validation_code: null,
+        error: "the code was not entered in time; press Verify again",
+      });
+    } finally {
+      vi.useRealTimers();
+      getSharedDb().removeMember("mia@example.com");
+    }
+  });
+});
+
 describe("only the challenge Verify started proves a phone", () => {
   it("never takes a bare reservation, or a row changed meanwhile, as verified", async () => {
     const bridge = fakeBridge();

@@ -171,7 +171,9 @@ export async function verifyMemberPhone(
   if (own?.phone === phone && own.status === "verified") return memberPhoneView(email);
   // A caller ID verified for one member must never be claimable by another
   // without a code: reserved before the provider is asked.
-  if (!shared.reserveMemberPhone(member, phone))
+  // A verification abandoned past its window holds the number for nobody.
+  const staleBefore = new Date(Date.now() - VERIFY_TIMEOUT_MS).toISOString();
+  if (!shared.reserveMemberPhone(member, phone, staleBefore))
     throw new CallBridgeRequestError("that number is another member's phone", 409);
   // Every write below lands only on this reservation: never on a row written since.
   const token = shared.memberPhone(member)?.write_token ?? "";
