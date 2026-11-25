@@ -16,6 +16,8 @@ describe("roleGroupOf", () => {
     ["Co-Founder & COO", "operations"],
     ["VP of Operations and Integration", "operations"],
     ["Vice President Operations", "operations"],
+    ["Vice-President of Operations", "operations"],
+    ["Senior Vice-President", "other"],
     ["Chief Operations Officer", "operations"],
     ["Regional Practice Manager", "operations"],
     ["Director of Strategic Operations", "operations"],

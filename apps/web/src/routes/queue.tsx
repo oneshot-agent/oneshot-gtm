@@ -967,9 +967,29 @@ function QueuePage() {
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp
-            filterActive={isQueueFilterActive(statusFilter, playFilter) || filtered}
-          />
+          <>
+            <EmptyQueueHelp
+              filterActive={isQueueFilterActive(statusFilter, playFilter) || filtered}
+            />
+            {/* A filtered scan can stop at its read limit with no match yet: let it go on. */}
+            {queueQuery.hasNextPage && (
+              <div className="px-6 py-2">
+                <button
+                  type="button"
+                  disabled={queueQuery.isFetchingNextPage}
+                  onClick={() => void queueQuery.fetchNextPage()}
+                  className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                >
+                  {queueQuery.isFetchingNextPage ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <ChevronDown size={11} />
+                  )}
+                  none matched yet · search further
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">

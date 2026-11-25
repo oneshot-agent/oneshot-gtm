@@ -477,6 +477,19 @@ describe("listCalls: role and size filters", () => {
     expect(listCalls(new Date(), { limit: 2, pageSize: 2 }).list[0]!.roleGroup).toBe("leader");
   });
 
+  it("reads 25 pages under a filter, and says when matches may lie past them", () => {
+    callsOn();
+    const ops = person(0, "COO");
+    for (let i = 1; i <= 52; i++) person(i, "CEO");
+    const capped = listCalls(new Date(), { role: "operations", pageSize: 2 });
+    expect(capped.list).toEqual([]);
+    expect(capped.listScanCapped).toBe(true);
+    const found = listCalls(new Date(), { role: "operations", pageSize: 3 });
+    expect(found.list.map((r) => r.prospectId)).toEqual([ops]);
+    expect(found).not.toHaveProperty("listScanCapped");
+    expect(listCalls(new Date(), { pageSize: 2 })).not.toHaveProperty("listScanCapped");
+  });
+
   it("filters by size, an unknown size included, and puts the counts on the row", () => {
     callsOn();
     const small = person(0, "Owner", { personResearch: { company: { employeeCount: 12 } } });

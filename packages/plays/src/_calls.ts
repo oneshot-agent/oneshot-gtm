@@ -68,6 +68,8 @@ export const CALL_LIST_LIMIT = 200;
 /** Ranked candidates read per page while filling the call list, and at most this many pages. */
 const CALL_CANDIDATE_PAGE = 400;
 const CALL_CANDIDATE_PAGES = 5;
+/** With a role or size filter most candidates drop out: read further (10,000 at 400 a page). */
+const CALL_CANDIDATE_PAGES_FILTERED = 25;
 
 /** Days a `not_now` holds the cadence when the founder picks no date. */
 const NOT_NOW_DEFAULT_DAYS = 14;
@@ -822,7 +824,10 @@ export function listCalls(
   // The limit counts rows that pass the company list and the role/size filter
   // and have a usable number: page through the ranked candidates, in order, until it is met
   // or they run out (bounded; the first page is normally enough).
-  for (let page = 0; page < CALL_CANDIDATE_PAGES && list.length < limit; page++) {
+  const filtered = filter.role != null || filter.size != null;
+  const pages = filtered ? CALL_CANDIDATE_PAGES_FILTERED : CALL_CANDIDATE_PAGES;
+  let unread = false;
+  for (let page = 0; page < pages && list.length < limit; page++) {
     const candidates = ledger.listCallCandidates({
       limit: pageSize,
       offset: page * pageSize,
@@ -838,6 +843,8 @@ export function listCalls(
       if (row) list.push(row);
     }
     if (candidates.length < pageSize) break;
+    // The last allowed page was full: candidates past it were never checked.
+    if (page === pages - 1 && list.length < limit) unread = true;
   }
 
   const ids = [...due, ...list].map((r) => r.prospectId);
@@ -847,5 +854,5 @@ export function listCalls(
     row.lastCall = lastCalls.get(row.prospectId) ?? null;
     if (row.section === "due") row.lastTouchAt = touches.get(row.prospectId) ?? null;
   }
-  return { ...base, due, list };
+  return { ...base, due, list, ...(filtered && unread ? { listScanCapped: true } : {}) };
 }

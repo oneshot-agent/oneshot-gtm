@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -96,6 +96,8 @@ function CallsPage() {
     queryKey: role || size ? ["calls", role ?? null, size ?? null] : ["calls"],
     queryFn: () => api.calls({ ...(role ? { role } : {}), ...(size ? { size } : {}) }),
     refetchInterval: 60_000,
+    // A filter change keeps the last list (and the open panel's unsaved note) until the new one loads.
+    placeholderData: keepPreviousData,
   });
   const filter = { ...(role ? { role } : {}), ...(size ? { size } : {}) };
   const open = (row: RowKey | null) => {
@@ -197,12 +199,20 @@ export function CallsView({
     </div>
   );
 
+  // Shown in every layout, so a filtered load that failed can be cleared from the page.
+  const filters = onFilter ? (
+    <div className="flex flex-wrap items-center gap-2">
+      <ProspectMetricSelects role={role} size={size} onChange={onFilter} />
+    </div>
+  ) : null;
+
   // A failed refresh keeps the page (and the open panel's outcome and note);
   // only a first load that failed replaces it.
   if (error && !data) {
     return (
       <div className="flex flex-col gap-6">
         {header}
+        {filters}
         <div className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
           couldn't load calls · {error.message}
         </div>
@@ -213,6 +223,7 @@ export function CallsView({
     return (
       <div className="flex flex-col gap-6">
         {header}
+        {filters}
         <div className="rounded-[var(--radius-md)] border border-ink-rule">
           {[0, 1, 2].map((i) => (
             <SkeletonRow key={i} />
@@ -290,11 +301,7 @@ export function CallsView({
       )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <div className="flex min-w-0 flex-col gap-8">
-          {onFilter && (
-            <div className="-mb-4 flex flex-wrap items-center gap-2">
-              <ProspectMetricSelects role={role} size={size} onChange={onFilter} />
-            </div>
-          )}
+          {filters && <div className="-mb-4">{filters}</div>}
           {section(
             "Due",
             data.due,
@@ -304,6 +311,11 @@ export function CallsView({
             "Call list",
             data.list,
             filtered ? "Nobody else with a number in this filter." : "Nobody else with a number.",
+          )}
+          {data.listScanCapped && (
+            <div className="-mt-6 text-[12px] text-ink-faint">
+              Only the first 10,000 people with a number were checked against this filter.
+            </div>
           )}
         </div>
         {/* Pinned beside the list, and never taller than the page: the header,

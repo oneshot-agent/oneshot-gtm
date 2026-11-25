@@ -93,6 +93,8 @@ export interface CallListResponse {
   window: { start: string; end: string; weekdays: boolean };
   due: CallListRow[];
   list: CallListRow[];
+  /** A role or size filter stopped at its read limit before the candidates ran out: the list may miss later matches. */
+  listScanCapped?: boolean;
 }
 
 /** A logged call (the `calls` table). */

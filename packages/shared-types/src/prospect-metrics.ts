@@ -39,8 +39,8 @@ export function isSizeBucket(value: unknown): value is SizeBucket {
 
 /** Long forms folded to the short word, as `packages/find/src/_titles.ts` does. */
 const ROLE_ALIASES: Array<[RegExp, string]> = [
-  [/\b(?:senior|executive|assistant|associate) vice president\b/g, "vp"],
-  [/\bvice president\b/g, "vp"],
+  [/\b(?:senior|executive|assistant|associate) vice[ -]president\b/g, "vp"],
+  [/\bvice[ -]president\b/g, "vp"],
   [/\b(?:svp|evp|avp)\b/g, "vp"],
   [/\bchief executive officer\b/g, "ceo"],
   [/\bchief operating officer\b|\bchief operations officer\b/g, "coo"],

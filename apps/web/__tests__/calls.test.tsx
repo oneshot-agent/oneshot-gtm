@@ -274,6 +274,26 @@ describe("Calls page: role and size filters", () => {
     expect(page(data())).not.toContain("Filter by role");
   });
 
+  it("keeps the selects while loading and after a failed filtered load, and says when a scan was capped", () => {
+    const filtering = {
+      onOpen: () => {},
+      role: "operations" as const,
+      size: null,
+      onFilter: () => {},
+    };
+    const loading = render(<CallsView data={undefined} selected={undefined} {...filtering} />);
+    expect(loading).toContain('aria-label="Filter by role"');
+    const failed = render(
+      <CallsView data={undefined} error={new Error("boom")} selected={undefined} {...filtering} />,
+    );
+    expect(failed).toContain('aria-label="Filter by role"');
+    expect(failed).toContain("couldn&#x27;t load calls · boom");
+    const capped = render(
+      <CallsView data={{ ...data(), listScanCapped: true }} selected={undefined} {...filtering} />,
+    );
+    expect(capped).toContain("Only the first 10,000 people with a number were checked");
+  });
+
   it("shows the company size after the title and company", () => {
     const html = page(data({ due: [row({ staff: 131, sites: 3 })], list: [] }));
     expect(html).toContain("COO · Acme Dental · 131 staff · 3 locations");
