@@ -209,7 +209,8 @@ function RunPage() {
   );
 
   useEffect(() => {
-    if (search.fromQueue !== "1") return;
+    // A run page (`runId`) shows that run's targets; Run again restores them, so the queue is not read.
+    if (search.fromQueue !== "1" || search.runId != null) return;
     const ref = { cancelled: false };
     void (async () => {
       await hydrateFromQueue(ref);
