@@ -856,7 +856,7 @@ function RunPage() {
             )}
             <Button
               variant="ghost"
-              disabled={running || resolvingContacts}
+              disabled={running || resolvingContacts || hydrating}
               onClick={() => {
                 setReturnIn(null);
                 setEvents([]);
