@@ -596,12 +596,21 @@ export const api = {
     const qs = q.toString();
     return getJson<CallListResponse>(qs ? `/calls?${qs}` : "/calls");
   },
-  callBrief: (prospectId: number, opts: { playName?: string | null; regenerate?: boolean } = {}) =>
-    postJson<{ brief: CallBrief }>("/calls/brief", {
+  callBrief: (
+    prospectId: number,
+    opts: { playName?: string | null; regenerate?: boolean } = {},
+  ) => {
+    if (IS_DEMO && !opts.regenerate) {
+      const q = new URLSearchParams({ prospectId: String(prospectId) });
+      if (opts.playName) q.set("playName", opts.playName);
+      return demoGet<{ brief: CallBrief }>(`/calls/brief?${q}`);
+    }
+    return postJson<{ brief: CallBrief }>("/calls/brief", {
       prospectId,
       ...(opts.playName ? { playName: opts.playName } : {}),
       ...(opts.regenerate ? { regenerate: true } : {}),
-    }),
+    });
+  },
   logCall: (prospectId: number, req: LogCallRequest) =>
     postJson<{ call: CallRecordView }>(`/prospects/${prospectId}/call`, req),
   prospectCalls: (prospectId: number) =>

@@ -27,3 +27,14 @@ it("captures only fictional members without reading a reused demo home's roster"
   });
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it("never captures the operator's current identity", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  expect(await captureBody("/me", "/home/founder/demo")).toEqual({
+    email: "mira@tracepoint.dev",
+    name: "Mira Vance",
+    role: "owner",
+  });
+  expect(fetch).not.toHaveBeenCalled();
+});

@@ -1198,3 +1198,31 @@ describe("review fixes", () => {
     expect(getCadence).not.toHaveBeenCalled();
   });
 });
+
+describe("demo briefs", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reads a saved brief and never generates an absent or regenerated one", async () => {
+    vi.stubEnv("ONESHOT_GTM_DEMO", "1");
+    callsOn();
+    const id = ledger.upsertProspect({ name: "Dana", email: "dana@acme.test" });
+    await expect(callBriefFor({ prospectId: id })).rejects.toThrow("No saved call brief");
+    ledger.saveCallBrief({ prospectId: id, playName: null, brief: JSON.parse(BRIEF_JSON) });
+    expect(await callBriefFor({ prospectId: id })).toEqual(JSON.parse(BRIEF_JSON));
+    await expect(callBriefFor({ prospectId: id, regenerate: true })).rejects.toThrow(
+      "No saved call brief",
+    );
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("does not generate a missing cadence call preview", async () => {
+    vi.stubEnv("ONESHOT_GTM_DEMO", "1");
+    callsOn();
+    const id = enroll();
+    atCallStep(id);
+    await expect(callBriefFor({ prospectId: id, playName: PLAY })).rejects.toThrow(
+      "No saved call brief",
+    );
+    expect(prompts).toHaveLength(0);
+  });
+});

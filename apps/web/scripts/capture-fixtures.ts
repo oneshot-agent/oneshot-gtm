@@ -58,6 +58,10 @@ const HOME = homedir();
 
 const SEEDS = [
   "/home",
+  "/me",
+  "/onboarding",
+  "/calls",
+  "/calls/me",
   "/doctor",
   "/workspace",
   "/triggers",
@@ -141,6 +145,22 @@ const SEEDS = [
 function expand(url: string, body: unknown): string[] {
   if (typeof body !== "object" || body === null) return [];
 
+  if (url === "/calls") {
+    const data = body as {
+      due: Array<{ prospectId: number; playName: string | null }>;
+      list: Array<{ prospectId: number; playName: string | null }>;
+    };
+    return [...data.due, ...data.list].flatMap((row) => {
+      const q = new URLSearchParams({ prospectId: String(row.prospectId) });
+      if (row.playName) q.set("playName", row.playName);
+      return [
+        `/person?prospect=${row.prospectId}`,
+        `/prospects/${row.prospectId}/calls`,
+        `/calls/brief?${q}`,
+      ];
+    });
+  }
+
   // Expanded histories and reply threads read the prospect's invitation state.
   if (url.startsWith("/cadences") || url === "/replies" || /^\/queue\/\d+$/.test(url)) {
     const data = body as {
@@ -163,6 +183,10 @@ function expand(url: string, body: unknown): string[] {
       ...known.map((id) => `/prospects/${id}/linkedin-friend`),
       // The person pane a cadence or reply thread opens, by prospect.
       ...known.map((id) => `/person?prospect=${id}`),
+      ...(data.cadences ?? []).flatMap((c) => [
+        `/cadences/${c.prospectId}/drafts?play=${encodeURIComponent(c.playName)}`,
+        `/cadences/${c.prospectId}/sequence?play=${encodeURIComponent(c.playName)}`,
+      ]),
       ...(data.cadences ?? [])
         .filter((c) => c.status === "active" && c.nextStepChannel === "direct_mail")
         .map(
@@ -195,7 +219,12 @@ function expand(url: string, body: unknown): string[] {
     }
     // Every row opens a detail drawer and the person pane, by row and by prospect.
     return (rows ?? []).flatMap((r) => {
-      const paths = [`/queue/${r.id}`, `/queue/${r.id}/dossier`, `/person?queue=${r.id}`];
+      const paths = [
+        `/queue/${r.id}`,
+        `/queue/${r.id}/dossier`,
+        `/queue/${r.id}/drafts`,
+        `/person?queue=${r.id}`,
+      ];
       if (r.prospect) paths.push(`/person?prospect=${r.prospect.id}`);
       return paths;
     });
@@ -278,19 +307,31 @@ function scrubText(text: string, demoHome: string): string {
 
 export async function captureBody(url: string, demoHome: string): Promise<unknown> {
   // A reused demo home can retain real members and allowed hosts after reseeding.
-  if (url === "/members") {
+  if (url === "/members" || url === "/me") {
     const currentMember = {
       email: "mira@tracepoint.dev",
       name: "Mira Vance",
       role: "owner" as const,
     };
+    if (url === "/me") return currentMember;
     return {
       members: [{ ...currentMember, addedAt: "2026-01-01T00:00:00.000Z" }],
       allowedHosts: [],
       currentMember,
     } satisfies MembersView;
   }
-  const res = await fetch(API + url);
+  // Only saved briefs are served in demo mode; an absent one fails without a model call.
+  const brief = url.startsWith("/calls/brief?") ? new URLSearchParams(url.split("?")[1]) : null;
+  const res = brief
+    ? await fetch(API + "/calls/brief", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: `http://127.0.0.1:${PORT}` },
+        body: JSON.stringify({
+          prospectId: Number(brief.get("prospectId")),
+          playName: brief.get("playName"),
+        }),
+      })
+    : await fetch(API + url);
   if (!res.ok) throw new Error(`${res.status} ${url}`);
   const body: unknown = JSON.parse(scrubText(await res.text(), demoHome));
   return url === "/workspace" ? scrubWorkspace(body) : body;

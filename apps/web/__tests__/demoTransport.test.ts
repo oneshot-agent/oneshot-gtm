@@ -10,7 +10,7 @@ vi.mock("../src/api/demo.ts", () => ({
   },
 }));
 
-const { getJson } = await import("../src/api/client.ts");
+const { getJson, api } = await import("../src/api/client.ts");
 const { mailAction } = await import("../src/components/DirectMailPanel.tsx");
 
 afterEach(() => {
@@ -37,4 +37,15 @@ describe("direct mail demo transport", () => {
     expect(fixtures.write).toHaveBeenCalledWith("/direct-mail/send");
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+it("reads a saved call brief but refuses regeneration and dialing", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  fixtures.read.mockResolvedValue({ brief: { opener: "Saved" } });
+  expect(await api.callBrief(7, { playName: "show-hn" })).toEqual({ brief: { opener: "Saved" } });
+  expect(fixtures.read).toHaveBeenCalledWith("/calls/brief?prospectId=7&playName=show-hn");
+  await expect(api.callBrief(7, { regenerate: true })).rejects.toThrow("Read-only demo");
+  await expect(api.startCall({ prospectId: 7 })).rejects.toThrow("Read-only demo");
+  expect(fetch).not.toHaveBeenCalled();
 });

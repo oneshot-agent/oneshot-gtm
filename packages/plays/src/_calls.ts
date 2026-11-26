@@ -387,6 +387,8 @@ export async function callBriefFor(input: {
     const current = prospect ? offerKeyOf(sequenceOffer(prospect, step)) : null;
     if (!input.regenerate && stored?.kind === "call" && (stored.offerKey ?? null) === current)
       return stored.brief;
+    if (process.env["ONESHOT_GTM_DEMO"] === "1")
+      throw new Error("No saved call brief in this demo.");
     const preview = await previewCadenceStep({ prospectId: input.prospectId, playName: step });
     if ("waiting" in preview || "skipped" in preview) throw new Error(preview.message);
     if (preview.payload.kind !== "call") throw new Error("the next step is no longer a call");
@@ -410,6 +412,7 @@ export async function callBriefFor(input: {
     const cached = ledger.getCallBrief(input.prospectId);
     if (cached && cached.playName === playName && cached.offerKey === offerKey) return cached.brief;
   }
+  if (process.env["ONESHOT_GTM_DEMO"] === "1") throw new Error("No saved call brief in this demo.");
   const brief = await buildCallBrief({
     prospect,
     playName,

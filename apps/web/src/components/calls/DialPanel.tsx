@@ -764,6 +764,12 @@ export function CallControl({
   className?: string;
 }) {
   if (!row.phone) return null;
+  if (IS_DEMO)
+    return (
+      <Button size="sm" variant="receipt" className={className} {...readOnly}>
+        <Phone size={11} /> Call
+      </Button>
+    );
   const hint = windowHint(row, callWindow, now);
   if (hint) return <span className="font-mono text-[11px] text-ink-faint">{hint}</span>;
   if (blockedReason && (dialMode === "tel" || onRing))

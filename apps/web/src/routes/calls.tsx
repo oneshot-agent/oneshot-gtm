@@ -12,6 +12,7 @@ import {
   type SizeBucket,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
+import { IS_DEMO } from "../api/demo.ts";
 import { CallControl, DialPanel } from "../components/calls/DialPanel.tsx";
 import { NoNumber } from "../components/calls/NoNumber.tsx";
 import { ProspectMetricSelects } from "../components/ProspectMetricSelects.tsx";
@@ -408,7 +409,8 @@ function CallRow({
   const blockedReason = callBlock(liveCalls, row.prospectId, masked);
   const hint = windowHint(row, data.window, now);
   // A teammate on a call with them: the number is not a link either.
-  const dialable = canDial(row, data.window, now) && data.dialMode === "tel" && !blockedReason;
+  const dialable =
+    !IS_DEMO && canDial(row, data.window, now) && data.dialMode === "tel" && !blockedReason;
   const localTime = localTimeNow(row.local, now);
   return (
     <div
