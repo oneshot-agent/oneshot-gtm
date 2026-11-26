@@ -31,6 +31,12 @@ describe("replyDraftNote", () => {
     );
   });
 
+  it("says an option used a term the founder keeps out of replies", () => {
+    expect(replyDraftNote(["avoid-term"])).toBe(
+      "Check before sending: it uses a term you asked replies never to use.",
+    );
+  });
+
   it("degrades an unknown flag to its words instead of hiding it", () => {
     expect(describeReplyFlag("some-new-rule")).toBe("some new rule");
     expect(describeReplyFlag("banned-opener:I-noticed")).toBe("banned opener, “I noticed”");

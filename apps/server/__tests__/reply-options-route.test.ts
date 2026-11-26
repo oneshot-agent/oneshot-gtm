@@ -656,3 +656,17 @@ it("gives the options the offer we made, the email they answered, and the classi
   expect(context.intent).toBe("question");
   expect(replyOptionsContext({ ...t, intent: null }).intent).toBeNull();
 });
+it("passes the configured reply terms to avoid into generation", async () => {
+  const cfg = loadConfig();
+  saveConfig({ ...cfg, replyAvoidTerms: [" Planner ", "", "booking engine", "Planner"] });
+  try {
+    const t = seed();
+    expect(replyOptionsContext(t).avoidTerms).toEqual(["Planner", "booking engine"]);
+    await replyGenerateRoute(req({ key: t.key }));
+    expect(generate.mock.calls[0]![0].avoidTerms).toEqual(["Planner", "booking engine"]);
+  } finally {
+    const { replyAvoidTerms: _terms, ...rest } = loadConfig();
+    saveConfig(rest);
+  }
+  expect(replyOptionsContext(seed()).avoidTerms).toEqual([]);
+});

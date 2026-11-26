@@ -27,6 +27,7 @@ const DRAFT: Record<string, string> = {
   "commits-terms": "commits to pricing or terms",
   "price-or-free": "names a price or says something is free",
   "bare-link": "has a link written without https://",
+  "avoid-term": "uses a term you asked replies never to use",
   "calendar-link": "includes a scheduling link",
   "body-too-long": "runs long for a reply",
   "empty-body": "is empty",

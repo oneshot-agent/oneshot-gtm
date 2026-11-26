@@ -30,7 +30,7 @@ export const MOVES = {
   concede:
     "grant the point they got right, where PRODUCT BRIEF does not refute it, and correct any earlier overreach in YOUR turns",
   reframe:
-    "say what the product is and is not for their case, in the brief's own words, and name the boundary honestly",
+    "say what the product is and is not for their case, in the brief's own words, and say plainly what it would and would not do for their case",
   ask: "answer in one clause at most, then ask one question about their priorities, tradeoff, or what they are working on next",
   peer: "engage with what they built, using only sourced dossier or thread facts, with no product mention at all",
   park: "accept a not-now or a mismatch without a counter-pitch, leaving one low-pressure door open",
@@ -75,6 +75,8 @@ export interface DraftInput {
   offer?: Pick<ProspectOffer, "offer" | "steps" | "return"> | null;
   /** The classifier's label for their latest message; rendered through `intentDirectiveBlock`. */
   intent?: string | null;
+  /** `replyAvoidTerms` from config: words no option may use. */
+  avoidTerms?: string[];
   /** `prospects.angle_json`, verbatim; rendered through the shared ANGLE block. */
   angleJson?: string | null;
 }
@@ -252,6 +254,9 @@ export function buildDraftUserPrompt(i: DraftInput): string {
       ? `OFFER WE MADE (what the opening message proposed; every detail must stay consistent with it):\n${i.offer.offer}${i.offer.steps ? `\nSteps: ${i.offer.steps}` : ""}${i.offer.return ? `\nReturn: ${i.offer.return}` : ""}`
       : "",
     angleBlockFromJson(i.angleJson) ?? "",
+    i.avoidTerms?.length
+      ? `NEVER USE THESE TERMS IN A REPLY (describe what the thing does instead): ${i.avoidTerms.join("; ")}`
+      : "",
     `YOUR REGISTER IN THIS THREAD: ${registerDirective(founderRegister(i.thread))}`,
     `CASUAL TEXTURE: ${i.casualTexture ? "enabled" : "disabled"}`,
     `FOUNDER VOICE: ${i.founderVoice || "Use the founder register below."}`,
@@ -389,6 +394,21 @@ function briefPrices(brief: string): string[] {
 }
 
 /**
+ * True when `body` uses one of `terms`, ignoring case: a single word as a
+ * whole word, a phrase anywhere, across any line wrapping.
+ */
+export function usesAvoidTerm(body: string, terms: readonly string[]): boolean {
+  return terms.some((term) => {
+    const escaped = term
+      .trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\s+/g, "\\s+");
+    const pattern = /\s/.test(term.trim()) ? escaped : `(?<!\\w)${escaped}(?!\\w)`;
+    return escaped.length > 0 && new RegExp(pattern, "i").test(body);
+  });
+}
+
+/**
  * `price-or-free`: a price PRODUCT BRIEF does not state (the outbound hard
  * bans, minus their link ban, which the allow-list owns here), or a free or
  * no-cost claim, which a reply makes far more often than an opener does.
@@ -473,6 +493,7 @@ export function lintLinkedInDrafts(drafts: Drafts, moves: Moves, input: DraftInp
     if (repeatsPriorText(body, yours)) out.push("repeats-you");
     if (bodyCommitsTerms(body)) out.push("commits-terms");
     if (claimsPriceOrFree(body, input.primaryBrief)) out.push("price-or-free");
+    if (usesAvoidTerm(body, input.avoidTerms ?? [])) out.push("avoid-term");
     perVariant[v] = out;
   }
 
@@ -559,7 +580,11 @@ export function reassignMoves(moves: Moves): Partial<Record<Variant, Move>> {
 }
 
 /** The corrective turn after a flagged first draft. */
-export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string {
+export function repairInstruction(
+  flags: DraftFlags,
+  moves: Moves = {},
+  avoidTerms: readonly string[] = [],
+): string {
   const lines: string[] = [];
   for (const v of VARIANTS) {
     if (flags.perVariant[v].length) lines.push(`${v}: ${flags.perVariant[v].join(", ")}`);
@@ -574,6 +599,7 @@ export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string 
   );
   const keep = VARIANTS.filter((v) => !rewrites.includes(v));
   const flagged = (flag: string) => VARIANTS.some((v) => flags.perVariant[v].includes(flag));
+  const usedTerms = VARIANTS.filter((v) => flags.perVariant[v].includes("avoid-term"));
   const assignments = (Object.entries(reassigned) as Array<[Variant, Move]>).map(
     ([v, m]) => `${v} must now declare the move ${m} (${MOVES[m]}) and take that position`,
   );
@@ -587,6 +613,9 @@ export function repairInstruction(flags: DraftFlags, moves: Moves = {}): string 
     "At most one link per option, only when they asked for one or it is FOUNDER CALENDAR URL at ACTION stage, and only one that appears verbatim in PRODUCT BRIEF or is exactly FOUNDER CALENDAR URL.",
     flagged("bare-link")
       ? "A link written without https:// is still a link: drop it unless it appears verbatim in PRODUCT BRIEF."
+      : "",
+    usedTerms.length && avoidTerms.length
+      ? `Rewrite ${usedTerms.join(" and ")} without these terms: ${avoidTerms.join("; ")}; say what it does in plain words.`
       : "",
     flagged("price-or-free")
       ? "Never state or imply a price, or that anything is free or at no cost, unless PRODUCT BRIEF states it."

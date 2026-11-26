@@ -192,3 +192,30 @@ it("names the price and bare-link rules in the repair turn only when they failed
   expect(clean).not.toContain("free or at no cost");
   expect(clean).not.toContain("without https://");
 });
+
+it("keeps configured terms out of every option: told, flagged, and named in the repair", () => {
+  const avoidTerms = ["Planner", "booking engine"];
+  expect(buildDraftUserPrompt({ ...input, avoidTerms })).toContain(
+    "NEVER USE THESE TERMS IN A REPLY (describe what the thing does instead): Planner; booking engine",
+  );
+  expect(buildDraftUserPrompt(input)).not.toContain("NEVER USE THESE TERMS");
+  expect(buildDraftUserPrompt({ ...input, avoidTerms: [] })).not.toContain("NEVER USE THESE TERMS");
+  const flags = lintLinkedInDrafts(
+    {
+      direct: "the planner sends reminders a day ahead.",
+      technical: "Our Booking\nEngine reads your calendar.",
+      warm: "Planners at your clinic would see fewer gaps; the booking page stays yours.",
+    },
+    { direct: "answer", technical: "scope", warm: "ask" },
+    { ...input, avoidTerms },
+  );
+  expect(flags.perVariant.direct).toContain("avoid-term");
+  expect(flags.perVariant.technical).toContain("avoid-term");
+  // "Planners" is another word, and "booking page" is not the phrase.
+  expect(flags.perVariant.warm).not.toContain("avoid-term");
+  const repair = repairInstruction(flags, {}, avoidTerms);
+  expect(repair).toContain(
+    "Rewrite direct and technical without these terms: Planner; booking engine; say what it does in plain words.",
+  );
+  expect(repairInstruction(flags)).not.toContain("without these terms");
+});

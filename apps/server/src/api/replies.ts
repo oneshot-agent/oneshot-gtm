@@ -17,6 +17,7 @@ import {
   loadConfig,
   logEvent,
   openLedgerDatabase,
+  replyAvoidTermsOf,
   replySendKey,
   replyWorkspaces,
   trackSend,
@@ -259,6 +260,7 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     firstTouch,
     offer,
     intent: t.intent ?? null,
+    avoidTerms: replyAvoidTermsOf(cfg),
     angleJson: p?.angle_json,
   };
   context.learningKey = ledger.learning.captureContext({

@@ -9,6 +9,7 @@ import {
   isHumanLinkedInReply,
   loadConfig,
   linkedInMatches,
+  replyAvoidTermsOf,
   replyContextVersion,
   productBriefText,
 } from "@oneshot-gtm/core";
@@ -179,6 +180,7 @@ export function threadContextVersion(
     learning: guidanceVersionOrZero(),
     // The options read the classified intent: a relabel makes them stale.
     intent: t.intent ?? null,
+    avoidTerms: replyAvoidTermsOf(cfg),
     // 2: options see the offer and intent and can take the scope move.
     prompt: 2,
   });

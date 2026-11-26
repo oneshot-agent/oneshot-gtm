@@ -49,7 +49,7 @@ export async function generateReplyOptions(input: DraftInput) {
           messages: [
             ...messages,
             { role: "assistant", content: first.content },
-            { role: "user", content: repairInstruction(flags, parsed.moves) },
+            { role: "user", content: repairInstruction(flags, parsed.moves, input.avoidTerms) },
           ],
           temperature: 0.5,
           maxTokens: 2000,

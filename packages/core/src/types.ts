@@ -601,6 +601,15 @@ export interface OneShotConfig {
    */
   offerChecks?: OfferCheck[];
   /**
+   * Words and phrases a reply never uses, one entry each: internal tool or
+   * module names, or wording the founder keeps out of conversations. The
+   * reply options are told to say what the thing does instead, and an option
+   * that uses one is flagged `avoid-term` and gets the repair turn. A single
+   * word matches as a whole word, a phrase anywhere, both ignoring case.
+   * Read through `replyAvoidTermsOf`. Absent or empty: nothing is avoided.
+   */
+  replyAvoidTerms?: string[];
+  /**
    * Companies this workspace never contacts, by email or website domain and
    * by company name. A match is queued as rejected, refused at every email
    * send and LinkedIn invite, and its cadence is stopped as do-not-contact
