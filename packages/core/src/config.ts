@@ -94,6 +94,11 @@ export function offerRulesOf(cfg: { offerRules?: unknown }): string[] {
   return plainEntries(cfg.offerRules);
 }
 
+/** The workspace's `replyAvoidTerms`, read the same way as `offerExclusionsOf`. */
+export function replyAvoidTermsOf(cfg: { replyAvoidTerms?: unknown }): string[] {
+  return plainEntries(cfg.replyAvoidTerms);
+}
+
 /**
  * The workspace's `offerChecks`: the known check names it lists, in the
  * order `OFFER_CHECKS` gives them. Anything else reads as none.

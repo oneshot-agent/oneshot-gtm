@@ -20,6 +20,7 @@ vi.mock("@oneshot-gtm/core", () => ({
   loadConfig: () => ({}),
   productBriefText: (cfg: { productBrief?: string | null }) => cfg.productBrief ?? null,
   linkedInMatches: () => [],
+  replyAvoidTermsOf: () => [],
   replyContextVersion: () => "context",
 }));
 vi.mock("../src/api/inbox.ts", () => ({

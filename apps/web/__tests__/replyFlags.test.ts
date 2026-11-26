@@ -25,6 +25,18 @@ describe("replyDraftNote", () => {
     );
   });
 
+  it("says what the price and bare-link checks found", () => {
+    expect(replyDraftNote(["price-or-free", "bare-link"])).toBe(
+      "Check before sending: it names a price or says something is free, and it has a link written without https://.",
+    );
+  });
+
+  it("says an option used a term the founder keeps out of replies", () => {
+    expect(replyDraftNote(["avoid-term"])).toBe(
+      "Check before sending: it uses a term you asked replies never to use.",
+    );
+  });
+
   it("degrades an unknown flag to its words instead of hiding it", () => {
     expect(describeReplyFlag("some-new-rule")).toBe("some new rule");
     expect(describeReplyFlag("banned-opener:I-noticed")).toBe("banned opener, “I noticed”");
@@ -50,6 +62,7 @@ describe("describeReplyMove", () => {
   it("names the stance in words and passes an unknown move through", () => {
     expect(describeReplyMove("reframe")).toBe("Says what it is and is not for them");
     expect(describeReplyMove("ask")).toBe("Asks one question back");
+    expect(describeReplyMove("scope")).toBe("Lays out the first step");
     expect(describeReplyMove("new-move")).toBe("new-move");
     expect(describeReplyMove(undefined)).toBeNull();
   });
