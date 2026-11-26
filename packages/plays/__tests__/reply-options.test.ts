@@ -160,6 +160,15 @@ it("flags a price or free claim, but not a negated one or a price the brief stat
   expect(lint("It runs at $40 a month.", "Reminders for $40 a month.")).not.toContain(
     "price-or-free",
   );
+  // A free claim the brief makes passes; a different free claim still flags.
+  const brief = "The pilot is free for the first month. Every account starts on a free trial.";
+  expect(lint("The pilot is\nfree.", brief)).not.toContain("price-or-free");
+  expect(lint("You can start on a Free trial today.", brief)).not.toContain("price-or-free");
+  expect(lint("The setup is free.", brief)).toContain("price-or-free");
+  expect(lint("Support is free for a year.", "The SDK is free.")).toContain("price-or-free");
+  expect(lint("The pilot is free.", "The pilot is not free.")).toContain("price-or-free");
+  expect(lint("Start on a free trial.", "The pilot is free.")).toContain("price-or-free");
+  expect(lint("We can discount the first month.", brief)).toContain("price-or-free");
 });
 
 it("treats a link without a scheme as a link", () => {

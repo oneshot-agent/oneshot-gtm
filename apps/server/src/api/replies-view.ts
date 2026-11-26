@@ -66,14 +66,13 @@ export function linkedInThreads(viewer?: LinkedInViewer): ReplyThread[] {
       }));
       const latest = history.findLast((m) => m.direction === "inbound" && !m.deleted);
       if (!latest) return [];
-      // The label of the newest human reply that has one, as email shows its
-      // latest labelled reply. Only human inbound messages are ever labelled.
+      // The label of the newest human reply only, as email reads its latest
+      // reply. An older label never stands in for an unlabelled newer reply:
+      // reply options take it as the intent of the message they answer.
+      // Only human inbound messages are ever labelled.
       const labels = store.conversationIntents(a.key, c.id);
-      const label =
-        rawMessages
-          .filter(isHumanLinkedInReply)
-          .map((m) => labels.get(m.id))
-          .findLast((l) => l != null) ?? null;
+      const newestHuman = rawMessages.findLast(isHumanLinkedInReply);
+      const label = (newestHuman && labels.get(newestHuman.id)) ?? null;
       const peers = c.attendees.filter((p) => !p.is_self);
       const peer = peers[0];
       const currentConnection = !a.previousAccountIds?.length || t.sourceAccountId === a.account.id;

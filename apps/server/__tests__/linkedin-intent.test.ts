@@ -141,7 +141,7 @@ it("an unsubscribe opts the prospect out and stops their live cadences", async (
   expect(isProspectOptedOut(db, prospectId)).toBe(true);
 });
 
-it("a thread shows the label of its latest labelled human reply", async () => {
+it("a thread shows the label of its newest human reply, never an older one", async () => {
   store.saveMessages("mine", [
     message("first", "What does it cost?", "2026-11-01T10:00:00Z"),
     message("second", "Sounds good, let's talk", "2026-11-02T10:00:00Z"),
@@ -150,8 +150,9 @@ it("a thread shows the label of its latest labelled human reply", async () => {
   const thread = () => linkedInThreads().find((t) => t.accountKey === "mine");
   expect(thread()).toMatchObject({ intent: null, intentReview: false });
 
+  // An older reply's label does not stand in for the unlabelled newest one.
   store.setMessageIntent("mine", "first", label("question"));
-  expect(thread()).toMatchObject({ intent: "question" });
+  expect(thread()).toMatchObject({ intent: null });
   store.setMessageIntent("mine", "second", { ...label("interested"), review: true });
   expect(thread()).toMatchObject({ intent: "interested", intentReview: true });
 });

@@ -382,9 +382,33 @@ const FREE_RE =
 /** A negation just before the claim: "not free", "isn't entirely free". */
 const NEGATED_BEFORE = /(?:\b(?:not|never|no longer)|n['’]t)\s+(?:\w+\s+)?$/i;
 
-function claimsFree(body: string): boolean {
-  return [...body.matchAll(FREE_RE)].some(
-    (m) => !NEGATED_BEFORE.test(body.slice(Math.max(0, m.index - 40), m.index)),
+/** Un-negated free claims in `text`, each with its neighbouring words. */
+function freeClaims(text: string): Array<{ before: string; claim: string; after: string }> {
+  const flat = text.toLowerCase().replace(/\s+/g, " ");
+  return [...flat.matchAll(FREE_RE)]
+    .filter((m) => !NEGATED_BEFORE.test(flat.slice(Math.max(0, m.index - 40), m.index)))
+    .map((m) => ({
+      before: flat.slice(0, m.index).match(/(?:[\w'’-]+ ){2}$/)?.[0] ?? "",
+      claim: m[0],
+      after: flat.slice(m.index + m[0].length).match(/^ [\w'’-]+/)?.[0] ?? "",
+    }));
+}
+
+/**
+ * A free claim PRODUCT BRIEF does not make. A claim passes when the brief
+ * makes it with the same two words before it ("pilot is free") or the same
+ * word after it ("free trial"), so "the SDK is free" never licenses "the
+ * pilot is free".
+ */
+function claimsFreeBeyondBrief(body: string, brief: string): boolean {
+  const stated = freeClaims(brief).flatMap((c) => [
+    ...(c.before ? [`${c.before}${c.claim}`] : []),
+    ...(c.after ? [`${c.claim}${c.after}`] : []),
+  ]);
+  return freeClaims(body).some(
+    (c) =>
+      !(c.before && stated.includes(`${c.before}${c.claim}`)) &&
+      !(c.after && stated.includes(`${c.claim}${c.after}`)),
   );
 }
 
@@ -411,11 +435,16 @@ export function usesAvoidTerm(body: string, terms: readonly string[]): boolean {
 /**
  * `price-or-free`: a price PRODUCT BRIEF does not state (the outbound hard
  * bans, minus their link ban, which the allow-list owns here), or a free or
- * no-cost claim, which a reply makes far more often than an opener does.
+ * no-cost claim the brief does not make, which a reply makes far more often
+ * than an opener does.
  */
 function claimsPriceOrFree(body: string, brief: string): boolean {
-  const priced = hardBanFlags(body, briefPrices(brief)).some((f) => f !== "hard-ban:link");
-  return priced || claimsFree(body);
+  // The discount ban also fires on "free trial" and "free for you"; here the
+  // free check owns those, so a free trial the brief offers can pass.
+  const priced = hardBanFlags(body, briefPrices(brief)).some(
+    (f) => f !== "hard-ban:link" && (f !== "hard-ban:discount-offer" || /\bdiscount/i.test(body)),
+  );
+  return priced || claimsFreeBeyondBrief(body, brief);
 }
 
 const TRAILING_PUNCT = new Set([".", ",", ";", ":", "!", "?", ")"]);
